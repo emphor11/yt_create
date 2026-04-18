@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Start Here{% endblock %}
+{% block content %}
+<div class="card bg-panel mb-4">
+  <div class="card-body p-4">
+    <div class="section-label mb-2">Start Here</div>
+    <h1 class="h2 mb-2">Use the app in this order</h1>
+    <p class="text-secondary mb-0">This page is the simplest way to understand the current app. Follow the steps below from top to bottom.</p>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-6 col-xl-3">
+    <div class="step-card">
+      <div class="step-number">1</div>
+      <strong>Create a project</strong>
+      <div class="small text-secondary mt-2">Start with a working title. This creates the project and logging record.</div>
+      <a href="{{ url_for('projects.create_project') }}" class="btn btn-primary btn-sm mt-3">Create Project</a>
+    </div>
+  </div>
+  <div class="col-md-6 col-xl-3">
+    <div class="step-card">
+      <div class="step-number">2</div>
+      <strong>Prepare the script</strong>
+      <div class="small text-secondary mt-2">Set topic and angle, generate a draft, edit it yourself, and approve it.</div>
+      <a href="{{ url_for('projects.project_list') }}" class="btn btn-outline-light btn-sm mt-3">Open Projects</a>
+    </div>
+  </div>
+  <div class="col-md-6 col-xl-3">
+    <div class="step-card">
+      <div class="step-number">3</div>
+      <strong>Generate media</strong>
+      <div class="small text-secondary mt-2">Create demo assets, review scenes, and assemble the final MP4.</div>
+      <a href="{{ url_for('projects.project_list') }}" class="btn btn-outline-light btn-sm mt-3">Open Projects</a>
+    </div>
+  </div>
+  <div class="col-md-6 col-xl-3">
+    <div class="step-card">
+      <div class="step-number">4</div>
+      <strong>Review and schedule</strong>
+      <div class="small text-secondary mt-2">Save metadata, store an upload id, schedule publish, and later save snapshots.</div>
+      <a href="{{ url_for('analytics.analytics_table') }}" class="btn btn-outline-light btn-sm mt-3">Open Analytics</a>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-7">
+    <div class="card bg-panel">
+      <div class="card-body">
+        <div class="section-label mb-2">What Is Real Right Now</div>
+        <ul class="helper-list text-secondary mb-0">
+          <li>Create projects and track them through the state machine</li>
+          <li>Generate a demo script, edit it manually, and enforce the approval gate</li>
+          <li>Create scene rows and run demo media generation</li>
+          <li>Assemble a real MP4 with ffmpeg</li>
+          <li>Save publish metadata and analytics snapshots in the database</li>
+          <li>Inspect everything through logs and project detail pages</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card bg-panel">
+      <div class="card-body">
+        <div class="section-label mb-2">What Is Still Demo Mode</div>
+        <ul class="helper-list text-secondary mb-0">
+          <li>Script generation is not using Claude yet</li>
+          <li>Topic comparison is not using live YouTube API data yet</li>
+          <li>Media generation uses demo visuals and silent audio</li>
+          <li>YouTube upload and analytics APIs are not wired yet</li>
+          <li>Captions, music, and Pexels integrations are not live yet</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

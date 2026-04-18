@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Topic Selection{% endblock %}
+{% block content %}
+<div class="mb-4">
+  <div class="section-label mb-2">Step 1</div>
+  <h1 class="h3 mb-1">Topic Selection</h1>
+  <p class="text-secondary mb-0">Enter topic and angle, then confirm to refresh comparable videos on this same page before moving ahead.</p>
+</div>
+
+<div class="card bg-panel border-secondary-subtle mb-4">
+  <div class="card-body">
+    <strong>Comparable video source:</strong>
+    <span class="status-pill {% if topic_lookup_mode == 'live' %}status-live{% else %}status-muted{% endif %}">
+      {{ topic_lookup_mode }}
+    </span>
+    <div class="small text-secondary mt-2">{{ topic_lookup_message }}</div>
+  </div>
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-6">
+    <div class="card bg-panel border-secondary-subtle">
+      <div class="card-body">
+        <h2 class="h5 mb-3">Manual Topic Selection</h2>
+        <form method="post">
+          <div class="mb-3">
+            <label class="form-label">Topic</label>
+            <input class="form-control" name="topic" value="{{ project.topic or '' }}" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Angle</label>
+            <input class="form-control" name="angle" value="{{ project.angle or '' }}" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Target duration (minutes)</label>
+            <input class="form-control" type="number" min="1" max="60" name="target_duration_minutes" value="{{ project.target_duration_minutes or 8 }}" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Channel niche</label>
+            <input class="form-control" name="channel_niche" value="{{ project.channel_niche or 'personal finance India' }}" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Tone</label>
+            <input class="form-control" name="script_tone" value="{{ project.script_tone or 'confident, direct, slightly provocative' }}" required>
+          </div>
+          <button class="btn btn-primary">Confirm Topic</button>
+        </form>
+        {% if project.topic and project.angle %}
+          <div class="mt-3 pt-3 border-top">
+            <p class="small text-secondary mb-2">Once the comparable videos look useful, continue to the project page.</p>
+            <a class="btn btn-outline-light btn-sm" href="{{ url_for('projects.project_detail', project_id=project.id) }}">Back To Project</a>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card bg-panel border-secondary-subtle">
+      <div class="card-body">
+        <h2 class="h5">Comparable Videos</h2>
+        <p class="text-secondary small">Advisory only. You still make the final call.</p>
+        <div class="list-group">
+          {% for item in comparable %}
+            <div class="list-group-item bg-transparent text-light border-secondary-subtle">
+              <div class="d-flex justify-content-between">
+                <strong>{{ item.title }}</strong>
+                <span class="badge text-bg-dark">Score {{ item.score }}</span>
+              </div>
+              <div class="small text-secondary">{{ item.channel }}</div>
+              <div class="small">{{ "{:,}".format(item.views) }} views · {{ "{:,}".format(item.channel_subscribers) }} subs · {{ item.source }}</div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Create Project{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-7">
+    <div class="card bg-panel border-secondary-subtle">
+      <div class="card-body p-4">
+        <h1 class="h3 mb-4">Create Project</h1>
+        <form method="post">
+          <div class="mb-3">
+            <label class="form-label">Working title</label>
+            <input class="form-control" type="text" name="working_title" placeholder="Untitled finance breakdown">
+          </div>
+          <button class="btn btn-primary" type="submit">Create</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

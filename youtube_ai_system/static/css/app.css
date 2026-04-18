@@ -1,0 +1,147 @@
+.app-shell {
+  background: #f5f7fb;
+  min-height: 100vh;
+  color: #0f172a;
+}
+
+.app-nav {
+  background: #ffffff;
+}
+
+.bg-panel {
+  background: #ffffff;
+  border: 1px solid #dbe3ef !important;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.soft-panel {
+  background: #f8fafc;
+  border: 1px solid #dbe3ef;
+  border-radius: 14px;
+}
+
+.nav-link,
+.navbar-brand,
+.card,
+.list-group-item,
+.table,
+.text-light {
+  color: #0f172a !important;
+}
+
+.text-secondary {
+  color: #64748b !important;
+}
+
+.step-card {
+  border-radius: 14px;
+  padding: 1rem;
+  background: #ffffff;
+  border: 1px solid #dbe3ef;
+  height: 100%;
+}
+
+.step-number {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #e2e8f0;
+  color: #0f172a;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+}
+
+.status-pill {
+  display: inline-block;
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.status-live {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.status-muted {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.action-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem;
+}
+
+.action-box {
+  border: 1px solid #dbe3ef;
+  border-radius: 12px;
+  padding: 0.9rem;
+  background: #f8fafc;
+}
+
+.action-box form {
+  margin: 0;
+}
+
+.table {
+  background-color: #ffffff !important;
+}
+
+.table th,
+.table td {
+  color: #0f172a !important;
+  border-color: #e2e8f0 !important;
+}
+
+.list-group-item {
+  background: transparent !important;
+  border-color: #e2e8f0 !important;
+}
+
+.form-control,
+.form-select,
+.table-dark {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+.form-control,
+.form-select {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1;
+}
+
+.form-control::placeholder {
+  color: #94a3b8;
+}
+
+.btn-outline-light {
+  color: #0f172a;
+  border-color: #cbd5e1;
+}
+
+.btn-outline-light:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+  border-color: #cbd5e1;
+}
+
+.section-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #64748b;
+}
+
+.helper-list li {
+  margin-bottom: 0.4rem;
+}

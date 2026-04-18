@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Discarded Projects{% endblock %}
+{% block content %}
+<h1 class="h3 mb-4">Discarded Projects</h1>
+<div class="list-group">
+  {% for project in projects %}
+    <a class="list-group-item list-group-item-action bg-panel text-light border-secondary-subtle" href="{{ url_for('projects.project_detail', project_id=project.id) }}">
+      #{{ project.id }} · {{ project.working_title }}
+    </a>
+  {% else %}
+    <div class="list-group-item bg-panel text-light border-secondary-subtle">No discarded projects yet.</div>
+  {% endfor %}
+</div>
+{% endblock %}

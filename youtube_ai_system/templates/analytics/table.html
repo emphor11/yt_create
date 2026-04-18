@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Analytics{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <div class="section-label mb-2">Analytics</div>
+    <h1 class="h3 mb-1">Analytics</h1>
+    <p class="text-secondary mb-0">Simple D1 / D7 / D28 snapshot storage. This is database-backed, but still demo-mode data.</p>
+  </div>
+</div>
+
+<div class="card bg-panel border-secondary-subtle">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-dark table-striped">
+        <thead>
+          <tr>
+            <th>Title</th>
+            <th>Publish Date</th>
+            <th>D1</th>
+            <th>D7</th>
+            <th>D28</th>
+            <th>Best CTR</th>
+            <th>Best Avg View Duration</th>
+            <th>Capture</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td>{{ row.selected_title or row.working_title }}</td>
+              <td>{{ row.published_at or "Pending" }}</td>
+              <td>{{ row.d1_views or "-" }}</td>
+              <td>{{ row.d7_views or "-" }}</td>
+              <td>{{ row.d28_views or "-" }}</td>
+              <td>{{ row.best_ctr or "-" }}</td>
+              <td>{{ row.best_average_view_duration or "-" }}</td>
+              <td>
+                <form method="post" action="{{ url_for('analytics.capture_snapshot', project_id=row.project_id) }}">
+                  <div class="input-group input-group-sm">
+                    <select class="form-select" name="snapshot_day">
+                      <option>D1</option>
+                      <option>D7</option>
+                      <option>D28</option>
+                    </select>
+                    <button class="btn btn-outline-light">Save</button>
+                  </div>
+                </form>
+              </td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="8">No scheduled or published videos yet.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

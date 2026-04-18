@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Scene Review{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <div class="section-label mb-2">Step 3</div>
+    <h1 class="h3 mb-1">Scene Review</h1>
+    <p class="text-secondary mb-0">Dynamic visual coverage: {{ "%.0f"|format(ratio * 100) }}% / {{ "%.0f"|format(threshold * 100) }}% required before assembly.</p>
+  </div>
+  <form method="post" action="{{ url_for('media.approve_scenes', project_id=project.id) }}">
+    <button class="btn btn-success">Approve Scenes</button>
+  </form>
+</div>
+
+<div class="card bg-panel border-secondary-subtle mb-4">
+  <div class="card-body">
+    <strong>What this step does now</strong>
+    <ul class="small text-secondary helper-list mt-2 mb-0">
+      <li>Tries real Edge TTS voice generation first</li>
+      <li>Falls back to demo silent audio if live voice fails</li>
+      <li>Generates a basic visual per scene</li>
+      <li>Stores scene-level source information in the database</li>
+    </ul>
+  </div>
+</div>
+
+<div class="row g-4">
+  {% for scene in scenes %}
+    <div class="col-lg-6">
+      <div class="card bg-panel border-secondary-subtle h-100">
+        <div class="card-body">
+          <div class="d-flex justify-content-between mb-2">
+            <span class="badge text-bg-dark">{{ scene.kind }}</span>
+            <span class="small text-secondary">{{ scene.visual_type }}</span>
+          </div>
+          <p>{{ scene.narration_text }}</p>
+          <p class="small text-secondary">{{ scene.visual_instruction }}</p>
+          {% if scene.visual_path %}
+            <p class="small mb-1"><strong>Visual:</strong> {{ scene.visual_path }}</p>
+          {% endif %}
+          {% if scene.audio_path %}
+            <p class="small mb-3"><strong>Audio:</strong> {{ scene.audio_path }} · {{ scene.audio_duration_sec }}s</p>
+          {% endif %}
+          {% if scene.subtitle_path %}
+            <p class="small mb-1"><strong>Subtitles:</strong> {{ scene.subtitle_path }}</p>
+          {% endif %}
+          <p class="small text-secondary mb-3">
+            Audio source: {{ scene.audio_source or "unknown" }} · Visual source: {{ scene.visual_source or "unknown" }}
+          </p>
+          <form method="post" action="{{ url_for('media.regenerate_scene', project_id=project.id, scene_id=scene.id) }}">
+            <button class="btn btn-outline-light btn-sm">Regenerate</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+{% endblock %}

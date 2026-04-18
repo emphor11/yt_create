@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Final Review{% endblock %}
+{% block content %}
+<div class="row g-4">
+  <div class="col-lg-7">
+    <div class="card bg-panel border-secondary-subtle h-100">
+      <div class="card-body">
+        <div class="section-label mb-2">Step 4</div>
+        <h1 class="h4 mb-3">Final Review</h1>
+        <p><strong>Assembly output:</strong> {{ project.final_video_path or "Not assembled yet" }}</p>
+        <p class="text-secondary">Use this page to save the final title, description, thumbnail choice, upload id, and publish time.</p>
+        {% if script_payload %}
+          <h2 class="h6 mt-4">Suggested titles</h2>
+          <ul>
+            {% for title in script_payload.titles %}
+              <li>{{ title }}</li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-5">
+    <div class="card bg-panel border-secondary-subtle mb-4">
+      <div class="card-body">
+        <h2 class="h5">Publish Metadata</h2>
+        <form method="post" action="{{ url_for('publish.save_final_review', project_id=project.id) }}">
+          <div class="mb-3">
+            <label class="form-label">Selected title</label>
+            <input class="form-control" name="selected_title" value="{{ project.selected_title or (script_payload.titles[0] if script_payload and script_payload.titles else '') }}">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Description</label>
+            <textarea class="form-control" rows="4" name="selected_description">{{ project.selected_description or (script_payload.description if script_payload else '') }}</textarea>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Thumbnail path</label>
+            <input class="form-control" name="selected_thumbnail_path" value="{{ project.selected_thumbnail_path or '' }}" placeholder="/path/to/thumbnail.jpg">
+          </div>
+          {% if thumbnail_options %}
+            <div class="mb-3">
+              <label class="form-label">Generated thumbnail options</label>
+              <div class="list-group">
+                {% for option in thumbnail_options %}
+                  <label class="list-group-item bg-transparent text-light border-secondary-subtle">
+                    <input class="form-check-input me-2" type="radio" name="selected_thumbnail_path" value="{{ option }}" {% if option == project.selected_thumbnail_path or (not project.selected_thumbnail_path and loop.first) %}checked{% endif %}>
+                    {{ option }}
+                  </label>
+                {% endfor %}
+              </div>
+            </div>
+          {% endif %}
+          <button class="btn btn-primary">Save Metadata</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card bg-panel border-secondary-subtle">
+      <div class="card-body">
+        <h2 class="h5">Publish Actions</h2>
+        <p class="small text-secondary">The real YouTube upload API is not wired yet, so this section stores metadata and a mock upload id for now.</p>
+        <form class="mb-3" method="post" action="{{ url_for('publish.stage_publish', project_id=project.id) }}">
+          <button class="btn btn-outline-light w-100">Prepare Publish Record</button>
+        </form>
+        <form class="mb-3" method="post" action="{{ url_for('publish.mock_upload', project_id=project.id) }}">
+          <label class="form-label">YouTube video id</label>
+          <input class="form-control mb-2" name="youtube_video_id" value="{{ project.youtube_video_id or '' }}" placeholder="demo-123">
+          <button class="btn btn-outline-light w-100">Store Upload ID</button>
+        </form>
+        <form method="post" action="{{ url_for('publish.schedule_publish', project_id=project.id) }}">
+          <label class="form-label">Schedule publish time (ISO 8601)</label>
+          <input class="form-control mb-2" name="publish_at" value="{{ project.scheduled_publish_at or '' }}" placeholder="2026-04-20T12:30:00+00:00">
+          <button class="btn btn-success w-100">Schedule Publish</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

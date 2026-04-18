@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Projects{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <div class="section-label mb-2">Dashboard</div>
+    <h1 class="h3 mb-1">Projects</h1>
+    <p class="text-secondary mb-0">A simple view of what the app can do right now and where each project is in the workflow.</p>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('projects.start_here') }}" class="btn btn-outline-light">Start Here</a>
+    <a href="{{ url_for('projects.create_project') }}" class="btn btn-primary">Create Project</a>
+  </div>
+</div>
+
+<div class="card bg-panel mb-4">
+  <div class="card-body">
+    <div class="row g-4">
+      <div class="col-lg-7">
+        <div class="section-label mb-2">What Works Right Now</div>
+        <div class="row g-3">
+          <div class="col-md-6">
+            <div class="soft-panel p-3 h-100">
+              <strong>Project + script workflow</strong>
+              <ul class="small text-secondary helper-list mt-2 mb-0">
+                <li>Create a project</li>
+                <li>Select topic and angle manually</li>
+                <li>Generate a demo script</li>
+                <li>Edit and approve the script with a human-edit gate</li>
+              </ul>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="soft-panel p-3 h-100">
+              <strong>Media + review workflow</strong>
+              <ul class="small text-secondary helper-list mt-2 mb-0">
+                <li>Generate demo audio and visuals</li>
+                <li>Review scenes and pass the 60% dynamic gate</li>
+                <li>Assemble a real MP4 with ffmpeg</li>
+                <li>Review title, thumbnail path, and publish metadata</li>
+              </ul>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="soft-panel p-3 h-100">
+              <strong>Publishing support</strong>
+              <ul class="small text-secondary helper-list mt-2 mb-0">
+                <li>Store a YouTube video id</li>
+                <li>Save a scheduled publish time</li>
+                <li>Track publish records in the database</li>
+              </ul>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="soft-panel p-3 h-100">
+              <strong>Analytics support</strong>
+              <ul class="small text-secondary helper-list mt-2 mb-0">
+                <li>Save D1, D7, and D28 snapshots</li>
+                <li>See a simple analytics table</li>
+                <li>Review logs for each project</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-lg-5">
+        <div class="section-label mb-2">Still Demo / Not Live Yet</div>
+        <div class="soft-panel p-3 h-100">
+          <ul class="small text-secondary helper-list mb-0">
+            <li>Real Claude script generation</li>
+            <li>Real YouTube search results</li>
+            <li>Real Edge TTS voice</li>
+            <li>Real Pexels fetch + caching</li>
+            <li>Real YouTube upload and analytics APIs</li>
+            <li>Whisper captions and background music</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="step-card">
+      <div class="step-number">1</div>
+      <strong>Create project</strong>
+      <div class="small text-secondary mt-2">Start with a working title and open the project page.</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="step-card">
+      <div class="step-number">2</div>
+      <strong>Prepare script</strong>
+      <div class="small text-secondary mt-2">Set topic, generate script, edit it yourself, and approve it.</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="step-card">
+      <div class="step-number">3</div>
+      <strong>Generate media</strong>
+      <div class="small text-secondary mt-2">Create demo scene assets, review them, and assemble the video.</div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="step-card">
+      <div class="step-number">4</div>
+      <strong>Review + schedule</strong>
+      <div class="small text-secondary mt-2">Save metadata, store an upload id, schedule publish, and add snapshots.</div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-4">
+  {% for project in projects %}
+    <div class="col-md-6 col-xl-4">
+      <div class="card bg-panel border-secondary-subtle h-100">
+        <div class="card-body">
+          <div class="d-flex justify-content-between mb-3">
+            <span class="status-pill status-live">{{ project.state }}</span>
+            <small class="text-secondary">#{{ project.id }}</small>
+          </div>
+          <h2 class="h5">{{ project.working_title }}</h2>
+          <p class="text-secondary small mb-2">{{ project.topic or "No topic selected yet" }}</p>
+          <p class="small mb-3">Current step: <strong>{{ project.state }}</strong></p>
+          <a class="btn btn-outline-light btn-sm" href="{{ url_for('projects.project_detail', project_id=project.id) }}">Open</a>
+        </div>
+      </div>
+    </div>
+  {% else %}
+    <div class="col-12">
+      <div class="card bg-panel border-secondary-subtle">
+        <div class="card-body">
+          <p class="mb-0">No projects yet. Start with your first idea.</p>
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+{% endblock %}

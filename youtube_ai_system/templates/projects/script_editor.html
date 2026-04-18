@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% block title %}Script Editor{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <div class="section-label mb-2">Step 2</div>
+    <h1 class="h3 mb-1">Script Editor</h1>
+    <p class="text-secondary mb-0">You must edit the generated script yourself before approval. The hook must also pass validation.</p>
+  </div>
+  <form method="post" action="{{ url_for('projects.approve_script', project_id=project.id) }}">
+    <button class="btn btn-success">Approve Script</button>
+  </form>
+</div>
+
+<div class="card bg-panel border-secondary-subtle mb-4">
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-6">
+        <div class="section-label mb-2">Selected Topic</div>
+        <p class="mb-1"><strong>Topic:</strong> {{ project.topic or "Not selected" }}</p>
+        <p class="mb-1"><strong>Angle:</strong> {{ project.angle or "Not selected" }}</p>
+        <p class="mb-1"><strong>Target duration:</strong> {{ project.target_duration_minutes or 8 }} minutes</p>
+        <p class="mb-1"><strong>Niche:</strong> {{ project.channel_niche or "personal finance India" }}</p>
+        <p class="mb-0"><strong>Tone:</strong> {{ project.script_tone or "confident, direct, slightly provocative" }}</p>
+      </div>
+      <div class="col-md-6">
+        <div class="section-label mb-2">Draft Generation Mode</div>
+        {% set source = script_payload.meta.source if script_payload.meta else 'unknown' %}
+        <p class="mb-2">
+          <span class="status-pill {% if source in ['live_claude', 'live_groq'] %}status-live{% else %}status-muted{% endif %}">
+            {% if source == 'live_claude' %}Live Claude{% elif source == 'live_groq' %}Live Groq{% elif source == 'demo' %}Demo Draft{% else %}Unknown{% endif %}
+          </span>
+        </p>
+        <p class="small text-secondary mb-0">
+          {% if source == 'live_claude' %}
+            This draft was generated using your live Claude API configuration.
+          {% elif source == 'live_groq' %}
+            This draft was generated using your live Groq API configuration.
+          {% elif source == 'demo' %}
+            This draft was generated using the built-in demo fallback because no live script provider succeeded.
+          {% else %}
+            The app could not determine how this draft was generated.
+          {% endif %}
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if hook_errors %}
+  <div class="alert alert-warning">
+    <strong>Approval blockers:</strong>
+    <ul class="mb-0 mt-2">
+      {% for error in hook_errors %}
+        <li>{{ error }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endif %}
+
+<form method="post" action="{{ url_for('projects.save_script', project_id=project.id) }}">
+  <div class="card bg-panel border-secondary-subtle mb-4">
+    <div class="card-body">
+      <strong>What to do on this page</strong>
+      <ul class="small text-secondary helper-list mt-2 mb-0">
+        <li>Review the generated draft for the selected topic and angle</li>
+        <li>Edit the hook and body scenes in your own words</li>
+        <li>Save the changes at least once</li>
+        <li>Approve only after the blockers disappear</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card bg-panel border-secondary-subtle mb-4">
+    <div class="card-body">
+      <h2 class="h5">Hook</h2>
+      <div class="mb-3">
+        <label class="form-label">Narration</label>
+        <textarea class="form-control" rows="3" name="hook_narration">{{ script_payload.hook.narration }}</textarea>
+      </div>
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label">Estimated duration</label>
+          <input class="form-control" type="number" step="0.1" name="hook_duration" value="{{ script_payload.hook.estimated_duration_sec }}">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Tension type</label>
+          <input class="form-control" name="hook_tension_type" value="{{ script_payload.hook.tension_type }}">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Visual type</label>
+          <select class="form-select" name="hook_visual_type">
+            {% for visual_type in ['motion_text', 'broll', 'graph'] %}
+              <option value="{{ visual_type }}" {% if script_payload.hook.visual_type == visual_type %}selected{% endif %}>{{ visual_type }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="mt-3">
+        <label class="form-label">Visual instruction</label>
+        <input class="form-control" name="hook_visual_instruction" value="{{ script_payload.hook.visual_instruction }}">
+      </div>
+    </div>
+  </div>
+
+  <input type="hidden" name="scene_count" value="{{ script_payload.scenes|length }}">
+  {% for scene in script_payload.scenes %}
+    <div class="card bg-panel border-secondary-subtle mb-4">
+      <div class="card-body">
+        <h2 class="h5">Scene {{ loop.index }}</h2>
+        <div class="mb-3">
+          <label class="form-label">Narration</label>
+          <textarea class="form-control" rows="3" name="scene_{{ loop.index0 }}_narration">{{ scene.narration }}</textarea>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">Visual instruction</label>
+          <input class="form-control" name="scene_{{ loop.index0 }}_visual_instruction" value="{{ scene.visual_instruction }}">
+        </div>
+        <div>
+          <label class="form-label">Visual type</label>
+          <select class="form-select" name="scene_{{ loop.index0 }}_visual_type">
+            {% for visual_type in ['motion_text', 'broll', 'graph'] %}
+              <option value="{{ visual_type }}" {% if scene.visual_type == visual_type %}selected{% endif %}>{{ visual_type }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+
+  <div class="card bg-panel border-secondary-subtle mb-4">
+    <div class="card-body">
+      <h2 class="h5">Outro</h2>
+      <div class="mb-3">
+        <label class="form-label">Narration</label>
+        <textarea class="form-control" rows="3" name="outro_narration">{{ script_payload.outro.narration }}</textarea>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Visual instruction</label>
+        <input class="form-control" name="outro_visual_instruction" value="{{ script_payload.outro.visual_instruction }}">
+      </div>
+      <div>
+        <label class="form-label">Visual type</label>
+        <select class="form-select" name="outro_visual_type">
+          {% for visual_type in ['motion_text', 'broll', 'graph'] %}
+            <option value="{{ visual_type }}" {% if script_payload.outro.visual_type == visual_type %}selected{% endif %}>{{ visual_type }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="card bg-panel border-secondary-subtle">
+    <div class="card-body">
+      <h2 class="h5">Packaging Draft</h2>
+      <div class="mb-3">
+        <label class="form-label">Title options (one per line)</label>
+        <textarea class="form-control" rows="4" name="titles">{{ script_payload.titles|join('\n') }}</textarea>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Description</label>
+        <textarea class="form-control" rows="4" name="description">{{ script_payload.description }}</textarea>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Tags (comma separated)</label>
+        <input class="form-control" name="tags" value="{{ script_payload.tags|join(', ') }}">
+      </div>
+      <button class="btn btn-primary">Save Edits</button>
+    </div>
+  </div>
+</form>
+{% endblock %}
