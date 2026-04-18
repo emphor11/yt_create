@@ -72,16 +72,21 @@ class AssemblyService:
         return str(final_path)
 
     def _render_scene_video(self, ffmpeg_bin: str, visual_path: str, audio_path: str, output_path: Path) -> None:
-        subprocess.run(
-            [
+        visual_suffix = Path(visual_path).suffix.lower()
+        if visual_suffix in {".mp4", ".mov", ".mkv", ".webm"}:
+            command = [
                 ffmpeg_bin,
                 "-y",
-                "-loop",
-                "1",
+                "-stream_loop",
+                "-1",
                 "-i",
                 visual_path,
                 "-i",
                 audio_path,
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
                 "-shortest",
                 "-c:v",
                 "libx264",
@@ -90,7 +95,28 @@ class AssemblyService:
                 "-c:a",
                 "aac",
                 str(output_path),
-            ],
-            check=True,
-            capture_output=True,
-        )
+            ]
+        else:
+            command = [
+                ffmpeg_bin,
+                "-y",
+                "-loop",
+                "1",
+                "-i",
+                visual_path,
+                "-i",
+                audio_path,
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                "-shortest",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                str(output_path),
+            ]
+        subprocess.run(command, check=True, capture_output=True)

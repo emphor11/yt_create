@@ -18,9 +18,48 @@
     <ul class="small text-secondary helper-list mt-2 mb-0">
       <li>Tries real Edge TTS voice generation first</li>
       <li>Falls back to demo silent audio if live voice fails</li>
-      <li>Generates a basic visual per scene</li>
+      <li>Generates motion-text videos, graph videos, and Pexels b-roll when available</li>
       <li>Stores scene-level source information in the database</li>
     </ul>
+  </div>
+</div>
+
+<div class="card bg-panel border-secondary-subtle mb-4">
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-6">
+        <div class="section-label mb-2">Voice Result</div>
+        <p class="mb-2">
+          <span class="status-pill {% if media_summary.voice_status == 'live' %}status-live{% elif media_summary.voice_status == 'mixed' %}status-warning{% else %}status-muted{% endif %}">
+            {% if media_summary.voice_status == 'live' %}Live Voice{% elif media_summary.voice_status == 'mixed' %}Mixed Voice{% elif media_summary.voice_status == 'demo' %}Demo Fallback{% elif media_summary.voice_status == 'not_run' %}Not Run Yet{% else %}Unknown{% endif %}
+          </span>
+        </p>
+        <p class="mb-1">{{ media_summary.voice_message }}</p>
+        {% if media_summary.audio_counts %}
+          <p class="small text-secondary mb-0">
+            {% for source, count in media_summary.audio_counts.items() %}
+              {{ source }}: {{ count }}{% if not loop.last %} · {% endif %}
+            {% endfor %}
+          </p>
+        {% endif %}
+      </div>
+      <div class="col-md-6">
+        <div class="section-label mb-2">Visual Result</div>
+        <p class="mb-2">
+          <span class="status-pill {% if media_summary.visual_status == 'generated' %}status-live{% elif media_summary.visual_status == 'partial' %}status-warning{% else %}status-muted{% endif %}">
+            {% if media_summary.visual_status == 'generated' %}Visuals Generated{% elif media_summary.visual_status == 'partial' %}Partially Generated{% elif media_summary.visual_status == 'missing' %}Missing Visuals{% elif media_summary.visual_status == 'not_run' %}Not Run Yet{% else %}Unknown{% endif %}
+          </span>
+        </p>
+        <p class="mb-1">{{ media_summary.visual_message }}</p>
+        {% if media_summary.visual_counts %}
+          <p class="small text-secondary mb-0">
+            {% for source, count in media_summary.visual_counts.items() %}
+              {{ source }}: {{ count }}{% if not loop.last %} · {% endif %}
+            {% endfor %}
+          </p>
+        {% endif %}
+      </div>
+    </div>
   </div>
 </div>
 
@@ -35,6 +74,19 @@
           </div>
           <p>{{ scene.narration_text }}</p>
           <p class="small text-secondary">{{ scene.visual_instruction }}</p>
+          {% if scene.visual_path %}
+            {% if scene.visual_path.endswith('.mp4') or scene.visual_path.endswith('.mov') or scene.visual_path.endswith('.webm') or scene.visual_path.endswith('.mkv') %}
+              <div class="mb-3">
+                <video class="w-100 rounded border" controls muted preload="metadata">
+                  <source src="{{ url_for('static_file_proxy', file_path=scene.visual_path) }}" type="video/mp4">
+                </video>
+              </div>
+            {% else %}
+              <div class="mb-3">
+                <img class="img-fluid rounded border" src="{{ url_for('static_file_proxy', file_path=scene.visual_path) }}" alt="Scene {{ scene.scene_order }} visual preview">
+              </div>
+            {% endif %}
+          {% endif %}
           {% if scene.visual_path %}
             <p class="small mb-1"><strong>Visual:</strong> {{ scene.visual_path }}</p>
           {% endif %}

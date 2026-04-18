@@ -6,6 +6,7 @@ from flask import Blueprint, flash, redirect, render_template, request, url_for
 
 from ..models.repository import ProjectRepository, utcnow
 from ..services.run_log import RunLogger
+from ..services.media_service import MediaService
 from ..services.script_service import ScriptService
 from ..services.state_machine import InvalidTransitionError, StateMachine
 from ..services.topic_service import TopicService
@@ -59,6 +60,7 @@ def project_detail(project_id: int):
     script_version = repo.get_latest_script_version(project_id)
     scenes = repo.list_scenes(project_id)
     logs = repo.list_run_logs(project_id)
+    voice_summary = MediaService().project_voice_summary(project_id)
     script_payload = None
     if script_version:
         script_payload = json.loads(script_version["full_script_json"])
@@ -71,6 +73,7 @@ def project_detail(project_id: int):
         script_payload=script_payload,
         scenes=scenes,
         logs=logs,
+        voice_summary=voice_summary,
         next_step=next_step,
         available_actions=available_actions,
     )
@@ -187,6 +190,8 @@ def save_script(project_id: int):
         flash("No script draft found.", "danger")
         return redirect(url_for("projects.project_detail", project_id=project_id))
 
+    existing_payload = json.loads(script_version["full_script_json"])
+
     payload = {
         "hook": {
             "narration": request.form.get("hook_narration", "").strip(),
@@ -204,6 +209,7 @@ def save_script(project_id: int):
         "titles": [line.strip() for line in request.form.get("titles", "").splitlines() if line.strip()],
         "description": request.form.get("description", "").strip(),
         "tags": [tag.strip() for tag in request.form.get("tags", "").split(",") if tag.strip()],
+        "meta": existing_payload.get("meta", {}),
     }
 
     scene_count = int(request.form.get("scene_count", 0))

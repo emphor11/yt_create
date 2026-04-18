@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from flask import Flask
+from flask import Flask, abort, request, send_file
 
 from .config import Config
 from .db import close_db, init_app
@@ -37,5 +37,20 @@ def create_app(test_config: dict | None = None) -> Flask:
     @app.route("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.route("/local-file")
+    def static_file_proxy():
+        raw_path = request.args.get("file_path", "").strip()
+        if not raw_path:
+            abort(404)
+        requested_path = Path(raw_path).resolve()
+        storage_root = Path(app.config["STORAGE_ROOT"]).resolve()
+        try:
+            requested_path.relative_to(storage_root)
+        except ValueError:
+            abort(403)
+        if not requested_path.exists():
+            abort(404)
+        return send_file(requested_path)
 
     return app

@@ -69,6 +69,13 @@
         <div class="section-label mb-2">Main Actions</div>
         <div class="action-grid">
           <div class="action-box">
+            <strong>Test voice</strong>
+            <div class="small text-secondary mb-3 mt-2">Check whether live Edge TTS is working before generating full scene audio.</div>
+            <form method="post" action="{{ url_for('media.voice_check') }}">
+              <button class="btn btn-outline-light btn-sm">Run Check</button>
+            </form>
+          </div>
+          <div class="action-box">
             <strong>Topic selection</strong>
             <div class="small text-secondary mb-3 mt-2">Set the topic and angle for this project.</div>
             {% if available_actions.topic_selection %}
@@ -149,6 +156,28 @@
         <p class="mb-1"><strong>Target duration:</strong> {{ project.target_duration_minutes or 8 }} minutes</p>
         <p class="mb-1"><strong>Channel niche:</strong> {{ project.channel_niche or "personal finance India" }}</p>
         <p class="mb-0"><strong>Tone:</strong> {{ project.script_tone or "confident, direct, slightly provocative" }}</p>
+      </div>
+    </div>
+
+    <div class="card bg-panel border-secondary-subtle mb-4">
+      <div class="card-body">
+        <div class="section-label mb-2">Voice Status</div>
+        {% set voice_status = voice_summary.status %}
+        <p class="mb-2">
+          <span class="status-pill {% if voice_status == 'live' %}status-live{% elif voice_status == 'mixed' %}status-warning{% else %}status-muted{% endif %}">
+            {% if voice_status == 'live' %}Live Voice{% elif voice_status == 'mixed' %}Mixed Voice{% elif voice_status == 'demo' %}Demo Voice{% elif voice_status == 'not_run' %}Not Run Yet{% else %}Unknown{% endif %}
+          </span>
+        </p>
+        <p class="mb-1"><strong>Configured mode:</strong> {{ voice_summary.mode }}</p>
+        <p class="mb-1"><strong>Total scenes:</strong> {{ voice_summary.total_scenes }}</p>
+        <p class="mb-2">{{ voice_summary.message }}</p>
+        {% if voice_summary.counts %}
+          <p class="small text-secondary mb-0">
+            {% for source, count in voice_summary.counts.items() %}
+              {{ source }}: {{ count }}{% if not loop.last %} · {% endif %}
+            {% endfor %}
+          </p>
+        {% endif %}
       </div>
     </div>
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import Blueprint, flash, redirect, render_template, url_for
+from flask import Blueprint, flash, redirect, render_template, request, url_for
 
 from ..models.repository import ProjectRepository
 from ..services.assembly_service import AssemblyService
@@ -8,6 +8,21 @@ from ..services.media_service import MediaService
 from ..services.state_machine import InvalidTransitionError, StateMachine
 
 media_bp = Blueprint("media", __name__)
+
+
+@media_bp.route("/voice/check", methods=["POST"])
+def voice_check():
+    result = MediaService().run_voice_check()
+    if result["status"] == "live":
+        flash(
+            f"Live voice check passed. Audio saved at {result['audio_path']} ({result['duration']}s).",
+            "success",
+        )
+    elif result["status"] == "demo":
+        flash(result["message"], "info")
+    else:
+        flash(result["message"], "warning")
+    return redirect(request.referrer or url_for("projects.project_list"))
 
 
 @media_bp.route("/projects/<int:project_id>/media/generate", methods=["POST"])
@@ -23,6 +38,15 @@ def generate_media(project_id: int):
         state_machine.transition(project_id, "media_generating", "Media generation started.")
         media_service.generate_voice_and_visuals(project_id)
         state_machine.transition(project_id, "scene_review", "Media assets ready for scene review.")
+        media_summary = media_service.project_media_summary(project_id)
+        flash(
+            (
+                f"Media generation finished. "
+                f"Voice: {media_summary['voice_message']} "
+                f"Visuals: {media_summary['visual_message']}"
+            ),
+            "info",
+        )
     except InvalidTransitionError as exc:
         flash(str(exc), "danger")
     return redirect(url_for("media.scene_review", project_id=project_id))
@@ -36,13 +60,16 @@ def scene_review(project_id: int):
         flash("Scene review is only available after media generation starts.", "warning")
         return redirect(url_for("projects.project_detail", project_id=project_id))
     scenes = repo.list_scenes(project_id)
-    ratio, _ = MediaService().compute_dynamic_visual_ratio(project_id)
+    media_service = MediaService()
+    ratio, _ = media_service.compute_dynamic_visual_ratio(project_id)
+    media_summary = media_service.project_media_summary(project_id)
     return render_template(
         "projects/scene_review.html",
         project=project,
         scenes=scenes,
         ratio=ratio,
         threshold=0.6,
+        media_summary=media_summary,
     )
 
 

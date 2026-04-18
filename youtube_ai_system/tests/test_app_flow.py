@@ -14,6 +14,7 @@ class AppFlowTestCase(unittest.TestCase):
             {
                 "TESTING": True,
                 "LLM_PROVIDER": "demo",
+                "VOICE_MODE": "demo",
                 "DATABASE_PATH": root / "instance" / "database.db",
                 "INSTANCE_PATH": root / "instance",
                 "STORAGE_ROOT": root / "storage",
@@ -59,6 +60,29 @@ class AppFlowTestCase(unittest.TestCase):
         self.assertEqual(project["target_duration_minutes"], 9)
         self.assertEqual(project["channel_niche"], "personal finance India")
         self.assertEqual(project["script_tone"], "confident, direct")
+
+    def test_voice_check_demo_mode_returns_info(self) -> None:
+        response = self.client.post(
+            "/voice/check",
+            headers={"Referer": "/projects"},
+            follow_redirects=True,
+        )
+        body = response.get_data(as_text=True)
+        self.assertIn("demo silent audio", body)
+
+    def test_numeric_hook_can_pass_tension_validation_after_edit(self) -> None:
+        project_id = self._create_topic_ready_project()
+        self.client.post(f"/projects/{project_id}/script/generate", follow_redirects=True)
+        response = self.client.post(
+            f"/projects/{project_id}/script/save",
+            data=self._edited_script_payload(
+                hook_narration="80% of Indian millennials are broke by 30",
+                hook_tension_type="shocking_statistic",
+            ),
+            follow_redirects=True,
+        )
+        body = response.get_data(as_text=True)
+        self.assertNotIn("Hook must include a curiosity/tension signal.", body)
 
     def test_end_to_end_demo_flow_reaches_scheduled(self) -> None:
         project_id = self._create_topic_ready_project()
@@ -123,11 +147,15 @@ class AppFlowTestCase(unittest.TestCase):
         )
         return project_id
 
-    def _edited_script_payload(self) -> dict[str, str]:
+    def _edited_script_payload(
+        self,
+        hook_narration: str = "Why do smart people keep making this saving mistake?",
+        hook_tension_type: str = "curiosity_gap",
+    ) -> dict[str, str]:
         return {
-            "hook_narration": "Why do smart people keep making this saving mistake?",
+            "hook_narration": hook_narration,
             "hook_duration": "6",
-            "hook_tension_type": "curiosity_gap",
+            "hook_tension_type": hook_tension_type,
             "hook_visual_instruction": "Bold motion text around invisible saving mistakes",
             "hook_visual_type": "motion_text",
             "scene_count": "3",

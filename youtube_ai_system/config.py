@@ -39,6 +39,8 @@ class Config:
         "YOUTUBE_TOKEN_PATH", str(INSTANCE_PATH / "youtube_token.json")
     )
     PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY")
+    PEXELS_API_TIMEOUT = int(os.environ.get("PEXELS_API_TIMEOUT", "15"))
+    PEXELS_SEARCH_LIMIT = int(os.environ.get("PEXELS_SEARCH_LIMIT", "5"))
     PIXABAY_API_KEY = os.environ.get("PIXABAY_API_KEY")
     EDGE_TTS_VOICE = os.environ.get(
         "EDGE_TTS_VOICE", "Microsoft Server Speech Text to Speech Voice (en-US, AriaNeural)"
@@ -46,6 +48,7 @@ class Config:
     EDGE_TTS_RATE = os.environ.get("EDGE_TTS_RATE", "+0%")
     EDGE_TTS_CONNECT_TIMEOUT = int(os.environ.get("EDGE_TTS_CONNECT_TIMEOUT", "4"))
     EDGE_TTS_RECEIVE_TIMEOUT = int(os.environ.get("EDGE_TTS_RECEIVE_TIMEOUT", "12"))
+    EDGE_TTS_CLI_TIMEOUT = int(os.environ.get("EDGE_TTS_CLI_TIMEOUT", "20"))
     VOICE_MODE = os.environ.get("VOICE_MODE", "demo")
 
     CAPTIONS_ENABLED = os.environ.get("CAPTIONS_ENABLED", "false").lower() == "true"

@@ -73,6 +73,11 @@
   color: #475569;
 }
 
+.status-warning {
+  background: #fef3c7;
+  color: #92400e;
+}
+
 .action-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

@@ -24,6 +24,17 @@ TENSION_WORDS = {
     "actually",
     "shocking",
     "hidden",
+    "quietly",
+    "silently",
+    "cost",
+    "lose",
+    "risk",
+    "leak",
+    "broke",
+    "collapse",
+    "drop",
+    "destroy",
+    "warning",
 }
 
 DEFAULT_TARGET_DURATION_MINUTES = 8
@@ -103,7 +114,11 @@ class ScriptService:
         narration_words = re.findall(r"\b[\w']+\b", narration.lower())
         has_tension_word = any(word in TENSION_WORDS for word in narration_words)
         has_question = "?" in narration
-        if not (has_tension_word or has_question):
+        has_number = bool(re.search(r"\b\d+(?:\.\d+)?%?\b", narration))
+        tension_type = str(hook.get("tension_type", "")).strip().lower()
+        has_valid_tension_type = tension_type in VALID_TENSION_TYPES
+        has_contrast = bool(re.search(r"\bbut\b|\band\b|\bwhile\b|—|-", narration.lower()))
+        if not (has_tension_word or has_question or has_number or has_valid_tension_type or has_contrast):
             errors.append("Hook must include a curiosity/tension signal.")
         return errors
 
