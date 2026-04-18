@@ -13,28 +13,21 @@ import requests
 from ..models.repository import ProjectRepository, utcnow
 from .run_log import RunLogger
 
-TENSION_WORDS = {
-    "why",
-    "how",
-    "never",
-    "secret",
-    "mistake",
-    "truth",
-    "wrong",
-    "actually",
-    "shocking",
-    "hidden",
-    "quietly",
-    "silently",
-    "cost",
-    "lose",
-    "risk",
-    "leak",
-    "broke",
-    "collapse",
-    "drop",
-    "destroy",
-    "warning",
+TENSION_KEYWORDS = {
+    "?", "why", "how", "never", "secret", "mistake", "truth", "wrong",
+    "actually", "shocking", "reveal", "hidden", "nobody",
+    "most people", "what happens", "find out", "you think",
+    "real reason",
+}
+
+PEOPLE_GROUP_WORDS = {
+    "indians", "people", "salary", "workers", "families",
+    "earners", "graduates", "investors",
+}
+
+NEGATIVE_IMPLICATION_WORDS = {
+    "lose", "lost", "losing", "paying", "gone", "spent", "debt",
+    "broke", "savings", "interest", "leak", "drain", "cost",
 }
 
 DEFAULT_TARGET_DURATION_MINUTES = 8
@@ -110,16 +103,45 @@ class ScriptService:
         errors: list[str] = []
         if float(hook.get("estimated_duration_sec", 0)) > 7:
             errors.append("Hook must be 7 seconds or under.")
+
         narration = str(hook.get("narration", "")).strip()
-        narration_words = re.findall(r"\b[\w']+\b", narration.lower())
-        has_tension_word = any(word in TENSION_WORDS for word in narration_words)
-        has_question = "?" in narration
-        has_number = bool(re.search(r"\b\d+(?:\.\d+)?%?\b", narration))
-        tension_type = str(hook.get("tension_type", "")).strip().lower()
-        has_valid_tension_type = tension_type in VALID_TENSION_TYPES
-        has_contrast = bool(re.search(r"\bbut\b|\band\b|\bwhile\b|—|-", narration.lower()))
-        if not (has_tension_word or has_question or has_number or has_valid_tension_type or has_contrast):
-            errors.append("Hook must include a curiosity/tension signal.")
+        narration_lower = narration.lower()
+        word_count = len(narration.split())
+
+        # --- Condition A: tension keyword or question mark ---
+        condition_a = False
+        for keyword in TENSION_KEYWORDS:
+            if keyword in narration_lower:
+                condition_a = True
+                break
+
+        # --- Condition B: percentage/large number + people group ---
+        condition_b = False
+        has_pct = "%" in narration
+        large_numbers = [int(m) for m in re.findall(r"\d+", narration) if int(m) > 1000]
+        has_large_number = len(large_numbers) > 0
+        has_people_group = any(pg in narration_lower for pg in PEOPLE_GROUP_WORDS)
+        if (has_pct or has_large_number) and word_count <= 25 and has_people_group:
+            condition_b = True
+
+        # --- Condition C: rupee symbol + negative implication ---
+        condition_c = False
+        has_rupee = "₹" in narration
+        has_negative = any(nw in narration_lower for nw in NEGATIVE_IMPLICATION_WORDS)
+        if has_rupee and has_negative:
+            condition_c = True
+
+        if not (condition_a or condition_b or condition_c):
+            guidance_lines = [
+                "Hook must include a tension signal. Satisfy ANY ONE of these:",
+                "  A) Include a tension keyword or question mark: "
+                + ", ".join(sorted(TENSION_KEYWORDS)),
+                "  B) Include a percentage or number > 1000 AND a people group word "
+                + f"({', '.join(sorted(PEOPLE_GROUP_WORDS))}) in under 25 words",
+                "  C) Include ₹ symbol AND a negative implication word "
+                + f"({', '.join(sorted(NEGATIVE_IMPLICATION_WORDS))})",
+            ]
+            errors.append(" | ".join(guidance_lines))
         return errors
 
     def approval_ready(self, script_version: dict[str, Any]) -> tuple[bool, list[str], dict[str, Any]]:
@@ -262,6 +284,33 @@ class ScriptService:
             "- For graph: specify chart type, data to show, and animation style\n"
             "- For broll: write a specific 3–5 word search query for stock footage\n"
             "- For motion_text: write the exact text on screen, under 10 words\n\n"
+            "GRAPH DATA RULE — MANDATORY:\n"
+            "When visual_type is graph, the visual_instruction field MUST include "
+            "actual data points in this exact format:\n\n"
+            "For bar charts: \n"
+            "'bar chart, data: Label1=Value1, Label2=Value2, Label3=Value3, "
+            "title: Chart Title Here, color: orange'\n\n"
+            "For line charts:\n"
+            "'line chart, data: Year1=Value1, Year2=Value2, Year3=Value3, "
+            "title: Chart Title Here, color: red'\n\n"
+            "For pie charts:\n"
+            "'pie chart, data: Label1=Percentage1%, Label2=Percentage2%, "
+            "title: Chart Title Here'\n\n"
+            "For number reveals:\n"
+            "'number reveal, value: 40%, label: Credit Card Interest Rate India'\n\n"
+            "If you do not have exact data, use realistic approximate figures "
+            "consistent with Indian financial statistics. Label them clearly.\n\n"
+            "NEVER write a graph instruction without data. A graph instruction "
+            "without data is invalid and will fail rendering.\n\n"
+            "MOTION TEXT RULE:\n"
+            "When visual_type is motion_text, the visual_instruction field must "
+            "contain the key information to display, not a description of what to show.\n\n"
+            "WRONG: 'show a bold statement about savings'\n"
+            "RIGHT: 'SAVINGS RATE DROPPING — only 4% of income saved'\n\n"
+            "WRONG: 'lifestyle inflation warning'\n"
+            "RIGHT: 'LIFESTYLE INFLATION — 75% spend more as they earn more'\n\n"
+            "The visual_instruction for motion_text should be the actual text "
+            "content, structured as: HEADLINE — supporting fact or stat\n\n"
             "WHAT GREAT FINANCE CONTENT SOUNDS LIKE:\n"
             "- urgent, useful, specific, number-driven, and respectful of the viewer's time\n"
             "- slightly smarter after each scene\n"

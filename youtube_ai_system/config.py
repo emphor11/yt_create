@@ -40,11 +40,10 @@ class Config:
     )
     PEXELS_API_KEY = os.environ.get("PEXELS_API_KEY")
     PEXELS_API_TIMEOUT = int(os.environ.get("PEXELS_API_TIMEOUT", "15"))
-    PEXELS_SEARCH_LIMIT = int(os.environ.get("PEXELS_SEARCH_LIMIT", "5"))
+    PEXELS_SEARCH_LIMIT = int(os.environ.get("PEXELS_SEARCH_LIMIT", "10"))
     PIXABAY_API_KEY = os.environ.get("PIXABAY_API_KEY")
-    EDGE_TTS_VOICE = os.environ.get(
-        "EDGE_TTS_VOICE", "Microsoft Server Speech Text to Speech Voice (en-US, AriaNeural)"
-    )
+    EDGE_TTS_VOICE = os.environ.get("EDGE_TTS_VOICE", "en-IN-PrabhatNeural")
+    EDGE_TTS_VOICE_ALT = os.environ.get("EDGE_TTS_VOICE_ALT", "en-IN-NeerjaNeural")
     EDGE_TTS_RATE = os.environ.get("EDGE_TTS_RATE", "+0%")
     EDGE_TTS_CONNECT_TIMEOUT = int(os.environ.get("EDGE_TTS_CONNECT_TIMEOUT", "4"))
     EDGE_TTS_RECEIVE_TIMEOUT = int(os.environ.get("EDGE_TTS_RECEIVE_TIMEOUT", "12"))
