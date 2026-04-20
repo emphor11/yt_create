@@ -88,6 +88,13 @@ class RenderSpecService:
         "thing",
         "visual",
     }
+    GENERIC_VISUAL_WORDS = {
+        "money reality",
+        "reality",
+        "system",
+        "think",
+        "wait what",
+    }
 
     BEAT_TO_COMPOSITION = {
         "stat_explosion": "StatExplosion",
@@ -114,20 +121,14 @@ class RenderSpecService:
         if visual_type == "graph":
             return self._graph_spec(instruction, duration_sec)
         if visual_type == "broll":
-            if source_asset_path is None:
-                raise ValueError("BrollOverlay requires a Pexels/Pixabay source video path.")
-            return RenderSpec(
-                composition="BrollOverlay",
-                props={
-                    "videoPath": str(source_asset_path),
-                    "overlayText": self._short_overlay(instruction or narration, 9),
-                    "durationSec": duration_sec,
-                    "brand": "YTCreate Finance",
-                    "sentiment": self._sentiment(instruction or narration),
-                },
-                duration_sec=duration_sec,
-                source="remotion_broll_overlay",
-                source_asset_path=source_asset_path,
+            return self.beat_spec(
+                {
+                    "intent": "EXPLANATION",
+                    "pattern": "MONEY_FLOW",
+                    "visual_logic": self._regenerate_logic_from_context(instruction or narration),
+                    "narration": narration,
+                    "estimated_duration_sec": duration_sec,
+                }
             )
         return self._stat_reveal_spec(instruction or narration, duration_sec)
 
@@ -194,20 +195,15 @@ class RenderSpecService:
             spec.props["animationSpeed"] = "fast"
             return spec
         if beat_type == "broll_caption":
-            if source_asset_path is None:
-                raise ValueError("BrollOverlay beat requires a Pexels/Pixabay source video path.")
-            return RenderSpec(
-                composition="BrollOverlay",
-                props={
-                    "videoPath": str(source_asset_path),
-                    "overlayText": caption or self._short_overlay(content, 9),
-                    "durationSec": duration_sec,
-                    "brand": "10 Minute Finance",
-                    "sentiment": self._sentiment(f"{content} {caption}"),
-                },
-                duration_sec=duration_sec,
-                source="remotion_broll_overlay",
-                source_asset_path=source_asset_path,
+            context = f"{content} {caption}".strip()
+            return self.beat_spec(
+                {
+                    "intent": "EXPLANATION",
+                    "pattern": "MONEY_FLOW",
+                    "visual_logic": self._regenerate_logic_from_context(context),
+                    "narration": context,
+                    "estimated_duration_sec": duration_sec,
+                }
             )
 
         return self._stat_reveal_spec(content or caption, duration_sec)
@@ -215,8 +211,7 @@ class RenderSpecService:
     def beat_requires_source_asset(self, beat: dict[str, Any]) -> bool:
         if self._is_structured_beat(beat):
             return self.normalize_structured_beat(beat)["component"] == "BrollOverlay"
-        beat_type = str(beat.get("beat_type") or "").lower()
-        return beat_type in {"broll", "broll_caption"}
+        return False
 
     def broll_query_for_beat(self, beat: dict[str, Any]) -> str:
         if self._is_structured_beat(beat):
@@ -231,14 +226,36 @@ class RenderSpecService:
             )
         return str(beat.get("content") or beat.get("caption") or "finance stress")
 
-    def deriveFromNarration(self, narration: str, preferred_pattern: str = "") -> dict[str, Any]:
-        logic = self._contextual_visual_logic_object(narration, {"pattern": preferred_pattern} if preferred_pattern else None)
+    def classifyIntent(self, narration: str) -> str:
+        text = str(narration or "").lower()
+        if any(phrase in text for phrase in ("cannot", "less than", "only")):
+            return "EMPHASIS"
+        if any(phrase in text for phrase in (" vs ", " versus ", "compared")):
+            return "COMPARISON"
+        if any(word in text for word in ("vanish", "vanished", "lost", "loss", "leak", "leaking", "reduce", "reduced", "inflation", "fd", "fixed deposit")):
+            return "DECAY"
+        if any(word in text for word in ("earn", "earned", "spend", "spent", "left", "automate", "manual", "emotion", "auto debit", "salary", "expense", "expenses")):
+            return "FLOW"
+        return "FLOW" if self._money_tokens(narration) else "EMPHASIS"
+
+    def deriveFromNarration(self, narration: str, preferred_pattern: str = "", classified_intent: str = "") -> dict[str, Any]:
+        classified_intent = (classified_intent or self.classifyIntent(narration)).strip().upper()
+        logic = self._logic_from_classified_intent(narration, classified_intent, {"pattern": preferred_pattern} if preferred_pattern else None)
         if preferred_pattern:
             preferred_pattern = preferred_pattern.strip().upper()
             coerced = self._coerce_logic_to_pattern(logic, narration, preferred_pattern)
             if self._typed_visual_logic_is_valid(coerced) and self._visual_logic_relevant_to_context(coerced, narration):
                 return coerced
         return logic
+
+    def _logic_from_classified_intent(self, narration: str, classified_intent: str, beat: dict[str, Any] | None = None) -> dict[str, Any]:
+        if classified_intent == "EMPHASIS":
+            return self._emphasis_logic_from_narration(narration)
+        if classified_intent == "COMPARISON":
+            return self._comparison_logic_from_narration(narration)
+        if classified_intent == "DECAY":
+            return self._decay_flow_from_narration(narration)
+        return self._flow_logic_from_narration(narration, beat)
 
     def validateRelevance(self, beat: dict[str, Any], narration: str) -> bool:
         context = narration or self._beat_context(beat)
@@ -254,6 +271,9 @@ class RenderSpecService:
         raw_pattern = str(beat.get("pattern") or "").strip().upper()
         context = self._beat_context(beat)
         visual_logic_object = self._coerce_visual_logic_object(beat, context)
+        classified_intent = self._classified_intent_for_beat(beat, context, visual_logic_object)
+        if not self._logic_can_reach_render(visual_logic_object, beat):
+            visual_logic_object = self._regenerate_logic_from_context(context, {**beat, "classified_intent": classified_intent})
         logic_valid = self._typed_visual_logic_is_valid(visual_logic_object)
         explicit_invalid_object = isinstance(beat.get("visual_logic"), dict) and not logic_valid
         force_emphasis = False
@@ -286,7 +306,7 @@ class RenderSpecService:
             or not self._pattern_has_required_concrete_data(intent, pattern, beat, visual_logic)
             or not self._passes_visual_gate(intent, pattern, visual_logic, beat)
         ):
-            visual_logic_object = self._safe_emphasis_logic_object(context) if not context.strip() else self._contextual_visual_logic_object(context, beat)
+            visual_logic_object = self._safe_emphasis_logic_object(context) if not context.strip() else self._regenerate_logic_from_context(context, {**beat, "classified_intent": classified_intent})
             visual_logic = self._visual_logic_to_text(visual_logic_object)
             logic_type = self._logic_type(visual_logic_object)
             intent = "COMPARISON" if logic_type == "comparison" else "EXPLANATION"
@@ -300,7 +320,25 @@ class RenderSpecService:
                 pattern = "EMPHASIS"
                 force_emphasis = True
 
+        intent, pattern, component, visual_logic_object = self._enforce_classified_render_contract(
+            classified_intent,
+            intent,
+            pattern,
+            component="",
+            visual_logic_object=visual_logic_object,
+            context=context,
+        )
+        visual_logic = self._visual_logic_to_text(visual_logic_object)
         component = self._derive_component(intent, pattern, beat, visual_logic)
+        intent, pattern, component, visual_logic_object = self._enforce_classified_render_contract(
+            classified_intent,
+            intent,
+            pattern,
+            component,
+            visual_logic_object,
+            context,
+        )
+        visual_logic = self._visual_logic_to_text(visual_logic_object)
         if raw_intent == "HOOK" and component == "FlowDiagram":
             intent = "EMPHASIS"
             pattern = "EMPHASIS"
@@ -315,25 +353,44 @@ class RenderSpecService:
         props = self._repair_props(component, pattern, visual_logic, caption, beat)
         if not self._props_pass_visual_gate(component, pattern, visual_logic, props):
             if not force_emphasis:
-                visual_logic_object = visual_logic_object if self._typed_visual_logic_is_valid(visual_logic_object) else self._contextual_visual_logic_object(context, beat)
+                visual_logic_object = visual_logic_object if self._logic_can_reach_render(visual_logic_object, beat) else self._regenerate_logic_from_context(context, {**beat, "classified_intent": classified_intent})
                 visual_logic = self._visual_logic_to_text(visual_logic_object)
                 intent = "COMPARISON" if self._logic_type(visual_logic_object) == "comparison" else "EXPLANATION"
                 pattern = self.LOGIC_TYPE_TO_PATTERN.get(self._logic_type(visual_logic_object), "MONEY_FLOW")
                 if raw_intent == "HOOK":
                     intent = "EMPHASIS"
                     pattern = "EMPHASIS"
+                intent, pattern, component, visual_logic_object = self._enforce_classified_render_contract(
+                    classified_intent,
+                    intent,
+                    pattern,
+                    component,
+                    visual_logic_object,
+                    context,
+                )
+                visual_logic = self._visual_logic_to_text(visual_logic_object)
                 component = self._derive_component(intent, pattern, beat, visual_logic)
+                intent, pattern, component, visual_logic_object = self._enforce_classified_render_contract(
+                    classified_intent,
+                    intent,
+                    pattern,
+                    component,
+                    visual_logic_object,
+                    context,
+                )
+                visual_logic = self._visual_logic_to_text(visual_logic_object)
                 if raw_intent == "HOOK" and component == "FlowDiagram":
                     component = "StatExplosion"
                 props = self._regenerate_props(component, pattern, visual_logic, caption, context, beat)
         if not self._props_pass_visual_gate(component, pattern, visual_logic, props):
-            intent = "EMPHASIS"
-            pattern = "EMPHASIS"
-            component = "StatExplosion"
-            visual_logic_object = self._safe_emphasis_logic_object(context)
+            intent, pattern, component, visual_logic_object = self._fallback_for_classified_intent(classified_intent, context)
             visual_logic = self._visual_logic_to_text(visual_logic_object)
             caption = self._repair_caption("", visual_logic, context)
-            props = self._safe_emphasis_props(visual_logic, caption)
+            props = (
+                self._safe_emphasis_props(visual_logic, caption)
+                if component == "StatExplosion"
+                else self._regenerate_props(component, pattern, visual_logic, caption, context, {**beat, "props": {}})
+            )
         animation_spec = self.ANIMATION_MAP[animation_intent]
         if component == "FlowDiagram":
             props = self._polish_flow_display_props(props, visual_logic)
@@ -350,9 +407,133 @@ class RenderSpecService:
             "caption": caption,
             "animation_intent": animation_intent,
             "animation_spec": animation_spec,
+            "classified_intent": classified_intent,
             "estimated_duration_sec": duration,
             "props": props,
         }
+
+    def _regenerate_logic_from_context(self, context: str, beat: dict[str, Any] | None = None) -> dict[str, Any]:
+        classified_intent = str((beat or {}).get("classified_intent") or self.classifyIntent(context)).upper()
+        logic = self._logic_from_classified_intent(context, classified_intent, beat)
+        if self._logic_can_reach_render(logic, beat or {}):
+            return logic
+        transformed = self._transformation_logic_to_flow(logic)
+        if self._logic_can_reach_render(transformed, beat or {}):
+            return transformed
+        if context.strip():
+            return self._minimal_narration_flow(context, classified_intent)
+        return self._fallback_numeric_flow()
+
+    def _minimal_narration_flow(self, context: str, classified_intent: str = "") -> dict[str, Any]:
+        lowered = str(context or "").lower()
+        amounts = list(dict.fromkeys(self._money_tokens(context)))
+        if any(word in lowered for word in ("vanish", "vanished", "salary", "payday", "paycheck")):
+            source = self._amount_with_label(amounts[0], "Salary") if amounts else "₹25,000 Salary"
+            process = "day 12" if re.search(r"\bday\s*12\b", lowered) else "spending"
+            result = self._amount_with_label(amounts[1], "Left") if len(amounts) > 1 else "₹0 Left"
+            return {"type": "flow", "source": source, "process": process, "result": result}
+        if len(amounts) >= 2:
+            return {"type": "flow", "source": amounts[0], "process": "change", "result": amounts[1]}
+        amount = amounts[0] if amounts else "₹25,000"
+        return {"type": "flow", "source": self._amount_with_label(amount, "Start"), "process": "change", "result": "₹0 Left"}
+
+    def _transformation_logic_to_flow(self, visual_logic: Any) -> dict[str, Any] | None:
+        if not isinstance(visual_logic, dict):
+            return None
+        logic_type = self._logic_type(visual_logic)
+        if logic_type == "decay":
+            return {
+                "type": "flow",
+                "source": str(visual_logic.get("input") or ""),
+                "process": str(visual_logic.get("factor") or ""),
+                "result": str(visual_logic.get("output") or ""),
+            }
+        if logic_type == "growth":
+            return {
+                "type": "flow",
+                "source": str(visual_logic.get("input") or ""),
+                "process": str(visual_logic.get("rate") or ""),
+                "result": str(visual_logic.get("output") or ""),
+            }
+        return None
+
+    def _logic_can_reach_render(self, visual_logic: Any, beat: dict[str, Any]) -> bool:
+        if not self._typed_visual_logic_is_valid(visual_logic):
+            return False
+        text = self._visual_logic_to_text(visual_logic)
+        if self._contains_generic_visual_words(text):
+            return False
+        logic_type = self._logic_type(visual_logic)
+        if logic_type in {"flow", "comparison"}:
+            return True
+        return logic_type == "emphasis" and str(beat.get("intent") or "").upper() in {"HOOK", "EMPHASIS"}
+
+    def _classified_intent_for_beat(self, beat: dict[str, Any], context: str, visual_logic: Any) -> str:
+        explicit = str(beat.get("classified_intent") or "").upper()
+        if explicit in {"EMPHASIS", "COMPARISON", "FLOW", "DECAY"}:
+            return explicit
+        if context.strip():
+            return self.classifyIntent(context)
+        logic_type = self._logic_type(visual_logic)
+        if logic_type == "emphasis":
+            return "EMPHASIS"
+        if logic_type == "comparison":
+            return "COMPARISON"
+        if logic_type == "decay":
+            return "DECAY"
+        if logic_type == "flow":
+            return "FLOW"
+        raw_intent = str(beat.get("intent") or "").upper()
+        raw_pattern = str(beat.get("pattern") or "").upper()
+        if raw_intent in {"HOOK", "EMPHASIS"} or raw_pattern == "EMPHASIS":
+            return "EMPHASIS"
+        if raw_intent == "COMPARISON" or raw_pattern == "COMPARISON":
+            return "COMPARISON"
+        if raw_pattern == "VALUE_DECAY":
+            return "DECAY"
+        if raw_pattern in {"MONEY_FLOW", "LOOP", "GROWTH"} or raw_intent in {"EXPLANATION", "DATA"}:
+            return "FLOW"
+        return ""
+
+    def _enforce_classified_render_contract(
+        self,
+        classified_intent: str,
+        intent: str,
+        pattern: str,
+        component: str,
+        visual_logic_object: Any,
+        context: str,
+    ) -> tuple[str, str, str, dict[str, Any]]:
+        classified_intent = str(classified_intent or "").upper()
+        logic = visual_logic_object if isinstance(visual_logic_object, dict) else self._logic_from_classified_intent(context, classified_intent)
+        logic_type = self._logic_type(logic)
+        if classified_intent == "EMPHASIS":
+            if logic_type != "emphasis":
+                logic = self._emphasis_logic_from_narration(context)
+            return "EMPHASIS", "EMPHASIS", "StatExplosion", logic
+        if classified_intent == "COMPARISON":
+            if logic_type != "comparison":
+                logic = self._comparison_logic_from_narration(context)
+            return "COMPARISON", "COMPARISON", "SplitComparison", logic
+        if classified_intent == "FLOW":
+            if logic_type != "flow":
+                logic = self._flow_logic_from_narration(context)
+            return "EXPLANATION", "MONEY_FLOW", "FlowDiagram", logic
+        if classified_intent == "DECAY":
+            if logic_type not in {"flow", "decay"}:
+                logic = self._decay_flow_from_narration(context)
+            return "EXPLANATION", "VALUE_DECAY", "FlowDiagram", logic
+        return intent, pattern, component, logic
+
+    def _fallback_for_classified_intent(self, classified_intent: str, context: str) -> tuple[str, str, str, dict[str, Any]]:
+        classified_intent = str(classified_intent or "").upper()
+        if classified_intent == "EMPHASIS":
+            return "EMPHASIS", "EMPHASIS", "StatExplosion", self._emphasis_logic_from_narration(context)
+        if classified_intent == "COMPARISON":
+            return "COMPARISON", "COMPARISON", "SplitComparison", self._comparison_logic_from_narration(context)
+        if classified_intent == "DECAY":
+            return "EXPLANATION", "VALUE_DECAY", "FlowDiagram", self._decay_flow_from_narration(context)
+        return "EXPLANATION", "MONEY_FLOW", "FlowDiagram", self._flow_logic_from_narration(context)
 
     def _structured_beat_spec(self, beat: dict[str, Any], source_asset_path: Path | None = None) -> RenderSpec:
         normalized = self.normalize_structured_beat(beat)
@@ -510,7 +691,7 @@ class RenderSpecService:
         if pattern == "COMPARISON":
             return "SplitComparison"
         if pattern == "CONTEXT":
-            return "BrollOverlay"
+            return "FlowDiagram"
         props = beat.get("props") if isinstance(beat.get("props"), dict) else {}
         emphasis_text = " ".join(
             str(value)
@@ -660,7 +841,11 @@ class RenderSpecService:
         if self._is_abstract_visual_logic(text) or not self._has_number(text) or not self._has_impact(text):
             return False
         if logic_type == "comparison":
-            return self._has_number(str(visual_logic.get("left") or "")) and self._has_number(str(visual_logic.get("right") or ""))
+            return (
+                self._has_number(str(visual_logic.get("left") or ""))
+                and self._has_number(str(visual_logic.get("right") or ""))
+                and self._comparison_units_match(visual_logic)
+            )
         if logic_type == "emphasis":
             return self._has_number(text) and self._has_impact(text)
         if logic_type == "flow" and not self._flow_semantically_valid(visual_logic):
@@ -677,8 +862,8 @@ class RenderSpecService:
         if any(word in lowered for word in ("salary", "income", "paycheck")):
             return (
                 any(word in source.lower() for word in ("salary", "income", "paycheck"))
-                and any(word in process.lower() for word in ("expense", "expenses", "tax", "spend", "spent", "emi", "rent"))
-                and any(word in result.lower() for word in ("left", "saving", "savings", "leak", "loss"))
+                and any(word in process.lower() for word in ("expense", "expenses", "tax", "spend", "spent", "emi", "rent", "day", "leak", "lost", "loss", "vanish"))
+                and any(word in result.lower() for word in ("left", "saving", "savings", "leak", "loss", "lost"))
             )
         values = [self._first_numeric_value(part) for part in (source, process, result)]
         money_parts = [part for part in (source, process, result) if "₹" in part]
@@ -692,13 +877,51 @@ class RenderSpecService:
         logic_text = self._visual_logic_to_text(visual_logic)
         context_numbers = set(self._money_tokens(context) + self._percent_tokens(context))
         logic_numbers = set(self._money_tokens(logic_text) + self._percent_tokens(logic_text))
-        if context_numbers and logic_numbers and not logic_numbers.issubset(context_numbers | self._derived_context_number_tokens(context)):
+        if self._logic_type(visual_logic) == "comparison" and not self._comparison_units_match(visual_logic):
+            return False
+        if logic_numbers and not self._numbers_allowed_by_context(logic_numbers, context_numbers, context):
             return False
         logic_keywords = self._meaningful_keywords(logic_text)
         context_keywords = self._meaningful_keywords(context)
         if not context_keywords or not logic_keywords:
             return True
         return bool(logic_keywords & context_keywords)
+
+    def _comparison_units_match(self, visual_logic: Any) -> bool:
+        if not isinstance(visual_logic, dict):
+            return True
+        left = str(visual_logic.get("left") or "")
+        right = str(visual_logic.get("right") or "")
+        left_unit = self._dominant_unit(left)
+        right_unit = self._dominant_unit(right)
+        if {left_unit, right_unit} == {"percent", "money"}:
+            return False
+        return True
+
+    def _dominant_unit(self, text: str) -> str:
+        if self._money_tokens(text):
+            return "money"
+        if self._percent_tokens(text):
+            return "percent"
+        return "number" if re.search(r"\b\d+(?:\.\d+)?\b", text) else "none"
+
+    def _numbers_allowed_by_context(self, logic_numbers: set[str], context_numbers: set[str], context: str) -> bool:
+        if not logic_numbers:
+            return True
+        if context_numbers:
+            allowed = set(context_numbers)
+            allowed.update(self._strict_contextual_number_allowlist(context))
+            return logic_numbers.issubset(allowed)
+        return bool(self._strict_contextual_number_allowlist(context)) and logic_numbers.issubset(self._strict_contextual_number_allowlist(context))
+
+    def _strict_contextual_number_allowlist(self, context: str) -> set[str]:
+        lowered = str(context or "").lower()
+        allowed: set[str] = set()
+        if any(word in lowered for word in ("vanish", "vanished", "salary", "payday", "paycheck")):
+            allowed.update({"₹25,000", "₹0"})
+        if any(word in lowered for word in ("manual", "emotion", "emotional", "automate", "auto debit")):
+            allowed.add("₹0")
+        return allowed
 
     def _derived_context_number_tokens(self, context: str) -> set[str]:
         lowered = context.lower()
@@ -791,15 +1014,23 @@ class RenderSpecService:
         return self._visual_logic_to_text(self._contextual_visual_logic_object(context, beat))
 
     def _contextual_visual_logic_object(self, context: str, beat: dict[str, Any] | None = None) -> dict[str, Any]:
+        classified_intent = str((beat or {}).get("classified_intent") or "").upper()
+        if classified_intent in {"EMPHASIS", "COMPARISON", "FLOW", "DECAY"}:
+            return self._logic_from_classified_intent(context, classified_intent, beat)
         lowered = context.lower()
         amounts = list(dict.fromkeys(self._money_tokens(context)))
         percents = list(dict.fromkeys(self._percent_tokens(context)))
+        if any(word in lowered for word in ("earn", "earned", "spend", "spent", "left", "vanish", "vanished")) and amounts:
+            source = self._amount_with_label(amounts[0], "Salary")
+            process = self._amount_with_label(amounts[1], "Expenses") if len(amounts) > 1 else self._derived_rupee(amounts[0], 0.92, "Expenses")
+            result = self._amount_with_label(amounts[2], "Left") if len(amounts) > 2 else self._derived_rupee(amounts[0], 0.08, "Left")
+            return {"type": "flow", "source": source, "process": process, "result": result}
         if any(word in lowered for word in ("tax", "taxes", "elss", "deduction", "80c")):
             paid = self._amount_with_label(amounts[0] if amounts else "₹20,000", "tax paid")
             deduction = self._amount_with_label(amounts[1] if len(amounts) > 1 else "₹1,50,000", "deduction")
             return {"type": "comparison", "left": paid, "right": deduction}
         if percents and amounts and any(word in lowered for word in ("save", "saved", "cannot", "can't", "broke")):
-            return {"type": "comparison", "left": f"{percents[0]} cannot save", "right": f"{amounts[0]} emergency fund"}
+            return {"type": "comparison", "left": f"{percents[0]} of people", "right": f"{amounts[0]} savings"}
         if any(word in lowered for word in ("automate", "auto debit", "manual", "emotion", "emotional")):
             amount = amounts[0] if amounts else "₹5,000"
             result = amounts[1] if len(amounts) > 1 and self._first_numeric_value(amounts[1]) == 0 else "₹0 Saved"
@@ -840,9 +1071,9 @@ class RenderSpecService:
             output = self._inflation_output(principal, rate) if amounts or percents else "₹94,000 Real Value"
             return {"type": "decay", "input": principal, "factor": rate if "inflation" in rate.lower() else f"{rate} Inflation", "output": f"{output} Real Value"}
         if any(word in lowered for word in ("credit", "debt", "loan", "interest")):
-            debt = amounts[0] if amounts else "₹50,000 Debt"
-            interest = amounts[1] if len(amounts) > 1 else "₹18,000 Interest/year"
-            return {"type": "comparison", "left": debt, "right": interest}
+            if len(amounts) >= 2:
+                return {"type": "comparison", "left": self._amount_with_label(amounts[0], "Debt"), "right": self._amount_with_label(amounts[1], "Interest")}
+            return self._minimal_narration_flow(context, "DECAY")
         if any(word in lowered for word in ("salary", "paycheck", "income", "expense", "expenses")):
             salary = amounts[0] if amounts else "₹25,000 Salary"
             expense = amounts[1] if len(amounts) > 1 else self._derived_rupee(salary, 0.92, "Expenses")
@@ -860,7 +1091,74 @@ class RenderSpecService:
             logic = self._string_visual_logic_to_object(fallback, context)
             if logic and self._typed_visual_logic_is_valid(logic):
                 return logic
-        return {"type": "flow", "source": "₹5,000 Manual Choice", "process": "12 months", "result": "₹60,000 Lost"}
+        return self._minimal_narration_flow(context, self.classifyIntent(context))
+
+    def _emphasis_logic_from_narration(self, narration: str) -> dict[str, Any]:
+        amounts = list(dict.fromkeys(self._money_tokens(narration)))
+        percents = list(dict.fromkeys(self._percent_tokens(narration)))
+        headline = percents[0] if percents else (amounts[0] if amounts else "₹5,000")
+        lowered = str(narration or "").lower()
+        if amounts and any(phrase in lowered for phrase in ("cannot", "can't", "less than")):
+            subtext = f"can't even save {amounts[0]}"
+        elif amounts and "only" in lowered:
+            subtext = f"only {amounts[0]} left"
+        else:
+            subtext = self._short_overlay(narration, 6)
+        return {"type": "emphasis", "headline": headline, "subtext": subtext}
+
+    def _comparison_logic_from_narration(self, narration: str) -> dict[str, Any]:
+        amounts = list(dict.fromkeys(self._money_tokens(narration)))
+        percents = list(dict.fromkeys(self._percent_tokens(narration)))
+        if percents and amounts:
+            return {"type": "comparison", "left": f"{percents[0]} of people", "right": f"{amounts[0]} savings"}
+        if len(amounts) >= 2:
+            return {"type": "comparison", "left": amounts[0], "right": amounts[1]}
+        return self._contextual_visual_logic_object_without_classification(narration)
+
+    def _flow_logic_from_narration(self, narration: str, beat: dict[str, Any] | None = None) -> dict[str, Any]:
+        lowered = str(narration or "").lower()
+        amounts = list(dict.fromkeys(self._money_tokens(narration)))
+        if any(word in lowered for word in ("automate", "auto debit", "manual", "emotion", "emotional")):
+            amount = amounts[0] if amounts else "₹5,000"
+            result = next((item for item in amounts[1:] if self._first_numeric_value(item) == 0), "₹0")
+            return {
+                "type": "flow",
+                "source": self._amount_with_label(amount, "Auto Debit"),
+                "process": self._amount_with_label(amount, "auto-invested"),
+                "result": self._amount_with_label(result, "left to spend"),
+            }
+        source = self._amount_with_label(amounts[0], "Salary") if amounts else "₹25,000 Salary"
+        process = self._amount_with_label(amounts[1], "Expenses") if len(amounts) > 1 else self._derived_rupee(source, 0.92, "Expenses")
+        result = self._amount_with_label(amounts[2], "Left") if len(amounts) > 2 else self._derived_rupee(source, 0.08, "Left")
+        return {"type": "flow", "source": source, "process": process, "result": result}
+
+    def _decay_flow_from_narration(self, narration: str) -> dict[str, Any]:
+        lowered = str(narration or "").lower()
+        amounts = list(dict.fromkeys(self._money_tokens(narration)))
+        if any(word in lowered for word in ("salary", "income", "paycheck")) and any(word in lowered for word in ("leak", "lost", "loss")) and len(amounts) >= 2:
+            salary_value = self._first_numeric_value(amounts[0])
+            leak_value = self._first_numeric_value(amounts[1])
+            left = self._format_rupees(salary_value - leak_value) if salary_value > leak_value > 0 else self._derived_rupee(amounts[0], 0.8, "Left")
+            return {
+                "type": "flow",
+                "source": self._amount_with_label(amounts[0], "Salary"),
+                "process": self._amount_with_label(amounts[1], "Leak"),
+                "result": self._amount_with_label(left, "Left"),
+            }
+        if "vanish" in lowered or "vanished" in lowered:
+            source = self._amount_with_label(amounts[0], "Salary") if amounts else "₹25,000 Salary"
+            process = "day 12" if re.search(r"\bday\s*12\b", lowered) else "spending"
+            result = self._amount_with_label(amounts[1], "Left") if len(amounts) > 1 else "₹0 Left"
+            return {"type": "flow", "source": source, "process": process, "result": result}
+        source = self._amount_with_label(amounts[0], "Monthly Leak") if amounts else "₹5,000 Monthly Leak"
+        result = self._amount_with_label(amounts[1], "Lost") if len(amounts) > 1 else self._derived_rupee(source, 12, "Lost")
+        return {"type": "flow", "source": source, "process": "12 months", "result": result}
+
+    def _contextual_visual_logic_object_without_classification(self, context: str) -> dict[str, Any]:
+        amounts = list(dict.fromkeys(self._money_tokens(context)))
+        if len(amounts) >= 2:
+            return {"type": "comparison", "left": amounts[0], "right": amounts[1]}
+        return self._fallback_numeric_flow()
 
     def _coerce_logic_to_pattern(self, logic: dict[str, Any], context: str, preferred_pattern: str) -> dict[str, Any]:
         amounts = list(dict.fromkeys(self._money_tokens(context)))
@@ -884,7 +1182,7 @@ class RenderSpecService:
             result = amounts[1] if len(amounts) > 1 else self._derived_rupee(source, 12, "Lost")
             return {"type": "flow", "source": self._amount_with_label(source, "Monthly Leak"), "process": "12 months", "result": self._amount_with_label(result, "Lost")}
         if preferred_pattern == "EMPHASIS":
-            return logic
+            return self._emphasis_logic_from_narration(context)
         return logic
 
     def _amount_with_label(self, amount: str, label: str) -> str:
@@ -892,9 +1190,17 @@ class RenderSpecService:
 
     def _safe_emphasis_logic_object(self, context: str) -> dict[str, Any]:
         logic = self._contextual_visual_logic_object(context, None)
-        if self._typed_visual_logic_is_valid(logic):
+        if self._logic_can_reach_render(logic, {"intent": "EMPHASIS"}):
             return logic
-        return {"type": "comparison", "left": "76% cannot save", "right": "₹5,000 emergency fund"}
+        return self._fallback_numeric_flow()
+
+    def _fallback_numeric_flow(self) -> dict[str, Any]:
+        return {
+            "type": "flow",
+            "source": "₹25,000 Salary",
+            "process": "₹23,000 Expenses",
+            "result": "₹2,000 Left",
+        }
 
     def _inflation_output(self, principal: str, rate: str) -> str:
         principal_value = self._first_numeric_value(principal)
@@ -947,6 +1253,8 @@ class RenderSpecService:
             return False
         if self._is_abstract_visual_logic(text):
             return False
+        if self._contains_generic_visual_words(text):
+            return False
         return self._has_number(text)
 
     def _is_abstract_visual_logic(self, text: str) -> bool:
@@ -957,19 +1265,23 @@ class RenderSpecService:
             return True
         if any(re.search(rf"\b{re.escape(bad)}\b", lowered) for bad in self.ABSTRACT_VISUAL_WORDS):
             return True
+        if self._contains_generic_visual_words(lowered):
+            return True
         return any(bad in lowered for bad in {"static image", "split screen", "display statistic", "show comparison", "display data"})
+
+    def _contains_generic_visual_words(self, text: str) -> bool:
+        lowered = " ".join(str(text or "").lower().replace("_", " ").split())
+        return any(re.search(rf"\b{re.escape(word)}\b", lowered) for word in self.GENERIC_VISUAL_WORDS)
 
     def _has_number(self, text: str) -> bool:
         return bool(re.search(r"(?:₹\s?[\d,.]+(?:\s?(?:lakh|crore|k|m)\b)?|\d+(?:\.\d+)?%|\b\d+(?:\.\d+)?\b)", text, re.I))
 
     def _numbers_respect_context(self, candidate: str, context: str) -> bool:
         context_numbers = set(self._money_tokens(context) + self._percent_tokens(context))
-        if not context_numbers:
-            return True
         candidate_numbers = set(self._money_tokens(candidate) + self._percent_tokens(candidate))
         if not candidate_numbers:
             return True
-        return candidate_numbers.issubset(context_numbers)
+        return self._numbers_allowed_by_context(candidate_numbers, context_numbers, context)
 
     def _has_visual_structure(self, text: str) -> bool:
         lowered = text.lower()
@@ -1001,6 +1313,8 @@ class RenderSpecService:
     def _passes_visual_gate(self, intent: str, pattern: str, visual_logic: str, beat: dict[str, Any]) -> bool:
         if intent == "CONTEXT" or pattern == "CONTEXT":
             return True
+        if intent == "EMPHASIS" or pattern == "EMPHASIS":
+            return self._has_number(visual_logic) and self._has_impact(visual_logic) and not self._is_abstract_visual_logic(visual_logic)
         return self._passes_text_gate(visual_logic)
 
     def _props_pass_visual_gate(self, component: str, pattern: str, visual_logic: str, props: dict[str, Any]) -> bool:
@@ -1277,7 +1591,7 @@ class RenderSpecService:
             labels = ["₹1,00,000", "6% Inflation", "₹94,000 Value"]
             roles = ["source", "modifier", "result"]
         elif pattern == "LOOP":
-            labels = ["₹50,000 Debt", "₹18,000 Interest", "₹68,000 Owed", "Repeat"]
+            labels = ["₹25,000 Start", "spending", "₹0 Left", "Repeat"]
             roles = ["source", "process", "result", "process"]
         elif pattern == "GROWTH":
             labels = ["₹5,000 SIP", "12% Growth", "₹60,000 Invested", "Wealth"]
@@ -1389,7 +1703,7 @@ class RenderSpecService:
 
     def _money_tokens(self, text: str) -> list[str]:
         return [
-            token.replace(" ", "")
+            token.replace(" ", "").rstrip(".,")
             for token in re.findall(r"₹\s?[\d,.]+(?:\s?(?:lakh|crore|k|m)\b)?", text, re.I)
         ]
 

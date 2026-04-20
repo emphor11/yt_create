@@ -92,6 +92,8 @@ class MediaService:
 
         for scene in scenes:
             if self._scene_media_complete(scene):
+                if self._visual_debug_enabled():
+                    self._print_existing_scene_debug(scene)
                 self.logger.log(
                     "media_generation",
                     "completed",
@@ -423,35 +425,7 @@ class MediaService:
     ) -> tuple[Path, str]:
         source_asset_path = None
         if visual_type == "broll":
-            if not current_app.config.get("PEXELS_API_KEY") and not current_app.config.get("PIXABAY_API_KEY"):
-                raise RuntimeError("B-roll scenes require PEXELS_API_KEY or PIXABAY_API_KEY so Remotion can overlay real stock footage.")
-            try:
-                source_asset_path, asset_source = self._pexels_broll(
-                    project_id, image_root, scene_order,
-                    visual_instruction or narration, target_duration,
-                )
-            except Exception as exc:
-                self.logger.log(
-                    "visual_generation", "failed",
-                    f"Pexels b-roll failed for scene {scene_order} ({exc}). Trying Pixabay fallback.",
-                    project_id,
-                )
-                # Pixabay fallback
-                try:
-                    source_asset_path, asset_source = self._pixabay_broll(
-                        project_id, image_root, scene_order,
-                        visual_instruction or narration, target_duration,
-                    )
-                except Exception as pix_exc:
-                    self.logger.log(
-                        "visual_generation", "failed",
-                        f"Pixabay fallback also failed for scene {scene_order} ({pix_exc}). B-roll cannot render without stock footage.",
-                        project_id,
-                    )
-                    raise RuntimeError(
-                        f"B-roll source footage unavailable for scene {scene_order}. "
-                        "Remotion overlay requires a Pexels/Pixabay source clip."
-                    ) from pix_exc
+            source_asset_path = None
 
         if not current_app.config.get("REMOTION_ENABLED", True):
             raise RuntimeError("Remotion visuals are required, but REMOTION_ENABLED=false.")
@@ -461,6 +435,22 @@ class MediaService:
             target_duration,
             source_asset_path=source_asset_path,
         )
+        if self._visual_debug_enabled():
+            validated_scene = {
+                "visual_type": visual_type,
+                "visual_instruction": visual_instruction,
+                "narration_text": narration,
+            }
+            self._print_visual_debug(
+                {**scene, "scene_order": scene_order, "narration_text": narration},
+                [
+                    {
+                        "visual_logic": {"type": "scene", "content": visual_instruction or narration},
+                        "validated_beat": validated_scene,
+                        "render_spec": {"component": spec.composition, "props": spec.props},
+                    }
+                ],
+            )
         output_path = image_root / f"scene-{scene_order:02d}.mp4"
         self.remotion.render_video(spec, output_path)
         return output_path, spec.source
@@ -489,6 +479,7 @@ class MediaService:
         scene_dir.mkdir(parents=True, exist_ok=True)
         successful: list[Path] = []
         sources: list[str] = []
+        debug_entries: list[dict] = []
 
         if not current_app.config.get("REMOTION_ENABLED", True):
             raise RuntimeError("Remotion visuals are required, but REMOTION_ENABLED=false.")
@@ -499,31 +490,29 @@ class MediaService:
                 source_asset_path = None
                 if self.render_specs.beat_requires_source_asset(beat):
                     if not current_app.config.get("PEXELS_API_KEY") and not current_app.config.get("PIXABAY_API_KEY"):
-                        raise RuntimeError("B-roll beat requires PEXELS_API_KEY or PIXABAY_API_KEY.")
-                    query = self.render_specs.broll_query_for_beat(beat) or str(scene.get("visual_instruction") or scene.get("narration_text"))
-                    try:
-                        source_asset_path, _asset_source = self._pexels_broll(
-                            project_id,
-                            image_root,
-                            (scene_order * 100) + beat_index,
-                            query,
-                            float(beat.get("estimated_duration_sec") or 3),
-                        )
-                    except Exception as exc:
-                        self.logger.log(
-                            "visual_generation",
-                            "failed",
-                            f"Pexels b-roll failed for scene {scene_order} beat {beat_index} ({exc}). Trying Pixabay fallback.",
-                            project_id,
-                        )
-                        source_asset_path, _asset_source = self._pixabay_broll(
-                            project_id,
-                            image_root,
-                            (scene_order * 100) + beat_index,
-                            query,
-                            float(beat.get("estimated_duration_sec") or 3),
-                        )
+                        beat = self._regenerated_beat_from_scene(scene, beat, beat_index)
+                    else:
+                        query = self.render_specs.broll_query_for_beat(beat) or str(scene.get("visual_instruction") or scene.get("narration_text"))
+                        try:
+                            source_asset_path, _asset_source = self._pexels_broll(
+                                project_id,
+                                image_root,
+                                (scene_order * 100) + beat_index,
+                                query,
+                                float(beat.get("estimated_duration_sec") or 3),
+                            )
+                        except Exception as exc:
+                            self.logger.log(
+                                "visual_generation",
+                                "failed",
+                                f"Pexels b-roll failed for scene {scene_order} beat {beat_index} ({exc}). Regenerating from narration.",
+                                project_id,
+                            )
+                            beat = self._regenerated_beat_from_scene(scene, beat, beat_index)
+                validated_beat = self._validated_beat_for_debug(beat)
                 spec = self.render_specs.beat_spec(beat, source_asset_path=source_asset_path)
+                if self._visual_debug_enabled():
+                    debug_entries.append(self._debug_entry(validated_beat, spec))
                 beat_path = scene_dir / f"beat-{beat_index:02d}.mp4"
                 self.remotion.render_video(spec, beat_path)
                 successful.append(beat_path)
@@ -559,9 +548,14 @@ class MediaService:
                     "estimated_duration_sec": min(max(scene_duration, 2.5), 4.0),
                 }
             )
+            if self._visual_debug_enabled():
+                debug_entries.append(self._debug_entry({"beat_type": "text_burst", "content": scene.get("visual_instruction") or scene.get("narration_text") or "money reality"}, fallback_spec))
             self.remotion.render_video(fallback_spec, fallback_path)
             successful = [fallback_path]
             sources = [fallback_spec.source]
+
+        if self._visual_debug_enabled():
+            self._print_visual_debug(scene, debug_entries)
 
         timeline_path = image_root / f"scene-{scene_order:02d}_timeline.mp4"
         self.logger.log(
@@ -572,6 +566,110 @@ class MediaService:
         )
         self._concat_beat_clips(successful, timeline_path, scene_duration)
         return timeline_path, "beat_timeline:" + ",".join(sorted(set(sources)))
+
+    def _regenerated_beat_from_scene(self, scene: dict, original: dict, beat_index: int) -> dict:
+        narration = str(scene.get("narration_text") or scene.get("visual_instruction") or "")
+        classified_intent = self.render_specs.classifyIntent(narration)
+        logic = self.render_specs.deriveFromNarration(narration, classified_intent=classified_intent)
+        pattern = self.render_specs.LOGIC_TYPE_TO_PATTERN.get(str(logic.get("type") or ""), "MONEY_FLOW")
+        return {
+            "beat_index": beat_index,
+            "intent": "COMPARISON" if logic.get("type") == "comparison" else "EXPLANATION",
+            "pattern": pattern,
+            "visual_logic": logic,
+            "classified_intent": classified_intent,
+            "narration": narration,
+            "estimated_start_sec": original.get("estimated_start_sec", 0),
+            "estimated_duration_sec": original.get("estimated_duration_sec", 3),
+        }
+
+    def _visual_debug_enabled(self) -> bool:
+        return bool(current_app.config.get("VISUAL_DEBUG", False))
+
+    def _print_existing_scene_debug(self, scene: dict) -> None:
+        try:
+            duration = self._estimate_duration(str(scene.get("narration_text") or ""))
+            if self._ten_minute_finance_enabled():
+                entries = []
+                for beat in self._load_scene_beats(scene, duration):
+                    validated_beat = self._validated_beat_for_debug(beat)
+                    try:
+                        spec = self.render_specs.beat_spec(beat)
+                        entries.append(self._debug_entry(validated_beat, spec))
+                    except Exception as exc:
+                        entries.append(
+                            {
+                                "visual_logic": validated_beat.get("visual_logic") or {"type": str(validated_beat.get("beat_type") or "legacy")},
+                                "validated_beat": validated_beat,
+                                "render_spec": {"error": str(exc)},
+                            }
+                        )
+                self._print_visual_debug(scene, entries)
+                return
+
+            try:
+                spec = self.render_specs.scene_spec(scene, duration)
+                render_spec = {"component": spec.composition, "props": spec.props}
+            except Exception as exc:
+                render_spec = {"error": str(exc)}
+            self._print_visual_debug(
+                scene,
+                [
+                    {
+                        "visual_logic": {"type": "scene", "content": scene.get("visual_instruction") or scene.get("narration_text") or ""},
+                        "validated_beat": {
+                            "visual_type": scene.get("visual_type"),
+                            "visual_instruction": scene.get("visual_instruction"),
+                            "narration_text": scene.get("narration_text"),
+                        },
+                        "render_spec": render_spec,
+                    }
+                ],
+            )
+        except Exception as exc:
+            print(f"\n--- SCENE {scene.get('scene_order', '?')} DEBUG ---\n")
+            print("DEBUG_ERROR:")
+            print(json.dumps(str(exc), ensure_ascii=False, indent=2))
+            print("\n---\n")
+
+    def _validated_beat_for_debug(self, beat: dict) -> dict:
+        if self.render_specs._is_structured_beat(beat):
+            return self.render_specs.normalize_structured_beat(beat)
+        return dict(beat)
+
+    def _debug_entry(self, validated_beat: dict, spec) -> dict:
+        visual_logic = validated_beat.get("visual_logic")
+        if visual_logic is None:
+            visual_logic = {
+                "type": str(validated_beat.get("beat_type") or "legacy"),
+                "content": str(validated_beat.get("content") or ""),
+                "caption": str(validated_beat.get("caption") or ""),
+            }
+        return {
+            "visual_logic": visual_logic,
+            "validated_beat": validated_beat,
+            "render_spec": {
+                "component": spec.composition,
+                "props": spec.props,
+            },
+        }
+
+    def _print_visual_debug(self, scene: dict, entries: list[dict]) -> None:
+        scene_order = int(scene.get("scene_order") or scene.get("scene_index") or 0)
+        narration = str(scene.get("narration_text") or scene.get("narration") or "")
+        visual_logic = [entry["visual_logic"] for entry in entries]
+        validated_beats = [entry["validated_beat"] for entry in entries]
+        render_specs = [entry["render_spec"] for entry in entries]
+        print(f"\n--- SCENE {scene_order} DEBUG ---\n")
+        print("NARRATION:")
+        print(json.dumps(narration, ensure_ascii=False, indent=2))
+        print("\nVISUAL_LOGIC:")
+        print(json.dumps(visual_logic[0] if len(visual_logic) == 1 else visual_logic, ensure_ascii=False, indent=2, default=str))
+        print("\nVALIDATED_BEAT:")
+        print(json.dumps(validated_beats[0] if len(validated_beats) == 1 else validated_beats, ensure_ascii=False, indent=2, default=str))
+        print("\nRENDER_SPEC:")
+        print(json.dumps(render_specs[0] if len(render_specs) == 1 else render_specs, ensure_ascii=False, indent=2, default=str))
+        print("\n---\n")
 
     def _load_scene_beats(self, scene: dict, scene_duration: float) -> list[dict]:
         raw = scene.get("visual_plan_json")
@@ -595,41 +693,7 @@ class MediaService:
                     "estimated_duration_sec": min(max(scene_duration, 2.5), 4.0),
                 }
             ]
-        if len(beats) < 2:
-            beats = self._supplement_beats(scene, beats, scene_duration)
         return beats
-
-    def _supplement_beats(self, scene: dict, beats: list[dict], scene_duration: float) -> list[dict]:
-        base = list(beats)
-        existing_duration = sum(float(beat.get("estimated_duration_sec") or 3) for beat in base)
-        phrases = self._beat_phrases(str(scene.get("narration_text") or scene.get("visual_instruction") or "money reality"))
-        while len(base) < 4:
-            index = len(base)
-            start = min(existing_duration, max(scene_duration - 3, 0))
-            beat_type = "reaction_card" if index % 2 else "text_burst"
-            base.append(
-                {
-                    "beat_index": index,
-                    "beat_type": beat_type,
-                    "content": phrases[(index - 1) % len(phrases)],
-                    "caption": "" if beat_type == "text_burst" else "the math is rude",
-                    "color": "red" if beat_type == "reaction_card" else "orange",
-                    "estimated_start_sec": round(start, 2),
-                    "estimated_duration_sec": 3.0,
-                }
-            )
-            existing_duration += 3.0
-        return base
-
-    def _beat_phrases(self, text: str) -> list[str]:
-        lowered = text.lower()
-        if "inflation" in lowered:
-            return ["inflation wins", "wait what", "your money shrank"]
-        if "debt" in lowered or "card" in lowered:
-            return ["debt is expensive", "bruh", "interest ate it"]
-        if "invest" in lowered:
-            return ["start earlier", "plot twist", "SIP beats vibes"]
-        return ["money reality", "wait what", "do the math"]
 
     def _fallback_beat_type(self, visual_type: str | None) -> str:
         if visual_type == "graph":

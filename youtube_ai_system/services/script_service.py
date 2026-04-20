@@ -447,8 +447,7 @@ class ScriptService:
             '"bar_chart, data: FD=6.5, Inflation=6.7, title: FD loses after inflation, color: red"\n\n'
             "MEME RULE:\n"
             "Do NOT reference copyrighted meme images. Use reaction_card instead.\n"
-            "reaction_card text should be short, punchy, internet-native phrases:\n"
-            '"wait what", "me every payday", "no cap", "this hits different", "bruh"\n\n'
+            "reaction_card text must be tied to narration, not generic filler.\n\n"
         ) if include_beats else (
             "VISUAL FIELDS:\n"
             "For every hook, body scene, and outro, include only the legacy visual_instruction and visual_type fields.\n"
@@ -884,17 +883,20 @@ class ScriptService:
         max_sec = float(current_app.config.get("VISUAL_BEAT_MAX_SEC", 4.0)) + 0.5
         normalized: list[dict[str, Any]] = []
         cursor = 0.0
+        scene_context = context_text or visual_instruction
+        classified_intent = self.classifyIntent(scene_context)
         for index, beat in enumerate(beats):
             if not isinstance(beat, dict):
                 continue
             if self._is_structured_visual_beat(beat):
                 beat_context = {**beat}
-                beat_context.setdefault("narration", context_text or visual_instruction)
+                beat_context["classified_intent"] = classified_intent
+                beat_context.setdefault("narration", scene_context)
                 beat_context.setdefault("visual_instruction", visual_instruction)
                 if is_outro:
                     beat_context["is_outro"] = True
-                if not self.validateRelevance(beat_context, context_text or visual_instruction):
-                    beat_context["visual_logic"] = self.deriveFromNarration(context_text or visual_instruction)
+                if not self.validateRelevance(beat_context, scene_context):
+                    beat_context["visual_logic"] = self.deriveFromNarration(scene_context, classified_intent=classified_intent)
                 structured = self.render_specs.normalize_structured_beat(
                     {
                         **beat_context,
@@ -918,14 +920,35 @@ class ScriptService:
             start = self._coerce_float(beat.get("estimated_start_sec"), cursor)
             content = str(beat.get("content") or beat.get("headline") or visual_instruction or "Money mistake")
             caption = str(beat.get("caption") or beat.get("subtext") or "")
-            if self._legacy_beat_needs_safe_emphasis(beat_type, content, caption, context_text or visual_instruction):
+            if (
+                beat_type in {"broll", "broll_caption", "reaction_card"}
+                or classified_intent in {"FLOW", "DECAY", "COMPARISON"}
+            ):
+                replacement_logic = self.deriveFromNarration(scene_context or f"{content} {caption}", classified_intent=classified_intent)
+                structured = self.render_specs.normalize_structured_beat(
+                    {
+                        "beat_index": int(beat.get("beat_index") or index),
+                        "intent": self._intent_for_logic(replacement_logic),
+                        "pattern": self._pattern_for_logic(replacement_logic),
+                        "visual_logic": replacement_logic,
+                        "classified_intent": classified_intent,
+                        "narration": scene_context,
+                        "estimated_start_sec": round(start, 2),
+                        "estimated_duration_sec": round(duration, 2),
+                    }
+                )
+                normalized.append(structured)
+                cursor = start + duration
+                continue
+            if self._legacy_beat_needs_safe_emphasis(beat_type, content, caption, scene_context):
                 safe = self.render_specs.normalize_structured_beat(
                     {
                         "beat_index": int(beat.get("beat_index") or index),
                         "intent": "EMPHASIS",
                         "pattern": "EMPHASIS",
-                        "visual_logic": self.render_specs._safe_emphasis_logic(context_text or f"{visual_instruction} {content} {caption}"),
-                        "narration": context_text or visual_instruction,
+                        "visual_logic": self.render_specs._safe_emphasis_logic(scene_context or f"{visual_instruction} {content} {caption}"),
+                        "classified_intent": classified_intent,
+                        "narration": scene_context,
                         "estimated_start_sec": round(start, 2),
                         "estimated_duration_sec": round(duration, 2),
                     }
@@ -946,8 +969,6 @@ class ScriptService:
             )
             cursor = start + duration
         normalized = normalized or self._fallback_visual_beats(visual_type, visual_instruction, scene_duration, context_text=context_text, is_outro=is_outro)
-        if not enforce_hook:
-            normalized = self._maybe_insert_impact_spike(normalized, context_text or visual_instruction)
         normalized = self._apply_visual_rhythm(normalized)
         if enforce_hook:
             normalized = self.enforceHookRules(normalized, context_text or visual_instruction)
@@ -968,6 +989,7 @@ class ScriptService:
                         "intent": self._intent_for_logic(replacement_logic),
                         "pattern": self._pattern_for_logic(replacement_logic),
                         "visual_logic": replacement_logic,
+                        "classified_intent": self.classifyIntent(context_text),
                         "narration": context_text,
                         "estimated_start_sec": current.get("estimated_start_sec", index * 2.5),
                         "estimated_duration_sec": current.get("estimated_duration_sec", 2.5),
@@ -982,6 +1004,7 @@ class ScriptService:
                             "intent": self._intent_for_logic(replacement_logic),
                             "pattern": self._pattern_for_logic(replacement_logic),
                             "visual_logic": replacement_logic,
+                            "classified_intent": self.classifyIntent(context_text),
                             "narration": context_text,
                             "estimated_start_sec": current.get("estimated_start_sec", index * 2.5),
                             "estimated_duration_sec": current.get("estimated_duration_sec", 2.5),
@@ -1034,6 +1057,7 @@ class ScriptService:
                     "intent": self._intent_for_logic(replacement_logic),
                     "pattern": self._pattern_for_logic(replacement_logic),
                     "visual_logic": replacement_logic,
+                    "classified_intent": self.classifyIntent(context_text),
                     "narration": context_text,
                     "estimated_start_sec": first.get("estimated_start_sec", 0),
                     "estimated_duration_sec": first.get("estimated_duration_sec", 3),
@@ -1068,6 +1092,12 @@ class ScriptService:
         return "₹5,000 manual choice -> ₹5,000 emotion -> ₹0 saved"
 
     def _dedupe_visual_logic(self, beat: dict[str, Any], context_text: str) -> dict[str, Any]:
+        if self.classifyIntent(context_text) == "EMPHASIS":
+            amounts = self.render_specs._money_tokens(context_text)
+            percents = self.render_specs._percent_tokens(context_text)
+            headline = percents[0] if percents else (amounts[0] if amounts else "₹5,000")
+            amount = amounts[0] if amounts else headline
+            return {"type": "emphasis", "headline": headline, "subtext": f"Indians can't save {amount} again"}
         narration_logic = self.deriveFromNarration(context_text)
         if self._visual_text_signature({"visual_logic": narration_logic}) not in self._used_visual_signatures:
             return narration_logic
@@ -1077,14 +1107,28 @@ class ScriptService:
                 return candidate
         return self._contextual_example_logic(context_text, preferred_pattern="MONEY_FLOW")
 
-    def deriveFromNarration(self, narration: str, preferred_pattern: str = "") -> dict[str, Any]:
-        return self.render_specs.deriveFromNarration(narration, preferred_pattern=preferred_pattern)
+    def classifyIntent(self, narration: str) -> str:
+        return self.render_specs.classifyIntent(narration)
+
+    def deriveFromNarration(self, narration: str, preferred_pattern: str = "", classified_intent: str = "") -> dict[str, Any]:
+        return self.render_specs.deriveFromNarration(
+            narration,
+            preferred_pattern=preferred_pattern,
+            classified_intent=classified_intent,
+        )
 
     def validateRelevance(self, beat: dict[str, Any], narration: str) -> bool:
         return self.render_specs.validateRelevance(beat, narration)
 
     def _intent_for_logic(self, logic: dict[str, Any]) -> str:
-        return "COMPARISON" if isinstance(logic, dict) and logic.get("type") == "comparison" else "EXPLANATION"
+        if not isinstance(logic, dict):
+            return "EXPLANATION"
+        logic_type = logic.get("type")
+        if logic_type == "comparison":
+            return "COMPARISON"
+        if logic_type == "emphasis":
+            return "EMPHASIS"
+        return "EXPLANATION"
 
     def _pattern_for_logic(self, logic: dict[str, Any]) -> str:
         return self.render_specs.LOGIC_TYPE_TO_PATTERN.get(str(logic.get("type") if isinstance(logic, dict) else ""), "MONEY_FLOW")
@@ -1093,7 +1137,7 @@ class ScriptService:
         pattern = str(pattern or "").upper()
         return {
             "COMPARISON": "MONEY_FLOW",
-            "MONEY_FLOW": "EMPHASIS",
+            "MONEY_FLOW": "COMPARISON",
             "VALUE_DECAY": "COMPARISON",
             "GROWTH": "COMPARISON",
             "EMPHASIS": "COMPARISON",
@@ -1101,6 +1145,11 @@ class ScriptService:
         }.get(pattern, "COMPARISON")
 
     def _contextual_example_logic(self, context_text: str, preferred_pattern: str = "") -> dict[str, Any]:
+        if context_text.strip():
+            classified_intent = self.classifyIntent(context_text)
+            logic = self.deriveFromNarration(context_text, preferred_pattern=preferred_pattern, classified_intent=classified_intent)
+            if self.render_specs._logic_can_reach_render(logic, {"classified_intent": classified_intent}):
+                return logic
         amounts = self.render_specs._money_tokens(context_text)
         percents = self.render_specs._percent_tokens(context_text)
         preferred_pattern = str(preferred_pattern or "").upper()
@@ -1118,9 +1167,7 @@ class ScriptService:
         if any(word in context_text.lower() for word in ("month", "monthly", "year", "yearly", "leak", "lost", "gone")):
             result = amounts[1] if len(amounts) > 1 else self.render_specs._derived_rupee(amount, 12, "Lost")
             return {"type": "flow", "source": f"{amount} Monthly Leak", "process": "12 months", "result": f"{result} Lost"}
-        result = amounts[1] if len(amounts) > 1 else "₹0 Saved"
-        entity = next(iter(sorted(self.render_specs._meaningful_keywords(context_text))), "viewer").title()
-        return {"type": "flow", "source": f"{amount} {entity} Need", "process": f"{amount} Required", "result": result}
+        return self.render_specs._minimal_narration_flow(context_text, self.classifyIntent(context_text))
 
     def _is_generic_fallback_logic(self, logic: Any) -> bool:
         text = self.render_specs._visual_logic_to_text(logic)
@@ -1144,6 +1191,7 @@ class ScriptService:
             self.render_specs._has_number(text)
             and self.render_specs._has_impact(text)
             and not self.render_specs._is_abstract_visual_logic(text)
+            and not self.render_specs._contains_generic_visual_words(text)
         )
 
     def _legacy_relevant_to_context(self, text: str, context_text: str) -> bool:
@@ -1227,17 +1275,7 @@ class ScriptService:
         first["estimated_start_sec"] = 0
         first["estimated_duration_sec"] = 2.5
 
-        second_text = self._hook_meaning_text(visual_instruction)
-        second = {
-            "beat_index": 1,
-            "beat_type": "text_burst",
-            "content": second_text,
-            "caption": "",
-            "color": "red" if "BROKEN" in second_text or "NOT" in second_text else "orange",
-            "estimated_start_sec": 2.5,
-            "estimated_duration_sec": 2.5,
-        }
-        return [first, second]
+        return [first]
 
     def enforceHookRules(self, beats: list[dict[str, Any]], visual_instruction: str) -> list[dict[str, Any]]:
         return self._enforce_hook_beats(beats, visual_instruction)
@@ -1285,7 +1323,7 @@ class ScriptService:
         caption = self.render_specs._repair_caption("", visual_text, visual_instruction)
         props = self.render_specs._safe_emphasis_props(visual_text, caption)
         props["headline"] = self._hook_headline(visual_text)
-        props["subtext"] = self._hook_subtext(visual_text, str(props["headline"]), caption)
+        props["subtext"] = self._hook_subtext(visual_text, str(props["headline"]), caption, visual_instruction)
         props["durationSec"] = current.get("estimated_duration_sec") or 2.5
         emphasis_logic = {
             "type": "emphasis",
@@ -1305,8 +1343,12 @@ class ScriptService:
         )
         return current
 
-    def _hook_subtext(self, visual_text: str, headline: str, fallback: str) -> str:
+    def _hook_subtext(self, visual_text: str, headline: str, fallback: str, source_text: str = "") -> str:
         text = visual_text.replace(headline, "", 1).strip()
+        direct_source = source_text or fallback
+        if re.search(r"\b(cannot|can't)\s+save\b", direct_source, flags=re.I):
+            amount = self.render_specs._money_tokens(direct_source)
+            return f"can't even save {amount[0]}" if amount else "can't even save"
         text = re.sub(r"\s+vs\.?\s+", " ", text, flags=re.I)
         text = re.sub(r"\bemergency fund\b", "", text, flags=re.I)
         text = re.sub(r"\bcannot save\b", "can't save", text, flags=re.I)
@@ -1321,60 +1363,11 @@ class ScriptService:
         text = text.replace("can't save", "can't even save") if "can't save" in text and "can't even save" not in text else text
         return text or fallback
 
-    def _maybe_insert_impact_spike(self, beats: list[dict[str, Any]], context_text: str) -> list[dict[str, Any]]:
-        if not beats or not self._supports_zero_impact_spike(context_text):
-            return beats
-        first_structured_flow = any(
-            str(beat.get("component") or "") == "FlowDiagram"
-            or str(beat.get("pattern") or "").upper() == "MONEY_FLOW"
-            for beat in beats[:1]
-        )
-        has_existing_spike = any("₹0 left every month" in str(beat) for beat in beats)
-        if not first_structured_flow or has_existing_spike:
-            return beats
-        spike = {
-            "beat_index": 0,
-            "beat_type": "stat_explosion",
-            "component": "StatExplosion",
-            "content": "₹0",
-            "caption": "left every month",
-            "color": "red",
-            "estimated_start_sec": 0,
-            "estimated_duration_sec": 2.5,
-        }
-        shifted = []
-        for index, beat in enumerate(beats, start=1):
-            current = dict(beat)
-            current["beat_index"] = index
-            current["estimated_start_sec"] = round(float(current.get("estimated_start_sec") or 0) + 2.5, 2)
-            shifted.append(current)
-        return [spike, *shifted]
-
-    def _supports_zero_impact_spike(self, context_text: str) -> bool:
-        lowered = context_text.lower()
-        return (
-            "₹0" in context_text
-            and any(word in lowered for word in ("automate", "auto", "fix", "solution", "before emotion", "manual spending"))
-            and any(word in lowered for word in ("month", "monthly", "spending", "emotion", "left"))
-        )
-
     def _hook_headline(self, text: str) -> str:
         percent = re.search(r"\d+(?:\.\d+)?%", text)
         if percent:
             return percent.group(0)
         return self.render_specs._dominant_phrase(text)
-
-    def _hook_meaning_text(self, visual_instruction: str) -> str:
-        lowered = visual_instruction.lower()
-        if "system" in lowered or "broken" in lowered:
-            return "BROKEN SYSTEM"
-        if "discipline" in lowered:
-            return "NOT DISCIPLINE"
-        if "default" in lowered:
-            return "DEFAULTS WIN"
-        if "broke" in lowered:
-            return "BROKE BY DESIGN"
-        return "FIX THE SYSTEM"
 
     def _fallback_visual_beats(
         self,

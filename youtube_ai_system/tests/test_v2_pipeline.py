@@ -1,5 +1,7 @@
+import io
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -66,23 +68,23 @@ class V2PipelineTestCase(unittest.TestCase):
         self.assertEqual(bar.composition, "BarChart")
         self.assertGreaterEqual(len(bar.props["data"]), 2)
 
-    def test_render_spec_broll_includes_overlay_and_asset(self) -> None:
+    def test_render_spec_broll_is_temporarily_converted_to_structured_visual(self) -> None:
         asset = Path("/tmp/source.mp4")
         spec = RenderSpecService().scene_spec(
             {"visual_type": "broll", "visual_instruction": "Person checking credit card debt stress"},
             7,
             source_asset_path=asset,
         )
-        self.assertEqual(spec.composition, "BrollOverlay")
-        self.assertEqual(spec.props["videoPath"], str(asset))
-        self.assertIn("Person", spec.props["overlayText"])
+        self.assertIn(spec.composition, {"FlowDiagram", "SplitComparison"})
+        self.assertNotIn("videoPath", spec.props)
 
-    def test_render_spec_broll_requires_stock_asset(self) -> None:
-        with self.assertRaises(ValueError):
-            RenderSpecService().scene_spec(
-                {"visual_type": "broll", "visual_instruction": "Person checking credit card debt stress"},
-                7,
-            )
+    def test_render_spec_broll_does_not_require_stock_asset_while_disabled(self) -> None:
+        spec = RenderSpecService().scene_spec(
+            {"visual_type": "broll", "visual_instruction": "Person checking credit card debt stress"},
+            7,
+        )
+        self.assertIn(spec.composition, {"FlowDiagram", "SplitComparison"})
+        self.assertNotEqual(spec.composition, "BrollOverlay")
 
     def test_scene_table_has_visual_plan_json_column(self) -> None:
         columns = {
@@ -127,7 +129,7 @@ class V2PipelineTestCase(unittest.TestCase):
             "inflation math",
         )
         self.assertEqual(payload["hook"]["visual_beats"][0]["component"], "StatExplosion")
-        self.assertGreaterEqual(len(payload["hook"]["visual_beats"]), 2)
+        self.assertEqual(len(payload["hook"]["visual_beats"]), 1)
         self.assertIn(payload["scenes"][0]["visual_beats"][0]["component"], {"SplitComparison", "FlowDiagram", "BarChart"})
 
     def test_scene_rows_store_visual_plan_json(self) -> None:
@@ -243,10 +245,13 @@ class V2PipelineTestCase(unittest.TestCase):
 
     def test_context_structured_beat_requires_broll_asset(self) -> None:
         beat = {"intent": "CONTEXT", "pattern": "CONTEXT", "visual_logic": "person checking bills", "props": {"caption": "salary gone"}}
-        self.assertTrue(RenderSpecService().beat_requires_source_asset(beat))
-        self.assertIn("person", RenderSpecService().broll_query_for_beat(beat))
+        service = RenderSpecService()
+        normalized = service.normalize_structured_beat(beat)
+        self.assertFalse(service.beat_requires_source_asset(normalized))
+        self.assertEqual(normalized["visual_logic"]["type"], "flow")
+        self.assertIn(normalized["component"], {"FlowDiagram", "StatExplosion"})
 
-    def test_abstract_visual_logic_is_repaired_to_concrete_emphasis(self) -> None:
+    def test_abstract_visual_logic_is_repaired_to_structured_flow(self) -> None:
         normalized = RenderSpecService().normalize_structured_beat(
             {
                 "intent": "DATA",
@@ -255,9 +260,9 @@ class V2PipelineTestCase(unittest.TestCase):
                 "props": {"title": "statistic"},
             }
         )
-        self.assertEqual(normalized["intent"], "EMPHASIS")
-        self.assertEqual(normalized["pattern"], "EMPHASIS")
-        self.assertEqual(normalized["component"], "StatExplosion")
+        self.assertEqual(normalized["intent"], "EXPLANATION")
+        self.assertEqual(normalized["pattern"], "MONEY_FLOW")
+        self.assertEqual(normalized["component"], "FlowDiagram")
         self.assertNotEqual(normalized["visual_logic"], "static_image")
 
     def test_split_comparison_repairs_abstract_props(self) -> None:
@@ -322,7 +327,7 @@ class V2PipelineTestCase(unittest.TestCase):
             {"intent": "DATA", "pattern": "GROWTH", "visual_logic": "6% inflation exists"}
         )
         self.assertNotEqual(normalized["visual_logic"], "6% inflation exists")
-        self.assertEqual(normalized["component"], "StatExplosion")
+        self.assertEqual(normalized["component"], "FlowDiagram")
 
     def test_string_visual_logic_is_converted_to_object(self) -> None:
         normalized = RenderSpecService().normalize_structured_beat(
@@ -379,7 +384,7 @@ class V2PipelineTestCase(unittest.TestCase):
         self.assertIn("₹25,000 Salary", labels)
         self.assertNotIn("Living", labels)
 
-    def test_hook_enforcement_creates_numeric_punch_then_meaning_beat(self) -> None:
+    def test_hook_enforcement_creates_single_structured_numeric_punch(self) -> None:
         beats = ScriptService()._normalize_visual_beats(
             [{"intent": "EXPLANATION", "pattern": "MONEY_FLOW", "visual_logic": "money moves"}],
             "motion_text",
@@ -387,14 +392,13 @@ class V2PipelineTestCase(unittest.TestCase):
             6,
             enforce_hook=True,
         )
-        self.assertEqual(len(beats), 2)
+        self.assertEqual(len(beats), 1)
         self.assertNotEqual(beats[0].get("component"), "FlowDiagram")
         props = beats[0].get("props") or {}
         text = f"{props.get('headline', '')} {props.get('subtext', '')}"
         self.assertTrue(RenderSpecService()._has_number(text))
         self.assertTrue(RenderSpecService()._has_impact(text))
-        self.assertEqual(beats[1].get("beat_type"), "text_burst")
-        self.assertFalse(RenderSpecService()._has_number(str(beats[1].get("content") or "")))
+        self.assertEqual(beats[0]["visual_logic"]["type"], "emphasis")
         self.assertNotIn(" vs ", props["subtext"])
         self.assertIn("can't even save ₹5,000", props["subtext"])
 
@@ -532,6 +536,148 @@ class V2PipelineTestCase(unittest.TestCase):
         self.assertIn("₹1,50,000", text)
         self.assertNotIn("emergency fund", text)
 
+    def test_classify_intent_uses_strict_keyword_rules(self) -> None:
+        service = RenderSpecService()
+        self.assertEqual(service.classifyIntent("80% have less than ₹5,000 saved"), "EMPHASIS")
+        self.assertEqual(service.classifyIntent("₹5,000 vs ₹60,000"), "COMPARISON")
+        self.assertEqual(service.classifyIntent("You earn ₹25,000, spend ₹23,000, and have ₹2,000 left."), "FLOW")
+        self.assertEqual(service.classifyIntent("Salary can vanish by day 12"), "DECAY")
+
+    def test_classified_intent_forces_component_contract(self) -> None:
+        service = RenderSpecService()
+        cases = [
+            ("EMPHASIS", "80% of Indians cannot save ₹5,000.", "StatExplosion", None),
+            ("COMPARISON", "₹5,000 vs ₹60,000", "SplitComparison", None),
+            ("FLOW", "You earn ₹25,000, spend ₹23,000, and have ₹2,000 left.", "FlowDiagram", "linear"),
+            ("DECAY", "A ₹8,00,000 salary leaks ₹1,60,000 through defaults.", "FlowDiagram", "decay"),
+        ]
+        for classified_intent, narration, component, mode in cases:
+            spec = service.beat_spec(
+                {
+                    "intent": "EXPLANATION",
+                    "pattern": "MONEY_FLOW",
+                    "visual_logic": {"type": "comparison", "left": "₹1", "right": "₹2"},
+                    "classified_intent": classified_intent,
+                    "narration": narration,
+                }
+            )
+            self.assertEqual(spec.composition, component)
+            if mode:
+                self.assertEqual(spec.props["mode"], mode)
+
+    def test_savings_stat_emphasis_uses_direct_statement_not_sentence(self) -> None:
+        logic = RenderSpecService().deriveFromNarration("80% of Indians cannot save ₹5,000.")
+        self.assertEqual(logic, {"type": "emphasis", "headline": "80%", "subtext": "can't even save ₹5,000"})
+
+    def test_earn_spend_left_prefers_flow(self) -> None:
+        logic = RenderSpecService().deriveFromNarration("You earn ₹25,000, spend ₹23,000, and have ₹2,000 left.")
+        self.assertEqual(logic["type"], "flow")
+        self.assertIn("₹25,000 Salary", logic["source"])
+        self.assertIn("₹23,000 Expenses", logic["process"])
+        self.assertIn("₹2,000 Left", logic["result"])
+
+    def test_generic_words_are_rejected_and_regenerated(self) -> None:
+        normalized = RenderSpecService().normalize_structured_beat(
+            {
+                "intent": "EMPHASIS",
+                "pattern": "EMPHASIS",
+                "visual_logic": "wait what",
+                "narration": "You earn ₹25,000, spend ₹23,000, and have ₹2,000 left.",
+            }
+        )
+        self.assertNotIn("wait what", normalized["visual_logic_text"].lower())
+        self.assertEqual(normalized["visual_logic"]["type"], "flow")
+
+    def test_non_numeric_legacy_reaction_is_regenerated_from_narration(self) -> None:
+        beats = ScriptService()._normalize_visual_beats(
+            [{"beat_type": "reaction_card", "content": "money reality"}],
+            "motion_text",
+            "You earn ₹25,000, spend ₹23,000, and have ₹2,000 left.",
+            5,
+            context_text="You earn ₹25,000, spend ₹23,000, and have ₹2,000 left.",
+        )
+        self.assertEqual(beats[0]["visual_logic"]["type"], "flow")
+
+    def test_broll_without_source_regenerates_to_structured_beat(self) -> None:
+        self.app.config.update({"PEXELS_API_KEY": None, "PIXABAY_API_KEY": None})
+        scene = {
+            "narration_text": "You earn ₹25,000, spend ₹23,000, and have ₹2,000 left.",
+            "visual_instruction": "person checking salary",
+        }
+        beat = MediaService()._regenerated_beat_from_scene(scene, {"estimated_duration_sec": 3}, 0)
+        self.assertEqual(beat["visual_logic"]["type"], "flow")
+        self.assertEqual(beat["classified_intent"], "FLOW")
+
+    def test_structured_broll_logic_is_converted_before_render(self) -> None:
+        spec = RenderSpecService().beat_spec(
+            {
+                "intent": "CONTEXT",
+                "pattern": "CONTEXT",
+                "visual_logic": {"type": "broll", "query": "person checking salary"},
+                "narration": "You earn ₹25,000, spend ₹23,000, and have ₹2,000 left.",
+            }
+        )
+        self.assertNotEqual(spec.composition, "BrollOverlay")
+        self.assertIn(spec.composition, {"FlowDiagram", "SplitComparison"})
+
+    def test_decay_classified_legacy_beats_become_structured_flow(self) -> None:
+        beats = ScriptService()._normalize_visual_beats(
+            [
+                {"beat_type": "broll_caption", "content": "credit card stress", "caption": "salary vanished by day 12"},
+                {"beat_type": "reaction_card", "content": "me every payday", "caption": "rich for 6 hours"},
+            ],
+            "broll",
+            "Find b-roll",
+            6,
+            context_text="In your 20s, salary can vanish by day 12. You feel rich for 6 hours.",
+        )
+        self.assertTrue(all(beat.get("classified_intent") == "DECAY" for beat in beats))
+        self.assertTrue(all(beat.get("component") == "FlowDiagram" for beat in beats))
+        self.assertFalse(any(beat.get("beat_type") == "reaction_card" for beat in beats))
+
+    def test_invalid_legacy_broll_regenerates_from_same_narration_not_debt_fallback(self) -> None:
+        narration = "In your 20s, salary can vanish by day 12. You feel rich for 6 hours."
+        beats = ScriptService()._normalize_visual_beats(
+            [{"beat_type": "broll_caption", "content": "credit card stress", "caption": "salary vanished by day 12"}],
+            "broll",
+            "credit card stress",
+            3,
+            context_text=narration,
+        )
+        text = RenderSpecService()._visual_logic_to_text(beats[0]["visual_logic"])
+        self.assertIn("₹25,000", text)
+        self.assertIn("day 12", text)
+        self.assertIn("₹0", text)
+        self.assertNotIn("₹50,000 Debt", text)
+        self.assertNotIn("₹18,000 Interest", text)
+
+    def test_mismatched_unit_comparison_is_rejected_and_regenerated(self) -> None:
+        normalized = RenderSpecService().normalize_structured_beat(
+            {
+                "intent": "COMPARISON",
+                "pattern": "COMPARISON",
+                "visual_logic": {"type": "comparison", "left": "80% people", "right": "₹5,000 savings"},
+                "narration": "80% of Indians cannot save ₹5,000.",
+            }
+        )
+        self.assertNotEqual(normalized["visual_logic"], {"type": "comparison", "left": "80% people", "right": "₹5,000 savings"})
+        self.assertNotEqual(normalized["component"], "SplitComparison")
+
+    def test_generated_numbers_not_in_narration_are_rejected(self) -> None:
+        normalized = RenderSpecService().normalize_structured_beat(
+            {
+                "intent": "EXPLANATION",
+                "pattern": "MONEY_FLOW",
+                "visual_logic": {"type": "flow", "source": "₹30,000 Salary", "process": "₹28,000 Expenses", "result": "₹2,000 Left"},
+                "narration": "You earn ₹25,000, spend ₹23,000, and have ₹2,000 left.",
+            }
+        )
+        text = RenderSpecService()._visual_logic_to_text(normalized["visual_logic"])
+        self.assertIn("₹25,000", text)
+        self.assertIn("₹23,000", text)
+        self.assertNotIn("₹30,000", text)
+        self.assertNotIn("₹28,000", text)
+
     def test_illogical_salary_flow_is_rebuilt_in_semantic_order(self) -> None:
         normalized = RenderSpecService().normalize_structured_beat(
             {
@@ -612,7 +758,8 @@ class V2PipelineTestCase(unittest.TestCase):
                 "bad defaults",
             )
         first_components = [scene["visual_beats"][0]["component"] for scene in payload["scenes"]]
-        self.assertNotEqual(first_components[0], first_components[1])
+        first_intents = [scene["visual_beats"][0]["classified_intent"] for scene in payload["scenes"]]
+        self.assertNotEqual(first_intents[0], first_intents[1])
 
     def test_manual_good_visual_beats_map_to_expected_components(self) -> None:
         service = RenderSpecService()
@@ -706,9 +853,14 @@ class V2PipelineTestCase(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             ThumbnailService().ensure_thumbnails(1, ["Why Salaried Indians Stay Broke"])
 
-    def test_broll_without_stock_keys_fails_before_remotion(self) -> None:
+    def test_broll_without_stock_keys_converts_before_remotion(self) -> None:
         self.app.config.update({"PEXELS_API_KEY": None, "PIXABAY_API_KEY": None, "REMOTION_ENABLED": True})
-        with self.assertRaisesRegex(RuntimeError, "B-roll scenes require"):
+        with patch("youtube_ai_system.services.remotion_service.RemotionService.render_video") as render_video:
+            def write_visual(spec, output_path):
+                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+                Path(output_path).write_bytes(b"visual")
+
+            render_video.side_effect = write_visual
             MediaService()._generate_visual(
                 1,
                 Path(self.app.config["STORAGE_ROOT"]) / "images" / "1",
@@ -719,6 +871,9 @@ class V2PipelineTestCase(unittest.TestCase):
                 "credit card stress person",
                 5,
             )
+        spec = render_video.call_args.args[0]
+        self.assertNotEqual(spec.composition, "BrollOverlay")
+        self.assertIn(spec.composition, {"FlowDiagram", "SplitComparison"})
 
     def test_generate_beat_clips_renders_timeline_for_ten_minute_style(self) -> None:
         self.app.config.update({"CHANNEL_STYLE": "ten_minute_finance", "REMOTION_ENABLED": True})
@@ -742,6 +897,48 @@ class V2PipelineTestCase(unittest.TestCase):
                 )
         self.assertTrue(Path(timeline).exists())
         self.assertIn("beat_timeline", source)
+
+    def test_single_visual_logic_does_not_get_filler_beats(self) -> None:
+        scene = {
+            "scene_order": 1,
+            "visual_type": "motion_text",
+            "visual_instruction": "₹8,00,000 Salary vs ₹1,60,000 Leak",
+            "narration_text": "A ₹8,00,000 salary can leak ₹1,60,000.",
+            "visual_plan_json": '[{"beat_index":0,"intent":"COMPARISON","pattern":"COMPARISON","visual_logic":{"type":"comparison","left":"₹8,00,000 Salary","right":"₹1,60,000 Leak"}}]',
+        }
+        beats = MediaService()._load_scene_beats(scene, 6)
+        self.assertEqual(len(beats), 1)
+        self.assertEqual(beats[0]["visual_logic"]["type"], "comparison")
+
+    def test_visual_debug_prints_scene_transformation(self) -> None:
+        self.app.config.update({"VISUAL_DEBUG": True, "REMOTION_ENABLED": True})
+        project_id = ProjectRepository().create_project("Debug Test")
+        scene = {
+            "scene_order": 2,
+            "visual_type": "motion_text",
+            "visual_instruction": "₹5,000 Auto Debit -> Investment -> ₹0 Emotional Spend",
+            "narration_text": "Automate ₹5,000 before emotion turns savings into ₹0.",
+            "visual_plan_json": '[{"beat_index":0,"intent":"EXPLANATION","pattern":"MONEY_FLOW","visual_logic":{"type":"flow","source":"₹5,000 Auto Debit","process":"₹5,000 Investment","result":"₹0 Emotional Spend"}}]',
+        }
+        output = io.StringIO()
+        with patch("youtube_ai_system.services.remotion_service.RemotionService.render_video") as render_video:
+            render_video.side_effect = lambda spec, output_path: Path(output_path).write_bytes(b"beat")
+            with patch.object(MediaService, "_concat_beat_clips") as concat:
+                concat.side_effect = lambda paths, output_path, duration: Path(output_path).write_bytes(b"timeline")
+                with redirect_stdout(output):
+                    MediaService().generate_beat_clips(
+                        project_id,
+                        Path(self.app.config["STORAGE_ROOT"]) / "images" / str(project_id),
+                        scene,
+                        4,
+                    )
+        debug = output.getvalue()
+        self.assertIn("--- SCENE 2 DEBUG ---", debug)
+        self.assertIn("NARRATION:", debug)
+        self.assertIn("VISUAL_LOGIC:", debug)
+        self.assertIn("VALIDATED_BEAT:", debug)
+        self.assertIn("RENDER_SPEC:", debug)
+        self.assertIn("FlowDiagram", debug)
 
 
 if __name__ == "__main__":
