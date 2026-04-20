@@ -16,9 +16,9 @@
   <div class="card-body">
     <strong>What this step does now</strong>
     <ul class="small text-secondary helper-list mt-2 mb-0">
-      <li>Tries real Edge TTS voice generation first</li>
-      <li>Falls back to demo silent audio if live voice fails</li>
-      <li>Generates motion-text videos, graph videos, and Pexels b-roll when available</li>
+      <li>Tries Kokoro narration first, then the configured fallback voice provider</li>
+      <li>Uses silent fallback only as a last-resort development safety net</li>
+      <li>Generates Remotion stat, chart, and b-roll overlay videos when available</li>
       <li>Stores scene-level source information in the database</li>
     </ul>
   </div>
@@ -91,7 +91,12 @@
             <p class="small mb-1"><strong>Visual:</strong> {{ scene.visual_path }}</p>
           {% endif %}
           {% if scene.audio_path %}
-            <p class="small mb-3"><strong>Audio:</strong> {{ scene.audio_path }} · {{ scene.audio_duration_sec }}s</p>
+            <div class="mb-3">
+              <audio class="w-100" controls preload="metadata">
+                <source src="{{ url_for('static_file_proxy', file_path=scene.audio_path) }}" type="audio/wav">
+              </audio>
+              <p class="small mb-0 mt-2"><strong>Audio:</strong> {{ scene.audio_path }} · {{ scene.audio_duration_sec }}s</p>
+            </div>
           {% endif %}
           {% if scene.subtitle_path %}
             <p class="small mb-1"><strong>Subtitles:</strong> {{ scene.subtitle_path }}</p>

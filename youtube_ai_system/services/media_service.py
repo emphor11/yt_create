@@ -17,7 +17,10 @@ from PIL import Image, ImageDraw, ImageFont
 import requests
 
 from ..models.repository import ProjectRepository
+from .remotion_service import RemotionService
+from .render_spec_service import RenderSpecService
 from .run_log import RunLogger
+from .voice_service import VoiceService
 
 # ---------------------------------------------------------------------------
 # Colour palettes
@@ -71,6 +74,9 @@ class MediaService:
     def __init__(self) -> None:
         self.repo = ProjectRepository()
         self.logger = RunLogger()
+        self.voice_service = VoiceService()
+        self.render_specs = RenderSpecService()
+        self.remotion = RemotionService()
 
     # -----------------------------------------------------------------------
     # Public entry points
@@ -85,6 +91,14 @@ class MediaService:
         self.logger.log("media_generation", "running", "Generating scene media.", project_id)
 
         for scene in scenes:
+            if self._scene_media_complete(scene):
+                self.logger.log(
+                    "media_generation",
+                    "completed",
+                    f"Skipping scene {scene['scene_order']} because media already exists.",
+                    project_id,
+                )
+                continue
             # --- voice ---
             self.logger.log(
                 "voice_generation", "running",
@@ -92,9 +106,11 @@ class MediaService:
                 project_id,
             )
             try:
-                audio_path, subtitle_path, duration, audio_source = self._generate_audio(
-                    audio_root, scene["scene_order"], scene["narration_text"],
-                )
+                voice_result = self._generate_audio(audio_root, scene["scene_order"], scene["narration_text"])
+                audio_path = voice_result.audio_path
+                subtitle_path = voice_result.subtitle_path
+                duration = voice_result.duration_sec
+                audio_source = voice_result.source
                 audio_status = "completed"
             except Exception as exc:
                 self.logger.log(
@@ -122,11 +138,15 @@ class MediaService:
                 project_id,
             )
             try:
-                visual_path, visual_source = self._generate_visual(
-                    project_id, image_root, scene["scene_order"],
-                    scene["narration_text"], scene["visual_type"],
-                    scene.get("visual_instruction"), duration,
-                )
+                if self._ten_minute_finance_enabled():
+                    visual_path, visual_source = self.generate_beat_clips(project_id, image_root, scene, duration)
+                else:
+                    visual_path, visual_source = self._generate_visual(
+                        project_id, image_root, scene,
+                        scene["scene_order"],
+                        scene["narration_text"], scene["visual_type"],
+                        scene.get("visual_instruction"), duration,
+                    )
                 visual_status = "completed"
                 self.logger.log(
                     "visual_generation", "completed",
@@ -139,9 +159,8 @@ class MediaService:
                     f"Visual generation failed for scene {scene['scene_order']}: {exc}",
                     project_id,
                 )
-                visual_path = image_root / f"scene-{scene['scene_order']:02d}.png"
-                self._render_image(visual_path, scene["narration_text"], scene.get("visual_type"))
-                visual_source = "generated_image"
+                visual_path = None
+                visual_source = "remotion_failed"
                 visual_status = "failed"
 
             scene_status = "generated" if (audio_status == "completed" and visual_status == "completed") else "failed"
@@ -150,21 +169,23 @@ class MediaService:
                 audio_path=str(audio_path),
                 audio_duration_sec=duration,
                 subtitle_path=str(subtitle_path) if subtitle_path else None,
-                visual_path=str(visual_path),
+                visual_path=str(visual_path) if visual_path else None,
                 audio_source=audio_source,
                 visual_source=visual_source,
                 status=scene_status,
             )
 
         live_audio_count = sum(
-            1 for scene in self.repo.list_scenes(project_id) if scene.get("audio_source") == "edge_tts"
+            1
+            for scene in self.repo.list_scenes(project_id)
+            if str(scene.get("audio_source") or "").startswith(("kokoro", "gtts", "edge_tts"))
         )
         self.logger.log(
             "media_generation",
             "completed",
             (
                 f"Generated media assets for {len(scenes)} scenes in project '{project['working_title']}'. "
-                f"Live voice used on {live_audio_count} scene(s)."
+                f"Narration voice used on {live_audio_count} scene(s)."
             ),
             project_id,
         )
@@ -198,15 +219,23 @@ class MediaService:
             visual_status = "not_run"
             visual_message = "Visual generation has not run yet."
         else:
-            if audio_counts.get("edge_tts") == total:
+            live_count = sum(
+                count
+                for source, count in audio_counts.items()
+                if str(source).startswith(("kokoro", "gtts", "edge_tts"))
+            )
+            if live_count == total:
                 voice_status = "live"
-                voice_message = "All scenes used live Edge TTS."
-            elif audio_counts.get("edge_tts", 0) > 0:
+                voice_message = "All scenes used generated narration audio."
+            elif live_count > 0:
                 voice_status = "mixed"
-                voice_message = "Some scenes used live Edge TTS and some used demo fallback audio."
+                voice_message = "Some scenes used generated narration and some used fallback audio."
             elif audio_counts.get("demo_silent") == total:
                 voice_status = "demo"
                 voice_message = "All scenes used demo fallback audio."
+            elif audio_counts.get("voice_fallback_silent") == total:
+                voice_status = "fallback"
+                voice_message = "All scenes used last-resort silent fallback audio."
             else:
                 voice_status = "unknown"
                 voice_message = "Voice sources are mixed or unavailable."
@@ -242,21 +271,30 @@ class MediaService:
         if not total:
             status = "not_run"
             message = "Voice generation has not run yet for this project."
-        elif counts.get("edge_tts") == total:
-            status = "live"
-            message = "All scene audio was generated with live Edge TTS."
-        elif counts.get("edge_tts", 0) > 0:
-            status = "mixed"
-            message = "Some scenes used live Edge TTS and some fell back to demo silent audio."
-        elif counts.get("demo_silent") == total:
-            status = "demo"
-            message = "All scenes used demo silent audio."
         else:
-            status = "unknown"
-            message = "Audio sources are mixed or unavailable."
+            live_count = sum(
+                count
+                for source, count in counts.items()
+                if str(source).startswith(("kokoro", "gtts", "edge_tts"))
+            )
+            if live_count == total:
+                status = "live"
+                message = "All scene audio was generated with a narration provider."
+            elif live_count > 0:
+                status = "mixed"
+                message = "Some scenes used generated narration and some fell back to silent audio."
+            elif counts.get("demo_silent") == total:
+                status = "demo"
+                message = "All scenes used demo silent audio."
+            elif counts.get("voice_fallback_silent") == total:
+                status = "fallback"
+                message = "All scenes used last-resort silent fallback audio."
+            else:
+                status = "unknown"
+                message = "Audio sources are mixed or unavailable."
 
         return {
-            "mode": current_app.config.get("VOICE_MODE", "demo"),
+            "mode": current_app.config.get("VOICE_PROVIDER", current_app.config.get("VOICE_MODE", "demo")),
             "status": status,
             "message": message,
             "counts": counts,
@@ -264,51 +302,37 @@ class MediaService:
         }
 
     def run_voice_check(self) -> dict[str, object]:
-        voice_mode = current_app.config.get("VOICE_MODE", "demo")
         audio_root = Path(current_app.config["STORAGE_ROOT"]) / "audio" / "voice-check"
         audio_root.mkdir(parents=True, exist_ok=True)
-
-        if voice_mode != "auto":
-            sample_path = audio_root / "scene-01.wav"
-            duration = self._estimate_duration("Voice mode is set to demo, so this check uses silent fallback audio.")
-            self._create_silent_wav(sample_path, duration)
-            return {
-                "mode": voice_mode,
-                "status": "demo",
-                "audio_source": "demo_silent",
-                "audio_path": str(sample_path),
-                "subtitle_path": None,
-                "duration": duration,
-                "message": "VOICE_MODE is not set to auto, so the app is currently using demo silent audio.",
-            }
-
-        sample_text = (
-            "This is a live voice check for YTCreate. If you can hear natural speech, Edge TTS is working."
-        )
         try:
-            audio_path, subtitle_path, duration, audio_source = self._edge_tts_audio(audio_root, 1, sample_text)
+            result = self.voice_service.run_voice_check(audio_root)
         except Exception as exc:
             friendly_error = self._summarize_tts_error(exc)
-            self.logger.log("voice_check", "failed", f"Live Edge TTS check failed ({friendly_error}).")
+            self.logger.log("voice_check", "failed", f"Voice check failed ({friendly_error}).")
             return {
-                "mode": voice_mode,
+                "mode": current_app.config.get("VOICE_PROVIDER", "kokoro"),
                 "status": "failed",
-                "audio_source": "edge_tts_failed",
+                "audio_source": "voice_failed",
                 "audio_path": None,
                 "subtitle_path": None,
                 "duration": None,
-                "message": f"Live Edge TTS check failed: {friendly_error}",
+                "message": f"Voice check failed: {friendly_error}",
             }
 
-        self.logger.log("voice_check", "completed", "Live Edge TTS check succeeded.")
+        live = result.source not in {"demo_silent", "voice_fallback_silent"}
+        self.logger.log("voice_check", "completed", f"Voice check completed with {result.source}.")
         return {
-            "mode": voice_mode,
-            "status": "live",
-            "audio_source": audio_source,
-            "audio_path": str(audio_path),
-            "subtitle_path": str(subtitle_path) if subtitle_path else None,
-            "duration": duration,
-            "message": "Live Edge TTS check succeeded.",
+            "mode": current_app.config.get("VOICE_PROVIDER", "kokoro"),
+            "status": "live" if live else "demo",
+            "audio_source": result.source,
+            "audio_path": str(result.audio_path),
+            "subtitle_path": str(result.subtitle_path) if result.subtitle_path else None,
+            "duration": result.duration_sec,
+            "message": (
+                f"Voice check completed with {result.source}."
+                if live
+                else "Voice check used silent fallback audio. Install/configure Kokoro for live narration."
+            ),
         }
 
     # -----------------------------------------------------------------------
@@ -318,30 +342,8 @@ class MediaService:
         words = max(len(narration.split()), 1)
         return round(max(words / 2.4, 2.5), 2)
 
-    def _generate_audio(self, audio_root: Path, scene_order: int, narration: str) -> tuple[Path, Path | None, float, str]:
-        if current_app.config.get("VOICE_MODE", "demo") == "auto":
-            max_retries = 2
-            last_exc = None
-            for attempt in range(1, max_retries + 1):
-                try:
-                    return self._edge_tts_audio(audio_root, scene_order, narration)
-                except Exception as exc:
-                    last_exc = exc
-                    friendly_error = self._summarize_tts_error(exc)
-                    self.logger.log(
-                        "voice_generation", "failed",
-                        f"Edge TTS attempt {attempt}/{max_retries} failed for scene {scene_order} ({friendly_error}).",
-                    )
-            # All retries exhausted — fall back to silent
-            self.logger.log(
-                "voice_generation", "failed",
-                f"Edge TTS exhausted {max_retries} retries for scene {scene_order}. Falling back to demo audio.",
-            )
-
-        duration = self._estimate_duration(narration)
-        audio_path = audio_root / f"scene-{scene_order:02d}.wav"
-        self._create_silent_wav(audio_path, duration)
-        return audio_path, None, duration, "demo_silent"
+    def _generate_audio(self, audio_root: Path, scene_order: int, narration: str):
+        return self.voice_service.generate_scene_audio(audio_root, scene_order, narration)
 
     def _edge_tts_audio(
         self, audio_root: Path, scene_order: int, narration: str
@@ -412,15 +414,19 @@ class MediaService:
         self,
         project_id: int,
         image_root: Path,
+        scene: dict,
         scene_order: int,
         narration: str,
         visual_type: str | None,
         visual_instruction: str | None,
         target_duration: float,
     ) -> tuple[Path, str]:
-        if visual_type == "broll" and current_app.config.get("PEXELS_API_KEY"):
+        source_asset_path = None
+        if visual_type == "broll":
+            if not current_app.config.get("PEXELS_API_KEY") and not current_app.config.get("PIXABAY_API_KEY"):
+                raise RuntimeError("B-roll scenes require PEXELS_API_KEY or PIXABAY_API_KEY so Remotion can overlay real stock footage.")
             try:
-                return self._pexels_broll(
+                source_asset_path, asset_source = self._pexels_broll(
                     project_id, image_root, scene_order,
                     visual_instruction or narration, target_duration,
                 )
@@ -432,48 +438,292 @@ class MediaService:
                 )
                 # Pixabay fallback
                 try:
-                    return self._pixabay_broll(
+                    source_asset_path, asset_source = self._pixabay_broll(
                         project_id, image_root, scene_order,
                         visual_instruction or narration, target_duration,
                     )
                 except Exception as pix_exc:
                     self.logger.log(
                         "visual_generation", "failed",
-                        f"Pixabay fallback also failed for scene {scene_order} ({pix_exc}). Auto-switching to motion_text.",
+                        f"Pixabay fallback also failed for scene {scene_order} ({pix_exc}). B-roll cannot render without stock footage.",
                         project_id,
                     )
-                    # Fall through to motion_text
-                    visual_type = "motion_text"
+                    raise RuntimeError(
+                        f"B-roll source footage unavailable for scene {scene_order}. "
+                        "Remotion overlay requires a Pexels/Pixabay source clip."
+                    ) from pix_exc
 
-        if visual_type == "motion_text":
+        if not current_app.config.get("REMOTION_ENABLED", True):
+            raise RuntimeError("Remotion visuals are required, but REMOTION_ENABLED=false.")
+
+        spec = self.render_specs.scene_spec(
+            {**scene, "visual_type": visual_type},
+            target_duration,
+            source_asset_path=source_asset_path,
+        )
+        output_path = image_root / f"scene-{scene_order:02d}.mp4"
+        self.remotion.render_video(spec, output_path)
+        return output_path, spec.source
+
+    def _scene_media_complete(self, scene: dict) -> bool:
+        audio_path = scene.get("audio_path")
+        visual_path = scene.get("visual_path")
+        return (
+            scene.get("status") == "generated"
+            and bool(audio_path)
+            and bool(visual_path)
+            and Path(str(audio_path)).exists()
+            and Path(str(visual_path)).exists()
+        )
+
+    def generate_beat_clips(
+        self,
+        project_id: int,
+        image_root: Path,
+        scene: dict,
+        scene_duration: float,
+    ) -> tuple[Path, str]:
+        beats = self._load_scene_beats(scene, scene_duration)
+        scene_order = int(scene["scene_order"])
+        scene_dir = image_root / f"scene-{scene_order:02d}"
+        scene_dir.mkdir(parents=True, exist_ok=True)
+        successful: list[Path] = []
+        sources: list[str] = []
+
+        if not current_app.config.get("REMOTION_ENABLED", True):
+            raise RuntimeError("Remotion visuals are required, but REMOTION_ENABLED=false.")
+
+        for index, beat in enumerate(beats):
+            beat_index = int(beat.get("beat_index", index))
             try:
-                return self._render_motion_text_video(
-                    image_root, scene_order,
-                    visual_instruction or narration, target_duration,
+                source_asset_path = None
+                if self.render_specs.beat_requires_source_asset(beat):
+                    if not current_app.config.get("PEXELS_API_KEY") and not current_app.config.get("PIXABAY_API_KEY"):
+                        raise RuntimeError("B-roll beat requires PEXELS_API_KEY or PIXABAY_API_KEY.")
+                    query = self.render_specs.broll_query_for_beat(beat) or str(scene.get("visual_instruction") or scene.get("narration_text"))
+                    try:
+                        source_asset_path, _asset_source = self._pexels_broll(
+                            project_id,
+                            image_root,
+                            (scene_order * 100) + beat_index,
+                            query,
+                            float(beat.get("estimated_duration_sec") or 3),
+                        )
+                    except Exception as exc:
+                        self.logger.log(
+                            "visual_generation",
+                            "failed",
+                            f"Pexels b-roll failed for scene {scene_order} beat {beat_index} ({exc}). Trying Pixabay fallback.",
+                            project_id,
+                        )
+                        source_asset_path, _asset_source = self._pixabay_broll(
+                            project_id,
+                            image_root,
+                            (scene_order * 100) + beat_index,
+                            query,
+                            float(beat.get("estimated_duration_sec") or 3),
+                        )
+                spec = self.render_specs.beat_spec(beat, source_asset_path=source_asset_path)
+                beat_path = scene_dir / f"beat-{beat_index:02d}.mp4"
+                self.remotion.render_video(spec, beat_path)
+                successful.append(beat_path)
+                sources.append(spec.source)
+                self.logger.log(
+                    "visual_generation",
+                    "completed",
+                    f"Rendered scene {scene_order} beat {beat_index} ({beat.get('beat_type')}).",
+                    project_id,
                 )
             except Exception as exc:
                 self.logger.log(
-                    "visual_generation", "failed",
-                    f"Motion text video failed for scene {scene_order} ({exc}). Falling back to generated image.",
+                    "visual_generation",
+                    "failed",
+                    f"Beat render failed for scene {scene_order} beat {beat_index}: {exc}",
                     project_id,
                 )
 
+        if not successful:
+            self.logger.log(
+                "visual_generation",
+                "failed",
+                f"No beats rendered for scene {scene_order}; rendering short text fallback.",
+                project_id,
+            )
+            fallback_path = scene_dir / "beat-fallback.mp4"
+            fallback_spec = self.render_specs.beat_spec(
+                {
+                    "beat_type": "text_burst",
+                    "content": scene.get("visual_instruction") or scene.get("narration_text") or "money reality",
+                    "caption": "",
+                    "color": "orange",
+                    "estimated_duration_sec": min(max(scene_duration, 2.5), 4.0),
+                }
+            )
+            self.remotion.render_video(fallback_spec, fallback_path)
+            successful = [fallback_path]
+            sources = [fallback_spec.source]
+
+        timeline_path = image_root / f"scene-{scene_order:02d}_timeline.mp4"
+        self.logger.log(
+            "visual_generation",
+            "running",
+            f"Concatenating {len(successful)} beat clip(s) for scene {scene_order} into a {round(scene_duration, 2)}s timeline.",
+            project_id,
+        )
+        self._concat_beat_clips(successful, timeline_path, scene_duration)
+        return timeline_path, "beat_timeline:" + ",".join(sorted(set(sources)))
+
+    def _load_scene_beats(self, scene: dict, scene_duration: float) -> list[dict]:
+        raw = scene.get("visual_plan_json")
+        beats: list[dict] = []
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, list):
+                    beats = [beat for beat in parsed if isinstance(beat, dict)]
+            except json.JSONDecodeError:
+                beats = []
+        if not beats:
+            beats = [
+                {
+                    "beat_index": 0,
+                    "beat_type": self._fallback_beat_type(scene.get("visual_type")),
+                    "content": scene.get("visual_instruction") or scene.get("narration_text") or "Money reality",
+                    "caption": "",
+                    "color": "orange",
+                    "estimated_start_sec": 0,
+                    "estimated_duration_sec": min(max(scene_duration, 2.5), 4.0),
+                }
+            ]
+        if len(beats) < 2:
+            beats = self._supplement_beats(scene, beats, scene_duration)
+        return beats
+
+    def _supplement_beats(self, scene: dict, beats: list[dict], scene_duration: float) -> list[dict]:
+        base = list(beats)
+        existing_duration = sum(float(beat.get("estimated_duration_sec") or 3) for beat in base)
+        phrases = self._beat_phrases(str(scene.get("narration_text") or scene.get("visual_instruction") or "money reality"))
+        while len(base) < 4:
+            index = len(base)
+            start = min(existing_duration, max(scene_duration - 3, 0))
+            beat_type = "reaction_card" if index % 2 else "text_burst"
+            base.append(
+                {
+                    "beat_index": index,
+                    "beat_type": beat_type,
+                    "content": phrases[(index - 1) % len(phrases)],
+                    "caption": "" if beat_type == "text_burst" else "the math is rude",
+                    "color": "red" if beat_type == "reaction_card" else "orange",
+                    "estimated_start_sec": round(start, 2),
+                    "estimated_duration_sec": 3.0,
+                }
+            )
+            existing_duration += 3.0
+        return base
+
+    def _beat_phrases(self, text: str) -> list[str]:
+        lowered = text.lower()
+        if "inflation" in lowered:
+            return ["inflation wins", "wait what", "your money shrank"]
+        if "debt" in lowered or "card" in lowered:
+            return ["debt is expensive", "bruh", "interest ate it"]
+        if "invest" in lowered:
+            return ["start earlier", "plot twist", "SIP beats vibes"]
+        return ["money reality", "wait what", "do the math"]
+
+    def _fallback_beat_type(self, visual_type: str | None) -> str:
         if visual_type == "graph":
-            try:
-                return self._render_graph_video(
-                    image_root, scene_order,
-                    visual_instruction or narration, target_duration,
-                )
-            except Exception as exc:
-                self.logger.log(
-                    "visual_generation", "failed",
-                    f"Graph video failed for scene {scene_order} ({exc}). Falling back to generated image.",
-                    project_id,
-                )
+            return "chart"
+        if visual_type == "broll":
+            return "broll_caption"
+        if visual_type in {"stat_explosion", "text_burst", "chart", "split_comparison", "broll_caption", "reaction_card"}:
+            return visual_type
+        return "text_burst"
 
-        visual_path = image_root / f"scene-{scene_order:02d}.png"
-        self._render_image(visual_path, narration, visual_type)
-        return visual_path, "generated_image"
+    def _concat_beat_clips(self, beat_paths: list[Path], output_path: Path, target_duration: float) -> None:
+        ffmpeg_bin = shutil.which("ffmpeg")
+        if not ffmpeg_bin:
+            shutil.copy2(beat_paths[0], output_path)
+            return
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            manifest = temp_root / "beats.txt"
+            concat_path = temp_root / "beats_concat.mp4"
+            manifest.write_text(
+                "\n".join(f"file '{path.resolve()}'" for path in beat_paths),
+                encoding="utf-8",
+            )
+            subprocess.run(
+                [
+                    ffmpeg_bin,
+                    "-y",
+                    "-f",
+                    "concat",
+                    "-safe",
+                    "0",
+                    "-i",
+                    str(manifest),
+                    "-c",
+                    "copy",
+                    str(concat_path),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            duration = self._probe_duration(concat_path)
+            if duration < target_duration - 0.1:
+                pad = round(target_duration - duration, 2)
+                subprocess.run(
+                    [
+                        ffmpeg_bin,
+                        "-y",
+                        "-i",
+                        str(concat_path),
+                        "-vf",
+                        f"tpad=stop_mode=clone:stop_duration={pad}",
+                        "-t",
+                        str(round(target_duration, 2)),
+                        "-c:v",
+                        "libx264",
+                        "-preset",
+                        "veryfast",
+                        "-crf",
+                        "18",
+                        "-pix_fmt",
+                        "yuv420p",
+                        str(output_path),
+                    ],
+                    check=True,
+                    capture_output=True,
+                )
+            elif duration > target_duration + 0.1:
+                subprocess.run(
+                    [
+                        ffmpeg_bin,
+                        "-y",
+                        "-i",
+                        str(concat_path),
+                        "-t",
+                        str(round(target_duration, 2)),
+                        "-c:v",
+                        "libx264",
+                        "-preset",
+                        "veryfast",
+                        "-crf",
+                        "18",
+                        "-pix_fmt",
+                        "yuv420p",
+                        str(output_path),
+                    ],
+                    check=True,
+                    capture_output=True,
+                )
+            else:
+                shutil.copy2(concat_path, output_path)
+
+    def _ten_minute_finance_enabled(self) -> bool:
+        return str(current_app.config.get("CHANNEL_STYLE", "")).lower() == "ten_minute_finance"
 
     # -----------------------------------------------------------------------
     # Groq API helper (shared by motion_text, graph, broll micro-calls)
@@ -594,7 +844,7 @@ class MediaService:
             cache_path.write_text(json.dumps(result), encoding="utf-8")
 
         download_url = result["download_url"]
-        output_path = image_root / f"scene-{scene_order:02d}.mp4"
+        output_path = self._broll_source_path(project_id, "pexels", scene_order)
         if not output_path.exists():
             response = requests.get(
                 download_url,
@@ -725,7 +975,7 @@ class MediaService:
         if not download_url:
             raise RuntimeError("Pixabay did not include a usable download link.")
 
-        output_path = image_root / f"scene-{scene_order:02d}.mp4"
+        output_path = self._broll_source_path(project_id, "pixabay", scene_order)
         if not output_path.exists():
             dl_response = requests.get(download_url, timeout=30, stream=True)
             dl_response.raise_for_status()
@@ -740,6 +990,11 @@ class MediaService:
             project_id,
         )
         return output_path, "pixabay_video"
+
+    def _broll_source_path(self, project_id: int, provider: str, scene_order: int) -> Path:
+        source_root = Path(current_app.config["STORAGE_ROOT"]) / "downloads" / "broll" / str(project_id)
+        source_root.mkdir(parents=True, exist_ok=True)
+        return source_root / f"{provider}-scene-{scene_order:02d}.mp4"
 
     # -----------------------------------------------------------------------
     # Motion text: Groq parsing + rendering

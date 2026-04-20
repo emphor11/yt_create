@@ -199,12 +199,22 @@ def save_script(project_id: int):
             "tension_type": request.form.get("hook_tension_type", "").strip(),
             "visual_instruction": request.form.get("hook_visual_instruction", "").strip(),
             "visual_type": request.form.get("hook_visual_type", "motion_text").strip(),
+            "visual_beats": _parse_beats_json(
+                "hook",
+                request.form.get("hook_visual_beats", "[]"),
+                existing_payload.get("hook", {}).get("visual_beats", []),
+            ),
         },
         "scenes": [],
         "outro": {
             "narration": request.form.get("outro_narration", "").strip(),
             "visual_instruction": request.form.get("outro_visual_instruction", "").strip(),
             "visual_type": request.form.get("outro_visual_type", "motion_text").strip(),
+            "visual_beats": _parse_beats_json(
+                "outro",
+                request.form.get("outro_visual_beats", "[]"),
+                existing_payload.get("outro", {}).get("visual_beats", []),
+            ),
         },
         "titles": [line.strip() for line in request.form.get("titles", "").splitlines() if line.strip()],
         "description": request.form.get("description", "").strip(),
@@ -213,19 +223,38 @@ def save_script(project_id: int):
     }
 
     scene_count = int(request.form.get("scene_count", 0))
+    existing_scenes = existing_payload.get("scenes", [])
     for index in range(scene_count):
+        existing_scene = existing_scenes[index] if index < len(existing_scenes) else {}
         payload["scenes"].append(
             {
                 "kind": "body",
                 "narration": request.form.get(f"scene_{index}_narration", "").strip(),
                 "visual_instruction": request.form.get(f"scene_{index}_visual_instruction", "").strip(),
                 "visual_type": request.form.get(f"scene_{index}_visual_type", "motion_text").strip(),
+                "visual_beats": _parse_beats_json(
+                    f"scene {index + 1}",
+                    request.form.get(f"scene_{index}_visual_beats", "[]"),
+                    existing_scene.get("visual_beats", []),
+                ),
             }
         )
 
     ScriptService().save_script_edits(script_version["id"], payload)
     flash("Script saved. Approval is now available once the hook passes.", "success")
     return redirect(url_for("projects.edit_script", project_id=project_id))
+
+
+def _parse_beats_json(label: str, raw_value: str, fallback):
+    try:
+        parsed = json.loads(raw_value or "[]")
+    except json.JSONDecodeError:
+        flash(f"Visual beats JSON for {label} was invalid, so the previous beats were kept.", "warning")
+        return fallback or []
+    if not isinstance(parsed, list):
+        flash(f"Visual beats JSON for {label} must be an array, so the previous beats were kept.", "warning")
+        return fallback or []
+    return parsed
 
 
 @projects_bp.route("/projects/<int:project_id>/script/approve", methods=["POST"])
@@ -282,7 +311,7 @@ def next_project_step(state: str) -> dict[str, str]:
         },
         "drafted": {
             "title": "Generate script",
-            "description": "Generate the current demo script draft for this project.",
+            "description": "Generate a finance script draft for this project.",
             "label": "Generate Script",
             "endpoint": "projects.generate_script",
         },
@@ -294,7 +323,7 @@ def next_project_step(state: str) -> dict[str, str]:
         },
         "script_approved": {
             "title": "Generate media",
-            "description": "Create demo audio and visual assets for all scenes.",
+            "description": "Create V2 narration, Remotion visuals, and scene assets.",
             "label": "Generate Media",
             "endpoint": "media.generate_media",
         },

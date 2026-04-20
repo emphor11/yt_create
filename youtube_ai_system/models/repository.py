@@ -150,8 +150,8 @@ class ProjectRepository:
             """
             INSERT INTO scenes (
                 video_project_id, script_version_id, scene_order, kind, narration_text,
-                visual_instruction, visual_type, status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                visual_instruction, visual_type, visual_plan_json, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
             """,
             [
                 (
@@ -162,6 +162,7 @@ class ProjectRepository:
                     scene["narration_text"],
                     scene.get("visual_instruction"),
                     scene.get("visual_type"),
+                    scene.get("visual_plan_json"),
                     now,
                     now,
                 )

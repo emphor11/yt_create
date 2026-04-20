@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from youtube_ai_system import create_app
 from youtube_ai_system.db import close_db, get_db
@@ -15,6 +16,7 @@ class AppFlowTestCase(unittest.TestCase):
                 "TESTING": True,
                 "LLM_PROVIDER": "demo",
                 "VOICE_MODE": "demo",
+                "REMOTION_ENABLED": True,
                 "DATABASE_PATH": root / "instance" / "database.db",
                 "INSTANCE_PATH": root / "instance",
                 "STORAGE_ROOT": root / "storage",
@@ -68,7 +70,7 @@ class AppFlowTestCase(unittest.TestCase):
             follow_redirects=True,
         )
         body = response.get_data(as_text=True)
-        self.assertIn("demo silent audio", body)
+        self.assertIn("silent fallback audio", body)
 
     def test_numeric_hook_can_pass_tension_validation_after_edit(self) -> None:
         project_id = self._create_topic_ready_project()
@@ -89,9 +91,22 @@ class AppFlowTestCase(unittest.TestCase):
         self.client.post(f"/projects/{project_id}/script/generate", follow_redirects=True)
         self.client.post(f"/projects/{project_id}/script/save", data=self._edited_script_payload(), follow_redirects=True)
         self.client.post(f"/projects/{project_id}/script/approve", follow_redirects=True)
-        self.client.post(f"/projects/{project_id}/media/generate", follow_redirects=True)
+        with patch("youtube_ai_system.services.remotion_service.RemotionService.render_video") as render_video:
+            render_video.side_effect = lambda spec, output_path: Path(output_path).write_bytes(b"remotion-test-video")
+            self.client.post(f"/projects/{project_id}/media/generate", follow_redirects=True)
         self.client.post(f"/projects/{project_id}/scene-review/approve", follow_redirects=True)
-        self.client.post(f"/projects/{project_id}/assemble", follow_redirects=True)
+        with patch("youtube_ai_system.services.assembly_service.AssemblyService.assemble_project") as assemble:
+            def fake_assemble(pid):
+                final_path = Path(self.app.config["STORAGE_ROOT"]) / "video" / str(pid) / "final_video.mp4"
+                final_path.parent.mkdir(parents=True, exist_ok=True)
+                final_path.write_bytes(b"final")
+                from youtube_ai_system.models.repository import ProjectRepository
+                ProjectRepository().update_project(pid, final_video_path=str(final_path))
+                return str(final_path)
+            assemble.side_effect = fake_assemble
+            with patch("youtube_ai_system.services.remotion_service.RemotionService.render_still") as render_still:
+                render_still.side_effect = lambda spec, output_path: Path(output_path).write_bytes(b"remotion-test-jpg")
+                self.client.post(f"/projects/{project_id}/assemble", follow_redirects=True)
         self.client.post(
             f"/projects/{project_id}/review/save",
             data={
@@ -99,18 +114,18 @@ class AppFlowTestCase(unittest.TestCase):
                 "selected_description": "Final Description",
                 "selected_thumbnail_path": "/tmp/thumb.jpg",
             },
-            follow_redirects=True,
+            follow_redirects=False,
         )
-        self.client.post(f"/projects/{project_id}/publish/stage", follow_redirects=True)
+        self.client.post(f"/projects/{project_id}/publish/stage", follow_redirects=False)
         self.client.post(
             f"/projects/{project_id}/publish/mock-upload",
             data={"youtube_video_id": "demo-flow"},
-            follow_redirects=True,
+            follow_redirects=False,
         )
         self.client.post(
             f"/projects/{project_id}/publish/schedule",
             data={"publish_at": "2026-04-20T12:30:00+00:00"},
-            follow_redirects=True,
+            follow_redirects=False,
         )
 
         with self.app.app_context():

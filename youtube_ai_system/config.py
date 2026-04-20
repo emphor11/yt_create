@@ -42,6 +42,13 @@ class Config:
     PEXELS_API_TIMEOUT = int(os.environ.get("PEXELS_API_TIMEOUT", "15"))
     PEXELS_SEARCH_LIMIT = int(os.environ.get("PEXELS_SEARCH_LIMIT", "10"))
     PIXABAY_API_KEY = os.environ.get("PIXABAY_API_KEY")
+    VOICE_PROVIDER = os.environ.get("VOICE_PROVIDER", "kokoro").lower()
+    VOICE_FALLBACK_PROVIDER = os.environ.get("VOICE_FALLBACK_PROVIDER", "gtts").lower()
+    KOKORO_LANG_CODE = os.environ.get("KOKORO_LANG_CODE", "a")
+    KOKORO_VOICE_MALE = os.environ.get("KOKORO_VOICE_MALE", "am_eric")
+    KOKORO_VOICE_FEMALE = os.environ.get("KOKORO_VOICE_FEMALE", "af_sarah")
+    KOKORO_NARRATOR = os.environ.get("KOKORO_NARRATOR", "male").lower()
+    GTTS_LANG = os.environ.get("GTTS_LANG", "en")
     EDGE_TTS_VOICE = os.environ.get("EDGE_TTS_VOICE", "en-IN-PrabhatNeural")
     EDGE_TTS_VOICE_ALT = os.environ.get("EDGE_TTS_VOICE_ALT", "en-IN-NeerjaNeural")
     EDGE_TTS_RATE = os.environ.get("EDGE_TTS_RATE", "+0%")
@@ -50,8 +57,26 @@ class Config:
     EDGE_TTS_CLI_TIMEOUT = int(os.environ.get("EDGE_TTS_CLI_TIMEOUT", "20"))
     VOICE_MODE = os.environ.get("VOICE_MODE", "demo")
 
-    CAPTIONS_ENABLED = os.environ.get("CAPTIONS_ENABLED", "false").lower() == "true"
+    CHANNEL_STYLE = os.environ.get("CHANNEL_STYLE", "standard").lower()
+    VISUAL_BEAT_MAX_SEC = float(os.environ.get("VISUAL_BEAT_MAX_SEC", "4.0"))
+    VISUAL_BEAT_MIN_SEC = float(os.environ.get("VISUAL_BEAT_MIN_SEC", "2.5"))
+    MEME_ASSET_DIR = os.environ.get("MEME_ASSET_DIR", "")
+
+    CAPTIONS_ENABLED = os.environ.get(
+        "CAPTIONS_ENABLED",
+        "true" if CHANNEL_STYLE == "ten_minute_finance" else "false",
+    ).lower() == "true"
     MUSIC_ENABLED = os.environ.get("MUSIC_ENABLED", "false").lower() == "true"
+    REMOTION_ENABLED = os.environ.get("REMOTION_ENABLED", "true").lower() == "true"
+    REMOTION_PROJECT_PATH = Path(
+        os.environ.get("REMOTION_PROJECT_PATH", str(BASE_DIR.parent / "remotion_templates"))
+    )
+    REMOTION_ENTRY = os.environ.get("REMOTION_ENTRY", "src/index.ts")
+    REMOTION_CLI = os.environ.get("REMOTION_CLI", "npx")
+    WHISPER_CLI = os.environ.get("WHISPER_CLI", "whisper")
+    CAPTION_TOOL = os.environ.get("CAPTION_TOOL", "whisper").lower()
+    BACKGROUND_MUSIC_PATH = os.environ.get("BACKGROUND_MUSIC_PATH")
+    BACKGROUND_MUSIC_VOLUME = float(os.environ.get("BACKGROUND_MUSIC_VOLUME", "0.08"))
     DEMO_MODE = os.environ.get("DEMO_MODE", "true").lower() == "true"
 
     TOPIC_LOOKBACK_DAYS = 7

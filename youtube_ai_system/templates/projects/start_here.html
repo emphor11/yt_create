@@ -30,7 +30,7 @@
     <div class="step-card">
       <div class="step-number">3</div>
       <strong>Generate media</strong>
-      <div class="small text-secondary mt-2">Create demo assets, review scenes, and assemble the final MP4.</div>
+      <div class="small text-secondary mt-2">Create narration, Remotion visuals, review scenes, and assemble the final MP4.</div>
       <a href="{{ url_for('projects.project_list') }}" class="btn btn-outline-light btn-sm mt-3">Open Projects</a>
     </div>
   </div>
@@ -51,9 +51,9 @@
         <div class="section-label mb-2">What Is Real Right Now</div>
         <ul class="helper-list text-secondary mb-0">
           <li>Create projects and track them through the state machine</li>
-          <li>Generate a demo script, edit it manually, and enforce the approval gate</li>
-          <li>Create scene rows and run demo media generation</li>
-          <li>Assemble a real MP4 with ffmpeg</li>
+          <li>Generate a script draft, edit it manually, and enforce the approval gate</li>
+          <li>Create scene rows and run V2 media generation</li>
+          <li>Assemble a pre-CapCut MP4 with ffmpeg</li>
           <li>Save publish metadata and analytics snapshots in the database</li>
           <li>Inspect everything through logs and project detail pages</li>
         </ul>
@@ -63,13 +63,13 @@
   <div class="col-lg-5">
     <div class="card bg-panel">
       <div class="card-body">
-        <div class="section-label mb-2">What Is Still Demo Mode</div>
+        <div class="section-label mb-2">Needs Keys Or Optional Tools</div>
         <ul class="helper-list text-secondary mb-0">
-          <li>Script generation is not using Claude yet</li>
-          <li>Topic comparison is not using live YouTube API data yet</li>
-          <li>Media generation uses demo visuals and silent audio</li>
-          <li>YouTube upload and analytics APIs are not wired yet</li>
-          <li>Captions, music, and Pexels integrations are not live yet</li>
+          <li>Groq or Claude keys for live script generation</li>
+          <li>YouTube API key for topic comparison</li>
+          <li>Kokoro dependencies for live local narration</li>
+          <li>YouTube upload and analytics API credentials</li>
+          <li>Whisper CLI, stock footage keys, and a music file for the full production path</li>
         </ul>
       </div>
     </div>

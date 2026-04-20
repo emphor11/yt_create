@@ -49,7 +49,7 @@
       <div class="col-md-3">
         <div class="soft-panel p-3 h-100">
           <strong>3. Media</strong>
-          <div class="small text-secondary mt-2">Generate demo assets, review scenes, and assemble the video.</div>
+          <div class="small text-secondary mt-2">Generate narration, Remotion visuals, review scenes, and assemble the video.</div>
         </div>
       </div>
       <div class="col-md-3">
@@ -70,7 +70,7 @@
         <div class="action-grid">
           <div class="action-box">
             <strong>Test voice</strong>
-            <div class="small text-secondary mb-3 mt-2">Check whether live Edge TTS is working before generating full scene audio.</div>
+            <div class="small text-secondary mb-3 mt-2">Check whether Kokoro or the configured fallback voice can generate narration.</div>
             <form method="post" action="{{ url_for('media.voice_check') }}">
               <button class="btn btn-outline-light btn-sm">Run Check</button>
             </form>
@@ -86,7 +86,7 @@
           </div>
           <div class="action-box">
             <strong>Generate script</strong>
-            <div class="small text-secondary mb-3 mt-2">Create the current demo script draft for this project.</div>
+            <div class="small text-secondary mb-3 mt-2">Create the current finance script draft for this project.</div>
             {% if available_actions.generate_script %}
               <form method="post" action="{{ url_for('projects.generate_script', project_id=project.id) }}">
                 <button class="btn btn-outline-light btn-sm">Run</button>
@@ -106,7 +106,7 @@
           </div>
           <div class="action-box">
             <strong>Generate media</strong>
-            <div class="small text-secondary mb-3 mt-2">Create demo audio and visual assets for every scene.</div>
+            <div class="small text-secondary mb-3 mt-2">Create narration, Remotion visuals, and b-roll overlays for every scene.</div>
             {% if available_actions.generate_media %}
               <form method="post" action="{{ url_for('media.generate_media', project_id=project.id) }}">
                 <button class="btn btn-outline-light btn-sm">Run</button>
@@ -126,7 +126,7 @@
           </div>
           <div class="action-box">
             <strong>Assemble video</strong>
-            <div class="small text-secondary mb-3 mt-2">Build the final MP4 for this project.</div>
+            <div class="small text-secondary mb-3 mt-2">Build the V2 pre-CapCut MP4 with intro, transitions, captions, and end card.</div>
             {% if available_actions.assemble %}
               <form method="post" action="{{ url_for('media.assemble_project', project_id=project.id) }}">
                 <button class="btn btn-outline-light btn-sm">Run</button>

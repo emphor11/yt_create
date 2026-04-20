@@ -28,14 +28,15 @@ def voice_check():
 @media_bp.route("/projects/<int:project_id>/media/generate", methods=["POST"])
 def generate_media(project_id: int):
     project = ProjectRepository().get_project(project_id)
-    if project["state"] != "script_approved":
+    if project["state"] not in {"script_approved", "media_generating"}:
         flash("Media generation is only available after script approval.", "warning")
         return redirect(url_for("projects.project_detail", project_id=project_id))
 
     state_machine = StateMachine()
     media_service = MediaService()
     try:
-        state_machine.transition(project_id, "media_generating", "Media generation started.")
+        if project["state"] == "script_approved":
+            state_machine.transition(project_id, "media_generating", "Media generation started.")
         media_service.generate_voice_and_visuals(project_id)
         state_machine.transition(project_id, "scene_review", "Media assets ready for scene review.")
         media_summary = media_service.project_media_summary(project_id)

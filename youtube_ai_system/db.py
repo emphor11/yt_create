@@ -57,6 +57,7 @@ def _run_migrations(db: sqlite3.Connection) -> None:
     _ensure_column(db, "video_projects", "channel_niche TEXT", project_columns)
     _ensure_column(db, "video_projects", "script_tone TEXT", project_columns)
     _ensure_column(db, "scenes", "subtitle_path TEXT", scene_columns)
+    _ensure_column(db, "scenes", "visual_plan_json TEXT DEFAULT NULL", scene_columns)
     _ensure_column(db, "scenes", "audio_source TEXT", scene_columns)
     _ensure_column(db, "scenes", "visual_source TEXT", scene_columns)
 

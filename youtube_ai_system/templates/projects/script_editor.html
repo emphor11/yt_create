@@ -27,13 +27,15 @@
         <div class="section-label mb-2">Draft Generation Mode</div>
         {% set source = script_payload.meta.source if script_payload.meta else 'unknown' %}
         <p class="mb-2">
-          <span class="status-pill {% if source in ['live_claude', 'live_groq'] %}status-live{% else %}status-muted{% endif %}">
-            {% if source == 'live_claude' %}Live Claude{% elif source == 'live_groq' %}Live Groq{% elif source == 'demo' %}Demo Draft{% else %}Unknown{% endif %}
+          <span class="status-pill {% if source in ['live_claude', 'live_groq', 'live_groq_ten_minute_finance'] %}status-live{% else %}status-muted{% endif %}">
+            {% if source == 'live_claude' %}Live Claude{% elif source == 'live_groq_ten_minute_finance' %}Live Groq · 10 Minute Finance{% elif source == 'live_groq' %}Live Groq{% elif source == 'demo' %}Demo Draft{% else %}Unknown{% endif %}
           </span>
         </p>
         <p class="small text-secondary mb-0">
           {% if source == 'live_claude' %}
             This draft was generated using your live Claude API configuration.
+          {% elif source == 'live_groq_ten_minute_finance' %}
+            This draft was generated using your live Groq API configuration with 10 Minute Finance visual beats.
           {% elif source == 'live_groq' %}
             This draft was generated using your live Groq API configuration.
           {% elif source == 'demo' %}
@@ -90,7 +92,7 @@
         <div class="col-md-4">
           <label class="form-label">Visual type</label>
           <select class="form-select" name="hook_visual_type">
-            {% for visual_type in ['motion_text', 'broll', 'graph'] %}
+            {% for visual_type in ['motion_text', 'broll', 'graph', 'stat_explosion', 'text_burst', 'reaction_card', 'split_comparison', 'broll_caption', 'chart'] %}
               <option value="{{ visual_type }}" {% if script_payload.hook.visual_type == visual_type %}selected{% endif %}>{{ visual_type }}</option>
             {% endfor %}
           </select>
@@ -99,6 +101,11 @@
       <div class="mt-3">
         <label class="form-label">Visual instruction</label>
         <input class="form-control" name="hook_visual_instruction" value="{{ script_payload.hook.visual_instruction }}">
+      </div>
+      <div class="mt-3">
+        <label class="form-label">Visual beats (JSON)</label>
+        <textarea class="form-control" rows="8" name="hook_visual_beats">{{ script_payload.hook.visual_beats|default([])|tojson(indent=2) }}</textarea>
+        <small class="text-secondary">New beats: intent, visual_logic, pattern, props, animation_intent, context_ref. Legacy beat_type still works.</small>
       </div>
     </div>
   </div>
@@ -119,10 +126,15 @@
         <div>
           <label class="form-label">Visual type</label>
           <select class="form-select" name="scene_{{ loop.index0 }}_visual_type">
-            {% for visual_type in ['motion_text', 'broll', 'graph'] %}
+            {% for visual_type in ['motion_text', 'broll', 'graph', 'stat_explosion', 'text_burst', 'reaction_card', 'split_comparison', 'broll_caption', 'chart'] %}
               <option value="{{ visual_type }}" {% if scene.visual_type == visual_type %}selected{% endif %}>{{ visual_type }}</option>
             {% endfor %}
           </select>
+        </div>
+        <div class="mt-3">
+          <label class="form-label">Visual beats (JSON)</label>
+          <textarea class="form-control" rows="8" name="scene_{{ loop.index0 }}_visual_beats">{{ scene.visual_beats|default([])|tojson(indent=2) }}</textarea>
+          <small class="text-secondary">New beats: intent, visual_logic, pattern, props, animation_intent, context_ref. Legacy beat_type still works.</small>
         </div>
       </div>
     </div>
@@ -142,10 +154,15 @@
       <div>
         <label class="form-label">Visual type</label>
         <select class="form-select" name="outro_visual_type">
-          {% for visual_type in ['motion_text', 'broll', 'graph'] %}
+          {% for visual_type in ['motion_text', 'broll', 'graph', 'stat_explosion', 'text_burst', 'reaction_card', 'split_comparison', 'broll_caption', 'chart'] %}
             <option value="{{ visual_type }}" {% if script_payload.outro.visual_type == visual_type %}selected{% endif %}>{{ visual_type }}</option>
           {% endfor %}
         </select>
+      </div>
+      <div class="mt-3">
+        <label class="form-label">Visual beats (JSON)</label>
+        <textarea class="form-control" rows="8" name="outro_visual_beats">{{ script_payload.outro.visual_beats|default([])|tojson(indent=2) }}</textarea>
+        <small class="text-secondary">New beats: intent, visual_logic, pattern, props, animation_intent, context_ref. Legacy beat_type still works.</small>
       </div>
     </div>
   </div>

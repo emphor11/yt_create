@@ -3,7 +3,11 @@
 __pycache__/
 *.pyc
 .venv/
+.venv312/
 venv/
+node_modules/
+remotion_templates/node_modules/
+remotion_templates/public/render-assets/
 youtube_ai_system/instance/
 youtube_ai_system/storage/
 *.db

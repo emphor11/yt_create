@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS scenes (
     audio_duration_sec REAL,
     subtitle_path TEXT,
     visual_path TEXT,
+    visual_plan_json TEXT DEFAULT NULL,
     audio_source TEXT,
     visual_source TEXT,
     status TEXT NOT NULL DEFAULT 'pending',
