@@ -11,6 +11,8 @@ from youtube_ai_system.db import get_db
 from youtube_ai_system.services.script_service import ScriptService
 from youtube_ai_system.models.repository import ProjectRepository
 from youtube_ai_system.services.assembly_service import AssemblyService
+from youtube_ai_system.services.concept_service import ConceptService
+from youtube_ai_system.services.concept_service import validate_numeric_logic
 from youtube_ai_system.services.media_service import MediaService
 from youtube_ai_system.services.remotion_service import RemotionService
 from youtube_ai_system.services.render_spec_service import RenderSpecService
@@ -30,6 +32,7 @@ class V2PipelineTestCase(unittest.TestCase):
                 "STORAGE_ROOT": root / "storage",
                 "REMOTION_ENABLED": False,
                 "VOICE_MODE": "demo",
+                "GROQ_API_KEY": None,
             }
         )
         self.ctx = self.app.app_context()
@@ -939,6 +942,160 @@ class V2PipelineTestCase(unittest.TestCase):
         self.assertIn("VALIDATED_BEAT:", debug)
         self.assertIn("RENDER_SPEC:", debug)
         self.assertIn("FlowDiagram", debug)
+
+    def test_concept_extraction_includes_scene_goal_and_narration_numbers(self) -> None:
+        concept = ConceptService().extract_concept("Salary can vanish by day 12.")
+        self.assertIn("scene_goal", concept)
+        self.assertEqual(concept["scene_goal"], "prove salary disappears quickly")
+        self.assertIn("₹25,000", concept["transformation"])
+        self.assertIn("₹0", concept["transformation"])
+
+    def test_visual_explanation_has_numeric_states_only_without_viewer_sentence(self) -> None:
+        service = ConceptService()
+        concept = service.extract_concept("You earn ₹25,000, spend ₹23,000, and have ₹2,000 left.")
+        explanation = service.build_visual_explanation(concept)
+        beats = explanation["visual_narrative"]
+        self.assertGreaterEqual(len(beats), 2)
+        for beat in beats:
+            self.assertNotIn("what_viewer_sees", beat)
+            self.assertRegex(beat["key_value"], r"₹|%|\d")
+            self.assertLessEqual(len(beat["supporting_text"].split()), 6)
+            self.assertNotIn("money decreases", beat["supporting_text"].lower())
+
+    def test_flow_diagram_intermediate_uses_time_percentage_monthly_then_half_fallback(self) -> None:
+        service = ConceptService()
+        time_stages = service.flow_stages(service.extract_concept("Salary can vanish by day 12."), "Salary can vanish by day 12.")
+        self.assertEqual([stage["value"] for stage in time_stages], ["Day 1 ₹25,000", "Day 12", "₹0"])
+
+        pct_concept = service.extract_concept("Inflation turns ₹1,00,000 into 6% less buying power.")
+        pct_stages = service.flow_stages(pct_concept, "Inflation turns ₹1,00,000 into 6% less buying power.")
+        self.assertEqual(pct_stages[1]["value"], "6% change")
+        self.assertEqual(pct_stages[2]["value"], "₹94,000")
+
+        monthly_concept = service.extract_concept("If ₹5,000 leaks every month, that is gone in a year.")
+        monthly_stages = service.flow_stages(monthly_concept, "If ₹5,000 leaks every month, that is gone in a year.")
+        self.assertEqual([stage["value"] for stage in monthly_stages], ["₹5,000/month", "12 months", "₹60,000/year"])
+
+        fallback_stages = service.flow_stages({"start_value": "₹20,000", "end_value": "₹0"}, "")
+        self.assertEqual([stage["value"] for stage in fallback_stages], ["₹20,000", "₹10,000", "₹0"])
+
+    def test_number_sanity_rejects_random_flow_math(self) -> None:
+        self.assertEqual(validate_numeric_logic("₹1,500", "12 months", "₹500", "flow")[0], False)
+        self.assertEqual(validate_numeric_logic("₹50", "8% change", "₹1 crore", "growth")[0], False)
+        self.assertEqual(validate_numeric_logic("₹1,00,000", "5% change", "₹95,000", "decay")[0], True)
+
+    def test_concept_pipeline_keeps_sip_and_interest_math_meaningful(self) -> None:
+        service = ConceptService()
+        sip = service.extract_concept(
+            "Investing ₹5,000 per month from age 25 can become around ₹50 lakhs by the time you are 40 at 12% annual return."
+        )
+        self.assertEqual(sip["concept_type"], "growth")
+        self.assertEqual([stage["value"] for stage in sip["flow_stages"]], ["₹5,000/month", "15 years", "₹50lakhs"])
+
+        interest = service.extract_concept(
+            "Credit card balance of ₹50,000 with 24% interest means ₹12,000 interest in a year."
+        )
+        self.assertEqual([stage["value"] for stage in interest["flow_stages"]], ["₹50,000", "24% change", "₹12,000"])
+
+    def test_validate_beats_repairs_banned_duplicate_and_goal_drift(self) -> None:
+        service = ConceptService()
+        concept = service.extract_concept("Salary can vanish by day 12.")
+        beats = service.validate_beats(
+            [
+                {"beat_type": "stat_explosion", "content": "money decreases", "caption": "wait what"},
+                {"beat_type": "stat_explosion", "content": "money decreases", "caption": "reaction"},
+            ],
+            "Salary can vanish by day 12.",
+            concept,
+        )
+        self.assertTrue(any(beat["beat_type"] == "flow_diagram" for beat in beats))
+        for beat in beats:
+            self.assertRegex(beat["content"], r"₹|%|\d")
+            self.assertNotIn(beat["caption"].lower(), {"wait what", "reaction"})
+
+    def test_legacy_flow_diagram_maps_to_numeric_flowdiagram_props(self) -> None:
+        spec = RenderSpecService().beat_spec(
+            {
+                "beat_type": "flow_diagram",
+                "content": "₹5,000",
+                "caption": "monthly leak",
+                "concept_metadata": {
+                    "narration": "If ₹5,000 leaks every month, that is gone in a year.",
+                    "start_value": "₹5,000",
+                    "end_value": "₹60,000",
+                },
+                "estimated_duration_sec": 3,
+            }
+        )
+        self.assertEqual(spec.composition, "FlowDiagram")
+        labels = [node["label"] for node in spec.props["nodes"]]
+        self.assertEqual(labels, ["₹5,000/month", "12 months", "₹60,000/year"])
+
+    def test_ten_minute_generation_overrides_and_saves_visual_plan(self) -> None:
+        self.app.config.update({"CHANNEL_STYLE": "ten_minute_finance", "REMOTION_ENABLED": True})
+        repo = ProjectRepository()
+        project_id = repo.create_project("Concept Media")
+        script_version_id = repo.create_script_version(
+            project_id,
+            {"narration": "hook"},
+            {"narration": "outro"},
+            ["Title"],
+            "desc",
+            ["tag"],
+            {"hook": {}, "scenes": [], "outro": {}, "titles": ["Title"], "description": "desc", "tags": ["tag"]},
+            "prompt",
+        )
+        repo.replace_scenes(
+            project_id,
+            script_version_id,
+            [
+                {
+                    "scene_order": 1,
+                    "kind": "body",
+                    "narration_text": "Salary can vanish by day 12.",
+                    "visual_instruction": "old",
+                    "visual_type": "motion_text",
+                    "visual_plan_json": '[{"beat_index":0,"beat_type":"text_burst","content":"old text"}]',
+                }
+            ],
+        )
+        scene = repo.list_scenes(project_id)[0]
+        with patch("youtube_ai_system.services.remotion_service.RemotionService.render_video") as render_video:
+            render_video.side_effect = lambda spec, output_path: Path(output_path).write_bytes(b"beat")
+            with patch.object(MediaService, "_concat_beat_clips") as concat:
+                concat.side_effect = lambda paths, output_path, duration: Path(output_path).write_bytes(b"timeline")
+                MediaService().generate_beat_clips(
+                    project_id,
+                    Path(self.app.config["STORAGE_ROOT"]) / "images" / str(project_id),
+                    scene,
+                    6,
+                )
+        updated = repo.get_scene(scene["id"])
+        self.assertIn("concept_metadata", updated["visual_plan_json"])
+        self.assertNotIn("old text", updated["visual_plan_json"])
+
+    def test_non_ten_minute_generation_keeps_stored_visual_plan(self) -> None:
+        self.app.config.update({"CHANNEL_STYLE": "standard", "REMOTION_ENABLED": True})
+        project_id = ProjectRepository().create_project("Standard Media")
+        scene = {
+            "scene_order": 1,
+            "visual_type": "motion_text",
+            "visual_instruction": "old",
+            "narration_text": "Salary can vanish by day 12.",
+            "visual_plan_json": '[{"beat_index":0,"beat_type":"stat_explosion","content":"₹7,000","caption":"stored plan","estimated_duration_sec":3}]',
+        }
+        with patch("youtube_ai_system.services.remotion_service.RemotionService.render_video") as render_video:
+            render_video.side_effect = lambda spec, output_path: Path(output_path).write_bytes(b"beat")
+            with patch.object(MediaService, "_concat_beat_clips") as concat:
+                concat.side_effect = lambda paths, output_path, duration: Path(output_path).write_bytes(b"timeline")
+                MediaService().generate_beat_clips(
+                    project_id,
+                    Path(self.app.config["STORAGE_ROOT"]) / "images" / str(project_id),
+                    scene,
+                    3,
+                )
+        self.assertEqual(render_video.call_args.args[0].composition, "StatExplosion")
+        self.assertEqual(render_video.call_args.args[0].props["headline"], "₹7,000")
 
 
 if __name__ == "__main__":

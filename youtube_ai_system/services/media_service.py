@@ -17,6 +17,7 @@ from PIL import Image, ImageDraw, ImageFont
 import requests
 
 from ..models.repository import ProjectRepository
+from .concept_service import ConceptService
 from .remotion_service import RemotionService
 from .render_spec_service import RenderSpecService
 from .run_log import RunLogger
@@ -77,6 +78,7 @@ class MediaService:
         self.voice_service = VoiceService()
         self.render_specs = RenderSpecService()
         self.remotion = RemotionService()
+        self.concepts = ConceptService()
 
     # -----------------------------------------------------------------------
     # Public entry points
@@ -473,7 +475,17 @@ class MediaService:
         scene: dict,
         scene_duration: float,
     ) -> tuple[Path, str]:
-        beats = self._load_scene_beats(scene, scene_duration)
+        if self._ten_minute_finance_enabled():
+            beats = self.concepts.build_scene_beats(
+                str(scene.get("narration_text") or scene.get("visual_instruction") or ""),
+                scene_duration,
+                project_id=project_id,
+            )
+            scene = {**scene, "visual_plan_json": json.dumps(beats, ensure_ascii=False)}
+            if scene.get("id"):
+                self.repo.update_scene(scene["id"], visual_plan_json=scene["visual_plan_json"])
+        else:
+            beats = self._load_scene_beats(scene, scene_duration)
         scene_order = int(scene["scene_order"])
         scene_dir = image_root / f"scene-{scene_order:02d}"
         scene_dir.mkdir(parents=True, exist_ok=True)
@@ -700,7 +712,7 @@ class MediaService:
             return "chart"
         if visual_type == "broll":
             return "broll_caption"
-        if visual_type in {"stat_explosion", "text_burst", "chart", "split_comparison", "broll_caption", "reaction_card"}:
+        if visual_type in {"flow_diagram", "stat_explosion", "text_burst", "chart", "split_comparison", "broll_caption", "reaction_card"}:
             return visual_type
         return "text_burst"
 

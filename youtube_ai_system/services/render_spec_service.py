@@ -97,6 +97,7 @@ class RenderSpecService:
     }
 
     BEAT_TO_COMPOSITION = {
+        "flow_diagram": "FlowDiagram",
         "stat_explosion": "StatExplosion",
         "text_burst": "TextBurst",
         "chart": "BarChart",
@@ -148,6 +149,8 @@ class RenderSpecService:
 
         if beat_type == "motion_text":
             return self._stat_reveal_spec(f"{content} {caption}".strip(), duration_sec)
+        if beat_type == "flow_diagram":
+            return self._legacy_flow_diagram_spec(beat, duration_sec, color)
         if beat_type == "graph":
             spec = self._graph_spec(content, duration_sec)
             spec.props["animationSpeed"] = "fast"
@@ -559,6 +562,122 @@ class RenderSpecService:
             props.setdefault("animationSpeed", "fast")
             return RenderSpec(component, props, duration_sec, f"remotion_{component.lower()}")
         return RenderSpec(component, props, duration_sec, f"remotion_{component.lower()}")
+
+    def _legacy_flow_diagram_spec(self, beat: dict[str, Any], duration_sec: float, color: str) -> RenderSpec:
+        concept = beat.get("concept_metadata") if isinstance(beat.get("concept_metadata"), dict) else {}
+        narration = str(concept.get("narration") or beat.get("narration") or beat.get("caption") or beat.get("content") or "")
+        stages = self._beat_flow_stages(beat, concept, narration)
+        nodes = [
+            {
+                "id": stage["label"],
+                "label": self._humanize_money_phrase(stage["value"]),
+                "role": "source" if index == 0 else ("result" if index == len(stages) - 1 else "process"),
+                "style": self._node_style(
+                    "source" if index == 0 else ("result" if index == len(stages) - 1 else "process"),
+                    stage["value"],
+                    "VALUE_DECAY" if self._is_loss_result(" ".join(stage["value"] for stage in stages)) else "MONEY_FLOW",
+                ),
+                "children": [],
+            }
+            for index, stage in enumerate(stages)
+        ]
+        caption = str(beat.get("caption") or concept.get("explanation_sentence") or " -> ".join(stage["value"] for stage in stages))
+        caption = self._complete_caption(self._short_overlay(caption, 10))
+        semantic_color = self._color_for_label(" ".join(stage["value"] for stage in stages) + " " + caption) or color
+        props = {
+            "mode": "decay" if semantic_color == "red" else "linear",
+            "layout": "horizontal",
+            "spacing": "equal",
+            "direction": "forward",
+            "nodes": nodes,
+            "connections": [{"from": nodes[index]["id"], "to": nodes[index + 1]["id"]} for index in range(len(nodes) - 1)],
+            "caption": caption,
+            "captionColor": self._color_for_label(caption) or semantic_color,
+            "color": semantic_color,
+            "durationSec": duration_sec,
+            "animationIntent": "progress",
+            "animationSpec": self.ANIMATION_MAP["progress"],
+        }
+        return RenderSpec(
+            composition="FlowDiagram",
+            props=self._polish_flow_display_props(props, " -> ".join(stage["value"] for stage in stages)),
+            duration_sec=duration_sec,
+            source="remotion_flowdiagram",
+        )
+
+    def _beat_flow_stages(self, beat: dict[str, Any], concept: dict[str, Any], narration: str) -> list[dict[str, str]]:
+        for candidate in (beat.get("flow_stages"), concept.get("flow_stages")):
+            if isinstance(candidate, list) and len(candidate) >= 3:
+                stages = [
+                    {"label": str(stage.get("label") or self._default_node_role(index, 3)), "value": str(stage.get("value") or "")}
+                    for index, stage in enumerate(candidate[:3])
+                    if isinstance(stage, dict) and str(stage.get("value") or "").strip()
+                ]
+                if len(stages) >= 3:
+                    return stages
+
+        content = str(beat.get("content") or "")
+        parts = [part.strip() for part in re.split(r"\s*(?:->|→)\s*", content) if part.strip()]
+        if len(parts) >= 3:
+            return [
+                {"label": "start", "value": parts[0]},
+                {"label": "change", "value": parts[1]},
+                {"label": "result", "value": parts[2]},
+            ]
+        return self._concept_flow_stages(concept, narration)
+
+    def _concept_flow_stages(self, concept: dict[str, Any], narration: str) -> list[dict[str, str]]:
+        explicit = concept.get("flow_stages")
+        if isinstance(explicit, list) and len(explicit) >= 3:
+            return [
+                {"label": str(stage.get("label") or self._default_node_role(index, 3)), "value": str(stage.get("value") or "")}
+                for index, stage in enumerate(explicit[:3])
+                if isinstance(stage, dict) and str(stage.get("value") or "").strip()
+            ]
+        lowered = str(narration or "").lower()
+        amounts = self._money_tokens(narration)
+        percents = self._percent_tokens(narration)
+        start = str(concept.get("start_value") or (amounts[0] if amounts else "₹20,000"))
+        end = str(concept.get("end_value") or "₹0")
+
+        time_match = re.search(r"\bday\s*(\d+)\b", lowered)
+        if time_match:
+            start_tokens = self._money_tokens(start)
+            start_value = amounts[0] if amounts else (start_tokens[0] if start_tokens else start)
+            end_value = next((amount for amount in amounts[1:] if self._first_numeric_value(amount) == 0), "₹0")
+            return [
+                {"label": "start", "value": f"Day 1 {start_value}"},
+                {"label": "change", "value": f"Day {time_match.group(1)}"},
+                {"label": "result", "value": end_value},
+            ]
+
+        if percents:
+            principal = amounts[0] if amounts else start
+            rate = percents[0]
+            output = amounts[1] if len(amounts) > 1 else self._inflation_output(principal, rate)
+            return [
+                {"label": "start", "value": principal},
+                {"label": "change", "value": f"{rate} change"},
+                {"label": "result", "value": output},
+            ]
+
+        if amounts and any(word in lowered for word in ("month", "monthly", "/month", "year", "yearly", "annual")):
+            monthly = amounts[0]
+            yearly = amounts[1] if len(amounts) > 1 else self._format_rupees(self._first_numeric_value(monthly) * 12)
+            return [
+                {"label": "start", "value": f"{monthly}/month"},
+                {"label": "change", "value": "12 months"},
+                {"label": "result", "value": f"{yearly}/year"},
+            ]
+
+        start_value = amounts[0] if amounts else start
+        middle_value = self._format_rupees(self._first_numeric_value(start_value) * 0.5)
+        end_value = "₹0" if self._first_numeric_value(end) <= 0 else end
+        return [
+            {"label": "start", "value": start_value},
+            {"label": "change", "value": middle_value},
+            {"label": "result", "value": end_value},
+        ]
 
     def transition_spec(self, duration_sec: float = 0.5) -> RenderSpec:
         return RenderSpec(
@@ -1274,7 +1393,7 @@ class RenderSpecService:
         return any(re.search(rf"\b{re.escape(word)}\b", lowered) for word in self.GENERIC_VISUAL_WORDS)
 
     def _has_number(self, text: str) -> bool:
-        return bool(re.search(r"(?:₹\s?[\d,.]+(?:\s?(?:lakh|crore|k|m)\b)?|\d+(?:\.\d+)?%|\b\d+(?:\.\d+)?\b)", text, re.I))
+        return bool(re.search(r"(?:₹\s?[\d,.]+(?:\s?(?:lakhs?|crores?|k|m)\b)?|\d+(?:\.\d+)?%|\b\d+(?:\.\d+)?\b)", text, re.I))
 
     def _numbers_respect_context(self, candidate: str, context: str) -> bool:
         context_numbers = set(self._money_tokens(context) + self._percent_tokens(context))
@@ -1653,7 +1772,7 @@ class RenderSpecService:
         return cleaned or f"node{index + 1}"
 
     def _dominant_phrase(self, text: str) -> str:
-        money_match = re.search(r"(₹\s?[\d,.]+(?:\s?(?:lakh|crore|k|m)\b)?)", text, re.I)
+        money_match = re.search(r"(₹\s?[\d,.]+(?:\s?(?:lakhs?|crores?|k|m)\b)?)", text, re.I)
         pct_match = re.search(r"(\d+(?:\.\d+)?%)", text)
         if money_match:
             return money_match.group(1).replace(" ", "")
@@ -1704,7 +1823,7 @@ class RenderSpecService:
     def _money_tokens(self, text: str) -> list[str]:
         return [
             token.replace(" ", "").rstrip(".,")
-            for token in re.findall(r"₹\s?[\d,.]+(?:\s?(?:lakh|crore|k|m)\b)?", text, re.I)
+            for token in re.findall(r"₹\s?[\d,.]+(?:\s?(?:lakhs?|crores?|k|m)\b)?", text, re.I)
         ]
 
     def _percent_tokens(self, text: str) -> list[str]:
@@ -1763,13 +1882,13 @@ class RenderSpecService:
         parts = re.split(r"\s+vs\.?\s+|\s+versus\s+|\s+\|\s+", visual_logic, maxsplit=1, flags=re.I)
         if len(parts) == 2:
             return self._short_overlay(parts[0], 6), self._short_overlay(parts[1], 6)
-        numbers = re.findall(r"(?:₹\s?[\d,.]+(?:\s?(?:lakh|crore|k))?|\d+(?:\.\d+)?%)", visual_logic, re.I)
+        numbers = re.findall(r"(?:₹\s?[\d,.]+(?:\s?(?:lakhs?|crores?|k|m)\b)?|\d+(?:\.\d+)?%)", visual_logic, re.I)
         if len(numbers) >= 2:
             return numbers[0], numbers[1]
         return self._short_overlay(visual_logic, 6) or "Claim", self._short_overlay(caption, 6) or "Reality"
 
     def _extract_split_label(self, content: str) -> str:
-        cleaned = re.sub(r"₹\s?[\d,.]+(?:\s?(?:lakh|crore|k|m)\b)?|\d+(?:\.\d+)?%", "", content, flags=re.I)
+        cleaned = re.sub(r"₹\s?[\d,.]+(?:\s?(?:lakhs?|crores?|k|m)\b)?|\d+(?:\.\d+)?%", "", content, flags=re.I)
         words = [
             word
             for word in re.findall(r"[A-Za-z]+", cleaned)
