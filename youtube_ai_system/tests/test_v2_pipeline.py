@@ -1013,6 +1013,62 @@ class V2PipelineTestCase(unittest.TestCase):
             self.assertRegex(beat["content"], r"₹|%|\d")
             self.assertNotIn(beat["caption"].lower(), {"wait what", "reaction"})
 
+    def test_scene_director_simplifies_flow_beats_to_one_primary_number(self) -> None:
+        service = ConceptService()
+        beats = service.build_scene_beats("A ₹8,00,000 salary leaks ₹1,60,000 and leaves ₹6,40,000.", 9)
+
+        self.assertEqual(len(beats), 3)
+        self.assertTrue(all(beat["beat_type"] == "flow_diagram" for beat in beats))
+        self.assertEqual([beat["content"] for beat in beats], ["₹8,00,000", "₹1,60,000", "₹6,40,000"])
+        self.assertTrue(all("->" not in beat["content"] for beat in beats))
+        self.assertTrue(all(len(service.render_specs._money_tokens(beat["content"])) <= 1 for beat in beats))
+        self.assertEqual([stage["value"] for stage in beats[0]["flow_stages"]], ["₹8,00,000", "₹1,60,000", "₹6,40,000"])
+
+    def test_scene_director_enforces_information_progression(self) -> None:
+        service = ConceptService()
+        concept = service.extract_concept("You earn ₹25,000, spend ₹23,000, and have ₹2,000 left.")
+        beats = service.validate_beats(
+            [
+                {"beat_type": "flow_diagram", "content": "₹25,000", "caption": "Salary"},
+                {"beat_type": "flow_diagram", "content": "₹25,000", "caption": "Salary"},
+                {"beat_type": "flow_diagram", "content": "₹2,000", "caption": "Left"},
+            ],
+            "You earn ₹25,000, spend ₹23,000, and have ₹2,000 left.",
+            concept,
+        )
+
+        signatures = [service._information_signature(beat) for beat in beats]
+        self.assertEqual(len(signatures), len(set(signatures)))
+        self.assertEqual([beat["content"] for beat in beats[:3]], ["₹25,000", "₹23,000", "₹2,000"])
+
+    def test_scene_director_deletes_nonconsecutive_repeated_information(self) -> None:
+        service = ConceptService()
+        concept = service.extract_concept("A ₹8,00,000 salary leaks ₹1,60,000 and leaves ₹6,40,000.")
+        beats = service.validate_beats(
+            [
+                {"beat_type": "flow_diagram", "content": "₹8,00,000", "caption": "Salary"},
+                {"beat_type": "flow_diagram", "content": "₹1,60,000", "caption": "Leak"},
+                {"beat_type": "flow_diagram", "content": "₹6,40,000", "caption": "Left"},
+                {"beat_type": "flow_diagram", "content": "₹8,00,000", "caption": "Salary"},
+            ],
+            "A ₹8,00,000 salary leaks ₹1,60,000 and leaves ₹6,40,000.",
+            concept,
+        )
+
+        self.assertEqual([beat["content"] for beat in beats], ["₹8,00,000", "₹1,60,000", "₹6,40,000"])
+
+    def test_scene_director_removes_weak_emphasis_caption(self) -> None:
+        service = ConceptService()
+        concept = service.extract_concept("80% of Indians cannot save ₹5,000.")
+        beats = service.validate_beats(
+            [{"beat_type": "stat_explosion", "content": "₹5,000", "caption": "can't even save ₹5,000"}],
+            "80% of Indians cannot save ₹5,000.",
+            concept,
+        )
+
+        self.assertTrue(beats)
+        self.assertNotIn("can't even save", beats[0]["caption"].lower())
+
     def test_legacy_flow_diagram_maps_to_numeric_flowdiagram_props(self) -> None:
         spec = RenderSpecService().beat_spec(
             {

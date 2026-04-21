@@ -12,7 +12,19 @@ from .run_log import RunLogger
 
 
 def _numeric_amount(text: str) -> float:
-    cleaned = str(text or "").lower().replace(",", "")
+    raw = str(text or "")
+    money = re.search(r"₹\s?([\d,.]+)(?:\s?(crores?|lakhs?|k)\b)?", raw, re.I)
+    if money:
+        value = float(money.group(1).replace(",", ""))
+        unit = str(money.group(2) or "").lower()
+        if unit.startswith("crore"):
+            return value * 10_000_000
+        if unit.startswith("lakh"):
+            return value * 100_000
+        if unit == "k":
+            return value * 1_000
+        return value
+    cleaned = raw.lower().replace(",", "")
     match = re.search(r"(\d+(?:\.\d+)?)", cleaned)
     if not match:
         return 0.0
@@ -26,13 +38,20 @@ def _numeric_amount(text: str) -> float:
     return value
 
 
-def validate_numeric_logic(start: str, process: str, end: str, concept_type: str) -> tuple[bool, str]:
+def validate_numbers(
+    start: str,
+    change: str,
+    end: str,
+    concept_type: str,
+    narration: str = "",
+) -> tuple[bool, str]:
     """Validate visible finance math before a beat can reach rendering."""
 
     start_value = _numeric_amount(start)
     end_value = _numeric_amount(end)
-    process_text = str(process or "").lower()
+    process_text = str(change or "").lower()
     concept = "flow" if str(concept_type or "").lower() == "process" else str(concept_type or "").lower()
+    context = f"{start} {change} {end} {narration}"
 
     if concept == "emphasis":
         return (start_value > 0 or end_value > 0 or bool(re.search(r"\d+(?:\.\d+)?%", f"{start} {end}"))), "emphasis_number"
@@ -45,11 +64,6 @@ def validate_numeric_logic(start: str, process: str, end: str, concept_type: str
         if abs(end_value - expected) > max(1, expected * 0.02):
             return False, "monthly_yearly_math_mismatch"
         return True, "valid_monthly_yearly"
-
-    if concept == "decay" and not end_value < start_value:
-        return False, "decay_must_decrease"
-    if concept == "growth" and not end_value > start_value:
-        return False, "growth_must_increase"
 
     pct = re.search(r"(\d+(?:\.\d+)?)%", process_text)
     if pct and start_value > 0:
@@ -64,9 +78,83 @@ def validate_numeric_logic(start: str, process: str, end: str, concept_type: str
         ):
             return False, "percent_math_mismatch"
 
+    if concept == "decay" and not end_value < start_value:
+        return False, "decay_must_decrease"
+    if concept == "growth" and not end_value > start_value:
+        return False, "growth_must_increase"
+
     if start_value > 0 and end_value / start_value > 100 and not re.search(r"\b(years?|months?|age|%|return|sip)\b", process_text):
         return False, "implausible_jump"
+    if start_value > 0 and end_value / start_value > 1000 and not re.search(r"\b(crore|lakh|years?|months?|age|%|return|sip|compound|wealth)\b", context, re.I):
+        return False, "random_number_jump"
     return True, "valid"
+
+
+def validate_numeric_logic(start: str, process: str, end: str, concept_type: str) -> tuple[bool, str]:
+    return validate_numbers(start, process, end, concept_type)
+
+
+class SceneDirector:
+    """Owns narration-led beat direction before anything reaches rendering."""
+
+    def __init__(self, concepts: "ConceptService", project_id: int | None = None) -> None:
+        self.concepts = concepts
+        self.project_id = project_id
+
+    def build_scene_beats(self, narration: str, duration: int | float) -> list[dict[str, Any]]:
+        concept = self.concepts.extract_concept(narration, project_id=self.project_id)
+        concept["narration"] = str(narration or "")
+        self.concepts.logger.log(
+            "scene_director",
+            "running",
+            f"Concept extracted: type={self.concepts._concept_type(concept)}; goal={concept.get('scene_goal')}; numbers={self.concepts._debug_numbers(narration, concept)}.",
+            self.project_id,
+        )
+        explanation = self.concepts.build_visual_explanation(concept, project_id=self.project_id)
+        visual_states = explanation.get("visual_narrative") if isinstance(explanation, dict) else []
+        if not isinstance(visual_states, list) or len(visual_states) < 2:
+            self.concepts.logger.log("scene_director", "running", "Regenerating visual states: too_few_beats", self.project_id)
+            visual_states = self.concepts._fallback_visual_explanation(concept)["visual_narrative"]
+
+        beats = self._states_to_beats(visual_states[:4], concept, str(narration or ""), duration)
+        if len(beats) < 2 or not self._has_transformation_beat(beats):
+            self.concepts.logger.log("scene_director", "running", "Regenerating beats: missing_transformation", self.project_id)
+            beats = self.concepts._beats_from_fallback(concept)
+        return self.concepts.validate_beats(beats, str(narration or ""), concept, project_id=self.project_id)
+
+    def _states_to_beats(
+        self,
+        visual_states: list[Any],
+        concept: dict[str, Any],
+        narration: str,
+        duration: int | float,
+    ) -> list[dict[str, Any]]:
+        service = self.concepts
+        count = max(2, min(4, len([state for state in visual_states if isinstance(state, dict)]) or 3))
+        beat_duration = max(2.0, min(5.0, max(float(duration or 0), 2.0) / count))
+        beats: list[dict[str, Any]] = []
+        for index in range(count):
+            state = visual_states[index] if index < len(visual_states) and isinstance(visual_states[index], dict) else {}
+            role = service._role_for_index(index)
+            beat_type = service._beat_type_for_role(concept, index, role)
+            beat = {
+                "beat_index": index,
+                "beat_type": beat_type,
+                "content": service._primary_content_for_index(concept, narration, index, str(state.get("key_value") or "")),
+                "caption": service._supporting_idea_for_index(concept, narration, index, str(state.get("supporting_text") or "")),
+                "color": service.ROLE_COLORS.get(role, "orange"),
+                "estimated_start_sec": round(index * beat_duration, 2),
+                "estimated_duration_sec": round(beat_duration, 2),
+                "concept_metadata": dict(concept),
+                "visual_role": role,
+            }
+            if beat_type == "flow_diagram":
+                beat["flow_stages"] = list(service.flow_stages(concept, narration))
+            beats.append(beat)
+        return beats
+
+    def _has_transformation_beat(self, beats: list[dict[str, Any]]) -> bool:
+        return len(beats) >= 2 and self.concepts._role_for_index(1) == "change" and bool(str(beats[1].get("content") or "").strip())
 
 
 class ConceptService:
@@ -100,6 +188,10 @@ class ConceptService:
         "financial stress",
         "value changes",
         "money reality",
+        "money problem",
+        "this hits different",
+        "can't even save",
+        "cant even save",
     }
     BANNED_LABEL_WORDS = {"flow", "concept", "idea", "thing", "system"}
     STRICT_COMPONENT_BY_CONCEPT = {
@@ -150,43 +242,7 @@ class ConceptService:
         duration: int | float,
         project_id: int | None = None,
     ) -> list[dict[str, Any]]:
-        concept = self.extract_concept(narration, project_id=project_id)
-        concept["narration"] = str(narration or "")
-        explanation = self.build_visual_explanation(concept, project_id=project_id)
-        visual_states = explanation.get("visual_narrative") if isinstance(explanation, dict) else []
-        if not isinstance(visual_states, list) or len(visual_states) < 2:
-            visual_states = self._fallback_visual_explanation(concept)["visual_narrative"]
-
-        visual_states = visual_states[:4]
-        if len(visual_states) < 2:
-            visual_states = self._safe_emphasis_states(concept)
-        beat_count = max(2, len(visual_states))
-        duration_float = max(float(duration or 0), 2.0)
-        beat_duration = max(2.0, min(5.0, duration_float / beat_count))
-        beats: list[dict[str, Any]] = []
-        for index, state in enumerate(visual_states[:4]):
-            if not isinstance(state, dict):
-                continue
-            role = str(state.get("visual_role") or self._role_for_index(index)).lower()
-            beat_type = self._beat_type_for_role(concept, index, role)
-            key_value = self._numeric_value(str(state.get("key_value") or ""), concept, index)
-            caption = self._clean_supporting_text(str(state.get("supporting_text") or ""), concept)
-            start = round(index * beat_duration, 2)
-            beat = {
-                "beat_index": index,
-                "beat_type": beat_type,
-                "content": key_value,
-                "caption": caption,
-                "color": self.ROLE_COLORS.get(role, "orange"),
-                "estimated_start_sec": start,
-                "estimated_duration_sec": round(beat_duration, 2),
-                "concept_metadata": dict(concept),
-            }
-            if beat_type == "flow_diagram":
-                beat["flow_stages"] = list(concept.get("flow_stages") or self.flow_stages(concept, narration))
-            beats.append(beat)
-
-        return self.validate_beats(beats, narration, concept, project_id=project_id)
+        return SceneDirector(self, project_id=project_id).build_scene_beats(narration, duration)
 
     def validate_beats(
         self,
@@ -203,6 +259,7 @@ class ConceptService:
 
         repaired: list[dict[str, Any]] = []
         seen_signatures: dict[str, int] = {}
+        seen_information: set[str] = set()
         for index, beat in enumerate((beats or [])[:4]):
             current = dict(beat) if isinstance(beat, dict) else {}
             current["beat_index"] = len(repaired)
@@ -212,29 +269,38 @@ class ConceptService:
 
             role = self._role_for_index(len(repaired))
             current["beat_type"] = self._enforced_beat_type(str(current.get("beat_type") or ""), concept, role, len(repaired))
-            current["content"] = self._numeric_value(str(current.get("content") or ""), concept, len(repaired))
-            current["caption"] = self._clean_supporting_text(str(current.get("caption") or ""), concept)
+            current["content"] = self._primary_content_for_index(concept, narration, len(repaired), str(current.get("content") or ""))
+            current["caption"] = self._supporting_idea_for_index(concept, narration, len(repaired), str(current.get("caption") or ""))
 
             valid, reason = self._beat_is_valid(current, concept, narration)
             if not valid:
                 self.logger.log("beat_validation", "running", f"Regenerating beat {index}: {reason}", project_id)
                 current = self._regenerated_beat(concept, narration, len(repaired), reason)
+                current = self._simplify_beat(current, concept, narration, len(repaired))
 
             if not self._supports_scene_goal(current, concept):
                 self.logger.log("beat_validation", "running", f"Regenerating beat {index}: scene_goal_mismatch", project_id)
                 current = self._regenerated_beat(concept, narration, len(repaired), "scene_goal_mismatch")
+                current = self._simplify_beat(current, concept, narration, len(repaired))
+
+            information_signature = self._information_signature(current)
+            if information_signature in seen_information:
+                self.logger.log("beat_validation", "running", f"Deleting duplicate beat {index}: repeated_information", project_id)
+                continue
 
             signature = self._visual_structure_signature(current)
             seen_signatures[signature] = seen_signatures.get(signature, 0) + 1
             if seen_signatures[signature] > 2:
                 self.logger.log("beat_validation", "running", f"Regenerating beat {index}: duplicate_structure", project_id)
                 current = self._variation_beat(concept, narration, len(repaired))
+                current = self._simplify_beat(current, concept, narration, len(repaired))
                 signature = self._visual_structure_signature(current)
                 seen_signatures[signature] = seen_signatures.get(signature, 0) + 1
 
             if current.get("beat_type") == "flow_diagram":
                 current["flow_stages"] = list(stages)
             repaired.append(current)
+            seen_information.add(self._information_signature(current))
 
         if len(repaired) < 2:
             repaired = self._beats_from_fallback(concept)
@@ -242,9 +308,14 @@ class ConceptService:
         repaired = self._normalize_beat_timing(repaired[:4], narration, concept)
         final: list[dict[str, Any]] = []
         for beat in repaired:
+            beat = self._simplify_beat(beat, concept, narration, len(final))
             valid, reason = self._beat_is_valid(beat, concept, narration)
-            if not valid or not self._supports_scene_goal(beat, concept):
-                self.logger.log("beat_validation", "failed", f"Kill switch safe emphasis: {reason}", project_id)
+            progression_valid = not final or not self._same_information(final[-1], beat)
+            if not valid or not progression_valid or not self._supports_scene_goal(beat, concept):
+                failure = reason if valid else reason
+                if not progression_valid:
+                    failure = "repeated_information"
+                self.logger.log("beat_validation", "failed", f"Kill switch safe emphasis: {failure}", project_id)
                 final.append(self._safe_emphasis_beat(concept, narration, len(final), reason))
             else:
                 final.append(beat)
@@ -417,7 +488,7 @@ class ConceptService:
         end = stages[-1]["value"]
         if not self._numbers_allowed_by_narration([start, process, end], narration):
             return False
-        valid, _reason = validate_numeric_logic(start, process, end, concept_type)
+        valid, _reason = validate_numbers(start, process, end, concept_type, narration)
         return valid
 
     def _supports_monthly_yearly(self, lowered: str) -> bool:
@@ -781,11 +852,136 @@ class ConceptService:
     def _numeric_value(self, value: str, concept: dict[str, Any], index: int) -> str:
         cleaned = self._clean_phrase(value, "")
         if cleaned and self._has_gravity(cleaned) and not self._is_sentence(cleaned):
-            return cleaned
+            return self._primary_number_from_text(cleaned) or cleaned
         stages = self.flow_stages(concept)
         if index < len(stages):
-            return stages[index]["value"]
+            return self._primary_number_from_text(stages[index]["value"]) or stages[index]["value"]
         return self._first_number_from_context(str(concept.get("narration") or ""), concept) or "₹5,000"
+
+    def _primary_content_for_index(self, concept: dict[str, Any], narration: str, index: int, requested: str = "") -> str:
+        concept_type = self._concept_type(concept)
+        if concept_type == "comparison":
+            return self._comparison_content_for_index(concept, narration, index)
+        stages = self.flow_stages(concept, narration)
+        if index < len(stages):
+            primary = self._primary_number_from_text(str(stages[index].get("value") or ""))
+            if primary:
+                return primary
+        primary = self._primary_number_from_text(requested)
+        if primary:
+            return primary
+        if index == 1 and len(stages) >= 3:
+            return self._primary_number_from_text(str(stages[1].get("value") or "")) or str(stages[1].get("value") or "")
+        return self._numeric_value(requested, concept, index)
+
+    def _comparison_content_for_index(self, concept: dict[str, Any], narration: str, index: int) -> str:
+        values = self._comparison_values(concept, narration)
+        if len(values) >= 2:
+            left, right = values[0], values[1]
+            if index == 0:
+                return self._primary_number_from_text(left) or left
+            if index == 1:
+                return self._primary_number_from_text(right) or right
+            return f"{left} vs {right}"
+        return self._first_number_from_context(narration, concept) or "₹5,000"
+
+    def _comparison_values(self, concept: dict[str, Any], narration: str) -> list[str]:
+        values = self._values_from_text(str(concept.get("transformation") or ""))
+        if len(values) >= 2:
+            return values[:2]
+        amounts = self.render_specs._money_tokens(narration)
+        percents = self.render_specs._percent_tokens(narration)
+        values = amounts + percents
+        if len(values) >= 2:
+            return values[:2]
+        stages = self.flow_stages(concept, narration)
+        return [str(stage.get("value") or "") for stage in stages[:2] if str(stage.get("value") or "").strip()]
+
+    def _supporting_idea_for_index(self, concept: dict[str, Any], narration: str, index: int, requested: str = "") -> str:
+        requested_clean = self._clean_supporting_text(requested, concept) if str(requested or "").strip() else ""
+        if requested_clean and not self._generic_caption(requested_clean):
+            return requested_clean
+        stages = self.flow_stages(concept, narration)
+        if index < len(stages):
+            idea = self._supporting_idea_from_value(str(stages[index].get("value") or ""), str(stages[index].get("label") or ""))
+            semantic = self._semantic_label_for_index(concept, narration, index)
+            if semantic and (not idea or idea.lower() in {"start", "change", "result", "day"}):
+                return semantic
+            if idea:
+                return idea
+        semantic = self._semantic_label_for_index(concept, narration, index)
+        if semantic:
+            return semantic
+        return self._caption_for_role(concept, index)
+
+    def _semantic_label_for_index(self, concept: dict[str, Any], narration: str, index: int) -> str:
+        lowered = f"{narration} {concept.get('scene_goal', '')} {concept.get('transformation', '')}".lower()
+        concept_type = self._concept_type(concept)
+        if concept_type == "growth":
+            return ["Invested", "Growth", "Final Value", "Wealth"][min(index, 3)]
+        if "month" in lowered and "year" in lowered:
+            return ["Monthly", "12 Months", "Yearly Loss", "Total"][min(index, 3)]
+        if "salary" in lowered and index == 0:
+            return "Salary"
+        if any(word in lowered for word in ("leak", "lost", "loss", "gone", "vanish", "inflation")) and index == 1:
+            return "Leak" if "leak" in lowered else ("Day" if "day" in lowered else "Loss")
+        if any(word in lowered for word in ("left", "leaves", "save", "saving", "savings", "vanish", "gone")) and index == 2:
+            return "Left" if any(word in lowered for word in ("left", "leaves", "vanish", "gone")) else "Saved"
+        return ""
+
+    def _supporting_idea_from_value(self, value: str, label: str = "") -> str:
+        cleaned = re.sub(r"₹\s?[\d,.]+(?:\s?(?:lakhs?|crores?|k|m)\b)?", " ", str(value or ""), flags=re.I)
+        cleaned = re.sub(r"\d+(?:\.\d+)?%", " ", cleaned)
+        cleaned = re.sub(r"\b\d+(?:\.\d+)?\b", " ", cleaned)
+        words = [word for word in re.findall(r"[A-Za-z]+", cleaned) if word.lower() not in {"per", "month", "year", "years", "change"}]
+        if words:
+            return " ".join(words[:3]).title()
+        label = str(label or "").strip()
+        if label and label.lower() not in {"start", "change", "result", "number", "impact"}:
+            return label.title()
+        return ""
+
+    def _primary_number_from_text(self, text: str) -> str:
+        text = str(text or "")
+        money = self.render_specs._money_tokens(text)
+        if money:
+            return money[0]
+        percents = self.render_specs._percent_tokens(text)
+        if percents:
+            return percents[0]
+        day = re.search(r"\bday\s*\d+\b", text, re.I)
+        if day:
+            return day.group(0).title()
+        number = re.search(r"\b\d+(?:\.\d+)?\b", text)
+        return number.group(0) if number else ""
+
+    def _numeric_token_count(self, text: str) -> int:
+        text = str(text or "")
+        money = self.render_specs._money_tokens(text)
+        percent = self.render_specs._percent_tokens(text)
+        stripped = text
+        for token in money + percent:
+            stripped = stripped.replace(token, " ")
+        bare = re.findall(r"\b\d+(?:\.\d+)?\b", stripped)
+        return len(money) + len(percent) + len(bare)
+
+    def _generic_caption(self, text: str) -> bool:
+        lowered = " ".join(str(text or "").lower().split())
+        return lowered in {
+            "start value",
+            "change step",
+            "result value",
+            "loss step",
+            "growth step",
+            "final value",
+            "left value",
+            "right value",
+            "gap shown",
+            "key number",
+            "impact number",
+            "main stat",
+            "numeric change",
+        } or self._contains_banned(lowered) or self._contains_label_banned(lowered)
 
     def _progression_content(self, concept: dict[str, Any]) -> str:
         stages = self.flow_stages(concept)
@@ -849,13 +1045,11 @@ class ConceptService:
 
     def _beat_type_for_role(self, concept: dict[str, Any], index: int, role: str) -> str:
         concept_type = self._concept_type(concept)
-        if index == 3 or role == "emotion":
-            return "text_burst"
         if concept_type == "comparison":
-            return "split_comparison" if index == 1 else "stat_explosion"
+            return "split_comparison"
         if concept_type == "emphasis":
             return "stat_explosion"
-        return "flow_diagram" if index == 1 else "stat_explosion"
+        return "flow_diagram"
 
     def _enforced_beat_type(self, requested: str, concept: dict[str, Any], role: str, index: int) -> str:
         expected = self._beat_type_for_role(concept, index, role)
@@ -873,6 +1067,12 @@ class ConceptService:
             return False, "empty_content"
         if not caption.strip() or self._contains_banned(caption) or self._contains_label_banned(caption):
             return False, "vague_caption"
+        if not self._visual_simplification_valid(beat, concept):
+            return False, "too_many_primary_numbers"
+        if not self._beat_matches_concept_type(beat, concept):
+            return False, "concept_component_mismatch"
+        if self._concept_type(concept) in {"comparison", "emphasis"} and not self._has_required_contrast(beat, concept, narration):
+            return False, "missing_contrast"
         if not self._numbers_allowed_by_narration([content], narration):
             return False, "number_not_from_narration_or_derivation"
         concept_type = self._concept_type(concept)
@@ -880,12 +1080,51 @@ class ConceptService:
             stages = beat.get("flow_stages") if isinstance(beat.get("flow_stages"), list) else self.flow_stages(concept, narration)
             if len(stages) < 3:
                 return False, "flow_missing_start_change_result"
-            valid, reason = validate_numeric_logic(stages[0]["value"], stages[1]["value"], stages[-1]["value"], concept_type)
+            valid, reason = validate_numbers(stages[0]["value"], stages[1]["value"], stages[-1]["value"], concept_type, narration)
             if not valid:
                 return False, reason
             if not self._numbers_allowed_by_narration([stage["value"] for stage in stages], narration):
                 return False, "flow_number_not_supported"
         return True, "valid"
+
+    def _visual_simplification_valid(self, beat: dict[str, Any], concept: dict[str, Any]) -> bool:
+        count = self._numeric_token_count(str(beat.get("content") or ""))
+        if self._concept_type(concept) == "comparison" and int(beat.get("beat_index") or 0) >= 2:
+            return count <= 2
+        return count <= 1
+
+    def _beat_matches_concept_type(self, beat: dict[str, Any], concept: dict[str, Any]) -> bool:
+        return str(beat.get("beat_type") or "").lower() == self.STRICT_COMPONENT_BY_CONCEPT.get(self._concept_type(concept), "flow_diagram")
+
+    def _has_required_contrast(self, beat: dict[str, Any], concept: dict[str, Any], narration: str) -> bool:
+        concept_type = self._concept_type(concept)
+        if concept_type == "comparison":
+            return len(self._comparison_values(concept, narration)) >= 2 or bool(re.search(r"\bvs\b|\bversus\b", str(beat.get("content") or ""), re.I))
+        if concept_type == "emphasis":
+            numbers = self.render_specs._money_tokens(narration) + self.render_specs._percent_tokens(narration)
+            return len(set(numbers)) >= 2 or self._numeric_token_count(str(beat.get("content") or "")) == 1
+        return True
+
+    def _simplify_beat(self, beat: dict[str, Any], concept: dict[str, Any], narration: str, index: int) -> dict[str, Any]:
+        current = dict(beat)
+        role = self._role_for_index(index)
+        current["beat_index"] = index
+        current["beat_type"] = self._beat_type_for_role(concept, index, role)
+        current["content"] = self._primary_content_for_index(concept, narration, index, str(current.get("content") or ""))
+        current["caption"] = self._supporting_idea_for_index(concept, narration, index, str(current.get("caption") or ""))
+        current["concept_metadata"] = dict(concept)
+        if current["beat_type"] == "flow_diagram":
+            current["flow_stages"] = list(self.flow_stages(concept, narration))
+        return current
+
+    def _same_information(self, previous: dict[str, Any], current: dict[str, Any]) -> bool:
+        return self._information_signature(previous) == self._information_signature(current)
+
+    def _information_signature(self, beat: dict[str, Any]) -> str:
+        content = str(beat.get("content") or "")
+        primary = self._primary_number_from_text(content) or content
+        caption = re.sub(r"\d|₹|%|[,./-]", "", str(beat.get("caption") or "")).strip().lower()
+        return self._content_signature(f"{beat.get('beat_type')}|{primary}|{caption}")
 
     def _regenerated_beat(self, concept: dict[str, Any], narration: str, index: int, reason: str) -> dict[str, Any]:
         stages = self.flow_stages(concept, narration)
@@ -893,12 +1132,12 @@ class ConceptService:
             return self._safe_emphasis_beat(concept, narration, index, reason)
         role = self._role_for_index(index)
         beat_type = self._beat_type_for_role(concept, index, role)
-        content = " -> ".join(stage["value"] for stage in stages[:3]) if beat_type == "flow_diagram" and len(stages) >= 3 else stages[min(index, len(stages) - 1)]["value"]
+        content = self._primary_content_for_index(concept, narration, index)
         beat = {
             "beat_index": index,
             "beat_type": beat_type,
             "content": content,
-            "caption": self._caption_for_role(concept, index),
+            "caption": self._supporting_idea_for_index(concept, narration, index),
             "color": self.ROLE_COLORS.get(role, "orange"),
             "estimated_start_sec": round(index * 2.0, 2),
             "estimated_duration_sec": 2.0,
@@ -922,12 +1161,14 @@ class ConceptService:
     def _safe_emphasis_beat(self, concept: dict[str, Any], narration: str, index: int, reason: str) -> dict[str, Any]:
         value = self._first_number_from_context(narration, concept) or "₹5,000"
         impact = self._emphasis_impact_value(narration, value)
+        if impact == value and re.search(r"\b(cannot|can't|cant|broke|save|left|manual|emotion)\b", narration, re.I):
+            impact = "₹0"
         content = value if index == 0 else impact
         return {
             "beat_index": index,
-            "beat_type": "stat_explosion" if index < 3 else "text_burst",
-            "content": content,
-            "caption": self._caption_for_role(concept, index),
+            "beat_type": "stat_explosion",
+            "content": self._primary_number_from_text(content) or content,
+            "caption": self._supporting_idea_for_index(self._downgrade_to_emphasis(concept, narration, reason), narration, index),
             "color": self.ROLE_COLORS.get(self._role_for_index(index), "orange"),
             "estimated_start_sec": round(index * 2.0, 2),
             "estimated_duration_sec": 2.0,
@@ -977,11 +1218,10 @@ class ConceptService:
         )
         content_tokens = set(self.render_specs._money_tokens(content) + self.render_specs._percent_tokens(content))
         concept_tokens = set(self.render_specs._money_tokens(concept_text) + self.render_specs._percent_tokens(concept_text))
-        return bool(content_tokens & concept_tokens)
+        primary = self._primary_number_from_text(content)
+        return bool(content_tokens & concept_tokens) or bool(primary and primary.lower() in concept_text.lower())
 
     def _component_for_concept(self, concept: dict[str, Any], index: int) -> str:
-        if index == 3:
-            return "TextBurst"
         concept_type = self._concept_type(concept)
         if concept_type == "comparison":
             return "SplitComparison"
