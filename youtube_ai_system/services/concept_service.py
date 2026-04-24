@@ -95,53 +95,86 @@ def validate_numeric_logic(start: str, process: str, end: str, concept_type: str
 
 
 class SceneDirector:
-    """Owns narration-led beat direction before anything reaches rendering."""
+    """Owns narration-led beat direction before anything reaches rendering.
+
+    Pipeline: narration → concept → scene_goal → direct_scene → validate → beats
+    """
+
+    # Component sequences keyed by visual_verb
+    VERB_COMPONENT_MAP: dict[str, list[str]] = {
+        "show_decay": ["stat_explosion", "flow_diagram", "stat_explosion"],
+        "show_growth": ["stat_explosion", "flow_diagram", "stat_explosion"],
+        "show_contrast": ["stat_explosion", "split_comparison", "text_burst"],
+        "emphasize": ["stat_explosion", "text_burst"],
+    }
+
+    MAX_REGEN_ATTEMPTS = 2
 
     def __init__(self, concepts: "ConceptService", project_id: int | None = None) -> None:
         self.concepts = concepts
         self.project_id = project_id
 
-    def build_scene_beats(self, narration: str, duration: int | float) -> list[dict[str, Any]]:
-        concept = self.concepts.extract_concept(narration, project_id=self.project_id)
-        concept["narration"] = str(narration or "")
-        self.concepts.logger.log(
-            "scene_director",
-            "running",
-            f"Concept extracted: type={self.concepts._concept_type(concept)}; goal={concept.get('scene_goal')}; numbers={self.concepts._debug_numbers(narration, concept)}.",
-            self.project_id,
-        )
-        explanation = self.concepts.build_visual_explanation(concept, project_id=self.project_id)
-        visual_states = explanation.get("visual_narrative") if isinstance(explanation, dict) else []
-        if not isinstance(visual_states, list) or len(visual_states) < 2:
-            self.concepts.logger.log("scene_director", "running", "Regenerating visual states: too_few_beats", self.project_id)
-            visual_states = self.concepts._fallback_visual_explanation(concept)["visual_narrative"]
+    # ------------------------------------------------------------------
+    # 1. Scene Goal Generator
+    # ------------------------------------------------------------------
 
-        beats = self._states_to_beats(visual_states[:4], concept, str(narration or ""), duration)
-        if len(beats) < 2 or not self._has_transformation_beat(beats):
-            self.concepts.logger.log("scene_director", "running", "Regenerating beats: missing_transformation", self.project_id)
-            beats = self.concepts._beats_from_fallback(concept)
-        return self.concepts.validate_beats(beats, str(narration or ""), concept, project_id=self.project_id)
+    def generate_scene_goal(self, narration: str, concept: dict[str, Any]) -> dict[str, str]:
+        """Return {"scene_goal": "...", "visual_verb": "show_decay|show_growth|show_contrast|emphasize"}."""
+        concept_type = self.concepts._concept_type(concept)
+        scene_goal = str(concept.get("scene_goal") or self.concepts._scene_goal_from_narration(narration, concept_type))
 
-    def _states_to_beats(
+        verb_map = {
+            "decay": "show_decay",
+            "growth": "show_growth",
+            "comparison": "show_contrast",
+            "flow": "show_decay",
+            "emphasis": "emphasize",
+        }
+        visual_verb = verb_map.get(concept_type, "emphasize")
+
+        # Override verb if narration signals growth within a decay/flow concept
+        lowered = narration.lower()
+        if visual_verb == "show_decay" and any(w in lowered for w in ("invest", "sip", "compound", "wealth", "accumulate")):
+            visual_verb = "show_growth"
+
+        return {"scene_goal": scene_goal, "visual_verb": visual_verb}
+
+    # ------------------------------------------------------------------
+    # 2. Direct Scene — produces 2-4 beats with strict roles
+    # ------------------------------------------------------------------
+
+    def direct_scene(
         self,
-        visual_states: list[Any],
-        concept: dict[str, Any],
         narration: str,
+        concept: dict[str, Any],
+        scene_goal: dict[str, str],
         duration: int | float,
     ) -> list[dict[str, Any]]:
+        """Produce 2–4 beats. Beat 0=INTRODUCE, 1=CHANGE, 2=RESULT, 3=OPTIONAL PUNCH."""
         service = self.concepts
-        count = max(2, min(4, len([state for state in visual_states if isinstance(state, dict)]) or 3))
+        visual_verb = scene_goal.get("visual_verb", "emphasize")
+        component_sequence = list(self.VERB_COMPONENT_MAP.get(visual_verb, self.VERB_COMPONENT_MAP["emphasize"]))
+        stages = service.flow_stages(concept, narration)
+
+        # Determine beat count from component sequence (2-4)
+        max_beats = len(component_sequence)
+        if visual_verb == "emphasize":
+            max_beats = min(2, max_beats)
+        count = max(2, min(4, max_beats))
         beat_duration = max(2.0, min(5.0, max(float(duration or 0), 2.0) / count))
+
         beats: list[dict[str, Any]] = []
         for index in range(count):
-            state = visual_states[index] if index < len(visual_states) and isinstance(visual_states[index], dict) else {}
             role = service._role_for_index(index)
-            beat_type = service._beat_type_for_role(concept, index, role)
-            beat = {
+            beat_type = component_sequence[index] if index < len(component_sequence) else "text_burst"
+            content = service._primary_content_for_index(concept, narration, index)
+            caption = service._supporting_idea_for_index(concept, narration, index)
+
+            beat: dict[str, Any] = {
                 "beat_index": index,
                 "beat_type": beat_type,
-                "content": service._primary_content_for_index(concept, narration, index, str(state.get("key_value") or "")),
-                "caption": service._supporting_idea_for_index(concept, narration, index, str(state.get("supporting_text") or "")),
+                "content": content,
+                "caption": caption,
                 "color": service.ROLE_COLORS.get(role, "orange"),
                 "estimated_start_sec": round(index * beat_duration, 2),
                 "estimated_duration_sec": round(beat_duration, 2),
@@ -149,9 +182,176 @@ class SceneDirector:
                 "visual_role": role,
             }
             if beat_type == "flow_diagram":
-                beat["flow_stages"] = list(service.flow_stages(concept, narration))
+                beat["flow_stages"] = list(stages)
             beats.append(beat)
+
+        # RULE 9/10 — Payoff: final beat must answer "why does this matter?"
+        beats = self._ensure_payoff(beats, concept, narration)
+
         return beats
+
+    # ------------------------------------------------------------------
+    # 3. Main orchestrator — build_scene_beats
+    # ------------------------------------------------------------------
+
+    def build_scene_beats(self, narration: str, duration: int | float) -> list[dict[str, Any]]:
+        service = self.concepts
+        narration = str(narration or "")
+
+        # Step 1: extract concept
+        concept = service.extract_concept(narration, project_id=self.project_id)
+        concept["narration"] = narration
+
+        # Step 2: generate scene goal
+        scene_goal = self.generate_scene_goal(narration, concept)
+        concept["scene_goal"] = scene_goal["scene_goal"]
+        concept["visual_verb"] = scene_goal["visual_verb"]
+
+        service.logger.log(
+            "scene_director",
+            "running",
+            f"Concept extracted: type={service._concept_type(concept)}; verb={scene_goal['visual_verb']}; goal={scene_goal['scene_goal']}; numbers={service._debug_numbers(narration, concept)}.",
+            self.project_id,
+        )
+
+        # Step 3: direct scene
+        beats = self.direct_scene(narration, concept, scene_goal, duration)
+
+        # Step 4: validate beats
+        beats = service.validate_beats(beats, narration, concept, project_id=self.project_id)
+
+        # Step 5/6: regenerate if needed (max 2 attempts)
+        for attempt in range(self.MAX_REGEN_ATTEMPTS):
+            if self._beats_pass_all_rules(beats, concept, narration):
+                break
+            service.logger.log(
+                "scene_director", "running",
+                f"Regeneration attempt {attempt + 1}: beats failed rules",
+                self.project_id,
+            )
+            if attempt == 0:
+                # Attempt 1: rebuild from scene_goal
+                beats = self.direct_scene(narration, concept, scene_goal, duration)
+                beats = service.validate_beats(beats, narration, concept, project_id=self.project_id)
+            else:
+                # Attempt 2: kill switch
+                service.logger.log("scene_director", "running", "Kill switch activated", self.project_id)
+                beats = [self._kill_switch_beat(concept, narration, duration)]
+                break
+
+        return beats
+
+    # ------------------------------------------------------------------
+    # Rule enforcement helpers
+    # ------------------------------------------------------------------
+
+    def _beats_pass_all_rules(self, beats: list[dict[str, Any]], concept: dict[str, Any], narration: str) -> bool:
+        """Check all 13 rules. Return True only if every rule passes."""
+        if len(beats) < 1:
+            return False
+
+        # RULE 4 — No duplicate components consecutively
+        for i in range(1, len(beats)):
+            if beats[i]["beat_type"] == beats[i - 1]["beat_type"] and beats[i]["beat_type"] != "text_burst":
+                return False
+
+        # RULE 1/2 — Information progression & uniqueness
+        seen: set[str] = set()
+        for beat in beats:
+            sig = self.concepts._information_signature(beat)
+            if sig in seen:
+                return False
+            seen.add(sig)
+
+        # RULE 11 — Visual rhythm: at least 2 different component types
+        unique_types = {beat["beat_type"] for beat in beats}
+        if len(beats) >= 2 and len(unique_types) < 2:
+            return False
+
+        # RULE 12 — Emphasis constraint: max 2 beats
+        visual_verb = str(concept.get("visual_verb", ""))
+        if visual_verb == "emphasize" and len(beats) > 2:
+            return False
+
+        # RULE 9 — Payoff required on final beat
+        if not self._has_payoff(beats[-1], concept, narration):
+            return False
+
+        return True
+
+    def _has_payoff(self, beat: dict[str, Any], concept: dict[str, Any], narration: str) -> bool:
+        """Final beat must answer 'why does this matter?'"""
+        caption = str(beat.get("caption") or "")
+        content = str(beat.get("content") or "")
+        combined = f"{content} {caption}".lower()
+        # Must have a number AND some consequence word
+        if not self.concepts._has_gravity(content):
+            return False
+        payoff_signals = ("gone", "left", "lost", "save", "saved", "rent", "month", "year",
+                          "wealth", "zero", "₹0", "impact", "total", "final", "worth", "real")
+        return any(w in combined for w in payoff_signals) or beat.get("beat_type") == "text_burst"
+
+    def _ensure_payoff(self, beats: list[dict[str, Any]], concept: dict[str, Any], narration: str) -> list[dict[str, Any]]:
+        """RULE 9/10: If final beat has no payoff, generate one."""
+        if not beats:
+            return beats
+        last = beats[-1]
+        if self._has_payoff(last, concept, narration):
+            return beats
+
+        # Generate payoff from real-life meaning
+        service = self.concepts
+        stages = service.flow_stages(concept, narration)
+        end_value = stages[-1]["value"] if stages else str(concept.get("end_value") or "")
+        payoff_caption = self._generate_payoff_caption(end_value, narration, concept)
+
+        last["caption"] = payoff_caption
+        if last["beat_type"] not in ("text_burst", "stat_explosion"):
+            last["beat_type"] = "text_burst"
+            last["color"] = "red"
+        return beats
+
+    def _generate_payoff_caption(self, end_value: str, narration: str, concept: dict[str, Any]) -> str:
+        """Convert numbers into real-life meaning: time, loss, lifestyle impact."""
+        amount = _numeric_amount(end_value)
+        lowered = narration.lower()
+
+        if amount <= 0 or "₹0" in end_value:
+            if "day" in lowered:
+                day_match = re.search(r"day\s*(\d+)", lowered)
+                return f"Gone in {day_match.group(1)} days" if day_match else "Gone completely"
+            return "Gone completely"
+
+        if "year" in lowered or "month" in lowered:
+            if amount >= 60000:
+                months = round(amount / 30000)
+                return f"That's {months} months rent"
+            if amount >= 12000:
+                return f"₹{int(amount):,}/year lost"
+            return f"₹{int(amount):,} every year"
+
+        concept_type = self.concepts._concept_type(concept)
+        if concept_type == "growth":
+            return f"₹{int(amount):,} built"
+        return f"₹{int(amount):,} real impact"
+
+    def _kill_switch_beat(self, concept: dict[str, Any], narration: str, duration: float | int) -> dict[str, Any]:
+        """KILL SWITCH: Replace entire scene with single safe stat_explosion."""
+        service = self.concepts
+        value = service._first_number_from_context(narration, concept) or service._dynamic_fallback_number(narration)
+        consequence = self._generate_payoff_caption(
+            str(concept.get("end_value") or value), narration, concept
+        )
+        return {
+            "beat_index": 0,
+            "beat_type": "stat_explosion",
+            "content": service._primary_number_from_text(value) or value,
+            "caption": consequence,
+            "color": "red",
+            "estimated_start_sec": 0.0,
+            "estimated_duration_sec": float(duration or 4.0),
+            "concept_metadata": dict(concept),
+        }
 
     def _has_transformation_beat(self, beats: list[dict[str, Any]]) -> bool:
         return len(beats) >= 2 and self.concepts._role_for_index(1) == "change" and bool(str(beats[1].get("content") or "").strip())
@@ -194,6 +394,24 @@ class ConceptService:
         "cant even save",
     }
     BANNED_LABEL_WORDS = {"flow", "concept", "idea", "thing", "system"}
+    # RULE 17 — Weak caption words to reject
+    WEAK_CAPTION_WORDS = {
+        "final value", "result", "amount", "savings", "start value",
+        "change step", "loss step", "growth step", "numeric change",
+        "key number", "impact number", "main stat", "left value",
+        "right value", "gap shown", "money punch", "loss punch",
+        "wealth punch", "clear winner", "remember this",
+    }
+    # RULE 14 — Impact signal words (caption-level consequence markers)
+    IMPACT_WORDS = {
+        "lost", "vanished", "gone", "wasted", "left", "leaked",
+        "destroyed", "wiped", "burnt", "drained", "blown",
+        "zero", "nothing", "empty", "broke",
+        "built", "grew", "earned", "saved", "protected",
+        "rent", "emi", "grocery",
+        "worse", "better", "real", "actual", "hidden",
+        "silent", "invisible", "shocking", "painful",
+    }
     STRICT_COMPONENT_BY_CONCEPT = {
         "decay": "flow_diagram",
         "growth": "flow_diagram",
@@ -272,6 +490,17 @@ class ConceptService:
             current["content"] = self._primary_content_for_index(concept, narration, len(repaired), str(current.get("content") or ""))
             current["caption"] = self._supporting_idea_for_index(concept, narration, len(repaired), str(current.get("caption") or ""))
 
+            # RULE 8 — No fragmented beats: reject single-word meaningless content
+            if self._is_fragmented(current):
+                self.logger.log("beat_validation", "running", f"Regenerating beat {index}: fragmented_content", project_id)
+                current = self._regenerated_beat(concept, narration, len(repaired), "fragmented_content")
+                current = self._simplify_beat(current, concept, narration, len(repaired))
+
+            # RULE 13 — Simplicity check: each beat understandable in 2 seconds
+            if self._is_overloaded(current):
+                self.logger.log("beat_validation", "running", f"Simplifying beat {index}: overloaded_content", project_id)
+                current = self._simplify_beat(current, concept, narration, len(repaired))
+
             valid, reason = self._beat_is_valid(current, concept, narration)
             if not valid:
                 self.logger.log("beat_validation", "running", f"Regenerating beat {index}: {reason}", project_id)
@@ -283,10 +512,17 @@ class ConceptService:
                 current = self._regenerated_beat(concept, narration, len(repaired), "scene_goal_mismatch")
                 current = self._simplify_beat(current, concept, narration, len(repaired))
 
+            # RULE 2 — Information uniqueness check
             information_signature = self._information_signature(current)
             if information_signature in seen_information:
                 self.logger.log("beat_validation", "running", f"Deleting duplicate beat {index}: repeated_information", project_id)
                 continue
+
+            # RULE 4 — No duplicate components consecutively (exception: text_burst)
+            if repaired and current["beat_type"] == repaired[-1]["beat_type"] and current["beat_type"] != "text_burst":
+                self.logger.log("beat_validation", "running", f"Fixing consecutive duplicate component at beat {index}", project_id)
+                current = self._variation_beat(concept, narration, len(repaired))
+                current = self._simplify_beat(current, concept, narration, len(repaired))
 
             signature = self._visual_structure_signature(current)
             seen_signatures[signature] = seen_signatures.get(signature, 0) + 1
@@ -305,6 +541,9 @@ class ConceptService:
         if len(repaired) < 2:
             repaired = self._beats_from_fallback(concept)
 
+        # RULE 11 — Visual rhythm: ensure at least 2 different component types
+        repaired = self._enforce_visual_rhythm(repaired, concept, narration)
+
         repaired = self._normalize_beat_timing(repaired[:4], narration, concept)
         final: list[dict[str, Any]] = []
         for beat in repaired:
@@ -319,6 +558,23 @@ class ConceptService:
                 final.append(self._safe_emphasis_beat(concept, narration, len(final), reason))
             else:
                 final.append(beat)
+
+        # ── SEMANTIC SHARPNESS LAYER (Rules 14-18) ──
+        for idx in range(len(final)):
+            beat = final[idx]
+            # RULE 14/15 — Impact check: upgrade neutral/weak beats
+            if not self._creates_impact(beat):
+                self.logger.log("beat_validation", "running", f"Upgrading beat {idx}: neutral_no_impact", project_id)
+                final[idx] = self._upgrade_to_impact(beat, concept, narration, idx)
+            # RULE 17 — Strong wording: replace weak captions
+            caption_lower = str(final[idx].get("caption") or "").strip().lower()
+            if caption_lower in self.WEAK_CAPTION_WORDS:
+                self.logger.log("beat_validation", "running", f"Replacing weak caption at beat {idx}", project_id)
+                final[idx] = self._upgrade_to_impact(final[idx], concept, narration, idx)
+
+        # RULE 18 — Final beat must hit hard
+        if final:
+            final[-1] = self._sharpen_final_beat(final[-1], concept, narration, project_id)
 
         self.logger.log(
             "beat_validation",
@@ -348,7 +604,7 @@ class ConceptService:
         concept_type = self._concept_type(concept)
 
         if concept_type == "emphasis":
-            value = self._first_number_from_context(narration_text, concept) or "₹5,000"
+            value = self._first_number_from_context(narration_text, concept) or self._dynamic_fallback_number(narration_text)
             return [
                 {"label": "number", "value": value},
                 {"label": "impact", "value": self._emphasis_impact_value(narration_text, value)},
@@ -392,14 +648,15 @@ class ConceptService:
             ]
             return stages if self._stages_are_valid(stages, concept, narration_text) else []
 
-        if amounts and self._supports_monthly_yearly(lowered):
+        if amounts and self._has_time_context(lowered):
             monthly = amounts[0]
-            derived_yearly = self.render_specs._format_rupees(_numeric_amount(monthly) * 12)
-            yearly = next((amount for amount in amounts[1:] if abs(_numeric_amount(amount) - _numeric_amount(derived_yearly)) <= 2), derived_yearly)
+            time_label, multiplier = self._time_multiplier_from_narration(lowered)
+            derived_total = self.render_specs._format_rupees(_numeric_amount(monthly) * multiplier)
+            total = next((amount for amount in amounts[1:] if abs(_numeric_amount(amount) - _numeric_amount(derived_total)) <= max(2, _numeric_amount(derived_total) * 0.05)), derived_total)
             stages = [
                 {"label": "start", "value": f"{monthly}/month"},
-                {"label": "change", "value": "12 months"},
-                {"label": "result", "value": f"{yearly}/year"},
+                {"label": "change", "value": time_label},
+                {"label": "result", "value": total},
             ]
             return stages if self._stages_are_valid(stages, concept, narration_text) else []
 
@@ -468,7 +725,7 @@ class ConceptService:
 
     def _safe_emphasis_states(self, concept: dict[str, Any]) -> list[dict[str, Any]]:
         stages = self.flow_stages(concept)
-        first = stages[0]["value"] if stages else self._first_number_from_context(str(concept.get("narration") or ""), concept) or "₹5,000"
+        first = stages[0]["value"] if stages else self._first_number_from_context(str(concept.get("narration") or ""), concept) or self._dynamic_fallback_number(str(concept.get("narration") or ""))
         second = stages[-1]["value"] if len(stages) > 1 else self._emphasis_impact_value(str(concept.get("narration") or ""), first)
         return [
             {"beat_position": 0, "key_value": first, "supporting_text": self._caption_for_role(concept, 0), "visual_role": "introduce", "suggested_component": "StatExplosion"},
@@ -496,6 +753,27 @@ class ConceptService:
             re.search(r"\b(per\s+month|monthly|/month|every month|each month)\b", lowered)
             and re.search(r"\b(year|yearly|annual|annum|12\s+months?)\b", lowered)
         )
+
+    def _has_time_context(self, lowered: str) -> bool:
+        """More relaxed than _supports_monthly_yearly: accepts month OR year OR time periods."""
+        return bool(re.search(
+            r"\b(per\s+month|monthly|/month|every month|each month|per\s+year|yearly|annual|every year|\d+\s*years?|\d+\s*months?)\b",
+            lowered,
+        ))
+
+    def _time_multiplier_from_narration(self, lowered: str) -> tuple[str, int]:
+        """Extract time period and multiplier from narration."""
+        years_match = re.search(r"(\d+)\s*years?", lowered)
+        months_match = re.search(r"(\d+)\s*months?", lowered)
+        if years_match:
+            years = int(years_match.group(1))
+            return f"{years} years", years * 12
+        if months_match:
+            months = int(months_match.group(1))
+            return f"{months} months", months
+        if re.search(r"\b(yearly|annual|per\s+year|every year)\b", lowered):
+            return "12 months", 12
+        return "12 months", 12
 
     def _investment_years(self, lowered: str) -> str:
         age_match = re.search(r"\b(?:age\s+of|age)\s+(\d{1,2}).*?\b(?:time\s+you(?:'re| are)?|you\s+are|by)\s+(\d{1,2})\b", lowered)
@@ -555,14 +833,50 @@ class ConceptService:
         return self.render_specs._format_rupees(max(end_value, start_value / 2))
 
     def _first_number_from_context(self, narration: str, concept: dict[str, Any]) -> str:
-        numbers = self.render_specs._percent_tokens(narration) + self.render_specs._money_tokens(narration)
-        if numbers:
-            return numbers[0]
-        for key in ("start_value", "end_value", "outcome", "explanation_sentence"):
+        # Priority: money tokens first (₹X), then percentages
+        money = self.render_specs._money_tokens(narration)
+        if money:
+            return money[0]
+        percents = self.render_specs._percent_tokens(narration)
+        if percents:
+            return percents[0]
+        # Try concept fields
+        for key in ("start_value", "end_value", "outcome", "transformation", "explanation_sentence"):
             values = self._values_from_text(str(concept.get(key) or ""))
             if values:
                 return values[0]
+        # Try narration embedded numbers (e.g. "5 lakh")
+        lakh_match = re.search(r"(\d+(?:\.\d+)?)\s*lakhs?", narration, re.I)
+        if lakh_match:
+            return self.render_specs._format_rupees(float(lakh_match.group(1)) * 100_000)
+        crore_match = re.search(r"(\d+(?:\.\d+)?)\s*crores?", narration, re.I)
+        if crore_match:
+            return self.render_specs._format_rupees(float(crore_match.group(1)) * 10_000_000)
         return ""
+
+    def _dynamic_fallback_number(self, narration: str) -> str:
+        """Generate a context-appropriate fallback instead of always using ₹5,000."""
+        lowered = narration.lower()
+        # Insurance (check before rent/emi since "premium" contains "emi")
+        if any(w in lowered for w in ("insurance", "premium", "policy", "cover")):
+            return "₹20,000"
+        # Salary context
+        if any(w in lowered for w in ("salary", "income", "paycheck", "payday", "ctc")):
+            return "₹25,000"
+        # Investment context
+        if any(w in lowered for w in ("sip", "invest", "mutual fund", "portfolio")):
+            return "₹10,000"
+        # Rent/EMI context (use word boundary to avoid substring matches)
+        if re.search(r"\b(rent|emi|loan|mortgage)\b", lowered):
+            return "₹15,000"
+        # Debt/credit context
+        if any(w in lowered for w in ("debt", "credit card", "interest", "borrow")):
+            return "₹50,000"
+        # Food/dining/subscription
+        if any(w in lowered for w in ("food", "dining", "zomato", "swiggy", "subscription", "netflix")):
+            return "₹2,000"
+        # Generic finance
+        return "₹5,000"
 
     def _emphasis_impact_value(self, narration: str, value: str) -> str:
         amounts = self.render_specs._money_tokens(narration)
@@ -574,7 +888,7 @@ class ConceptService:
         return value
 
     def _downgrade_to_emphasis(self, concept: dict[str, Any], narration: str, reason: str) -> dict[str, Any]:
-        value = self._first_number_from_context(narration, concept) or "₹5,000"
+        value = self._first_number_from_context(narration, concept) or self._dynamic_fallback_number(narration)
         return {
             **concept,
             "concept_type": "emphasis",
@@ -590,15 +904,34 @@ class ConceptService:
         }
 
     def _numbers_allowed_by_narration(self, values: list[str], narration: str) -> bool:
+        """RELAXED: Accept if number is in narration, derived, OR close to a narration amount."""
         if not narration.strip():
             return True
         allowed = set(self.render_specs._money_tokens(narration) + self.render_specs._percent_tokens(narration))
         derived = self._derived_numbers_from_narration(narration)
         allowed.update(derived)
+
+        # Pre-compute narration amounts for proximity check
+        narration_amounts = [_numeric_amount(t) for t in allowed if _numeric_amount(t) > 0]
+
         for value in values:
-            for token in self.render_specs._money_tokens(value) + self.render_specs._percent_tokens(value):
-                if token not in allowed:
-                    return False
+            tokens = self.render_specs._money_tokens(value) + self.render_specs._percent_tokens(value)
+            for token in tokens:
+                if token in allowed:
+                    continue
+                # RELAXED: accept if within 5% of any narration/derived amount
+                token_amount = _numeric_amount(token)
+                if token_amount > 0 and any(
+                    abs(token_amount - na) <= max(2, na * 0.05) for na in narration_amounts
+                ):
+                    continue
+                # RELAXED: accept time references (e.g. "Day 12", "12 months")
+                if re.search(r"\b(day|month|year|week)\b", value, re.I):
+                    continue
+                # RELAXED: accept ₹0 endpoint (common in decay)
+                if token_amount == 0:
+                    continue
+                return False
         return True
 
     def _derived_numbers_from_narration(self, narration: str) -> set[str]:
@@ -606,15 +939,44 @@ class ConceptService:
         amounts = self.render_specs._money_tokens(narration)
         percents = self.render_specs._percent_tokens(narration)
         derived: set[str] = set()
-        if amounts and self._supports_monthly_yearly(lowered):
-            derived.add(self.render_specs._format_rupees(_numeric_amount(amounts[0]) * 12))
+
+        # Monthly → yearly (both strict and relaxed)
+        if amounts and self._has_time_context(lowered):
+            _label, multiplier = self._time_multiplier_from_narration(lowered)
+            for amt in amounts:
+                derived.add(self.render_specs._format_rupees(_numeric_amount(amt) * multiplier))
+
+        # Percentage derivations: apply to ALL amounts, not just first
         if amounts and percents:
-            derived.add(self._percentage_output(amounts[0], percents[0], "decay"))
-            derived.add(self._percentage_output(amounts[0], percents[0], "growth"))
-        if any(word in lowered for word in ("vanish", "zero", "₹0", "manual", "emotion")):
+            for amt in amounts:
+                for pct in percents:
+                    derived.add(self._percentage_output(amt, pct, "decay"))
+                    derived.add(self._percentage_output(amt, pct, "growth"))
+
+        # Compound growth: amt * (1 + rate)^years
+        years_match = re.search(r"(\d+)\s*years?", lowered)
+        if amounts and percents and years_match:
+            years = int(years_match.group(1))
+            for amt in amounts:
+                for pct in percents:
+                    rate = float(re.search(r"(\d+(?:\.\d+)?)", pct).group(1)) / 100.0
+                    compound = _numeric_amount(amt) * ((1 + rate) ** years)
+                    derived.add(self.render_specs._format_rupees(compound))
+
+        # Multi-amount derivations: difference between amounts
+        if len(amounts) >= 2:
+            for i in range(len(amounts)):
+                for j in range(i + 1, len(amounts)):
+                    diff = abs(_numeric_amount(amounts[i]) - _numeric_amount(amounts[j]))
+                    if diff > 0:
+                        derived.add(self.render_specs._format_rupees(diff))
+
+        # Common endpoints
+        if any(word in lowered for word in ("vanish", "zero", "₹0", "manual", "emotion", "gone", "nothing")):
             derived.add("₹0")
         if any(word in lowered for word in ("vanish", "salary", "payday", "paycheck")) and not amounts:
             derived.add("₹25,000")
+
         return derived
 
     def _debug_numbers(self, narration: str, concept: dict[str, Any]) -> str:
@@ -856,7 +1218,7 @@ class ConceptService:
         stages = self.flow_stages(concept)
         if index < len(stages):
             return self._primary_number_from_text(stages[index]["value"]) or stages[index]["value"]
-        return self._first_number_from_context(str(concept.get("narration") or ""), concept) or "₹5,000"
+        return self._first_number_from_context(str(concept.get("narration") or ""), concept) or self._dynamic_fallback_number(str(concept.get("narration") or ""))
 
     def _primary_content_for_index(self, concept: dict[str, Any], narration: str, index: int, requested: str = "") -> str:
         concept_type = self._concept_type(concept)
@@ -883,7 +1245,7 @@ class ConceptService:
             if index == 1:
                 return self._primary_number_from_text(right) or right
             return f"{left} vs {right}"
-        return self._first_number_from_context(narration, concept) or "₹5,000"
+        return self._first_number_from_context(narration, concept) or self._dynamic_fallback_number(narration)
 
     def _comparison_values(self, concept: dict[str, Any], narration: str) -> list[str]:
         values = self._values_from_text(str(concept.get("transformation") or ""))
@@ -986,7 +1348,7 @@ class ConceptService:
     def _progression_content(self, concept: dict[str, Any]) -> str:
         stages = self.flow_stages(concept)
         if len(stages) < 2:
-            return self._first_number_from_context(str(concept.get("narration") or ""), concept) or "₹5,000"
+            return self._first_number_from_context(str(concept.get("narration") or ""), concept) or self._dynamic_fallback_number(str(concept.get("narration") or ""))
         return f"{stages[0]['value']} -> {stages[-1]['value']}"
 
     def _supports_scene_goal(self, beat: dict[str, Any], concept: dict[str, Any]) -> bool:
@@ -1071,6 +1433,7 @@ class ConceptService:
             return False, "too_many_primary_numbers"
         if not self._beat_matches_concept_type(beat, concept):
             return False, "concept_component_mismatch"
+        # RULE 5 — Meaningful contrast only
         if self._concept_type(concept) in {"comparison", "emphasis"} and not self._has_required_contrast(beat, concept, narration):
             return False, "missing_contrast"
         if not self._numbers_allowed_by_narration([content], narration):
@@ -1085,6 +1448,12 @@ class ConceptService:
                 return False, reason
             if not self._numbers_allowed_by_narration([stage["value"] for stage in stages], narration):
                 return False, "flow_number_not_supported"
+            # RULE 6 — Real transformation: reject identical start/change/end
+            if not self._flow_has_real_transformation(stages):
+                return False, "fake_transformation"
+            # RULE 7 — Flow change rule: middle stage must show measurable change
+            if not self._flow_middle_has_change(stages):
+                return False, "flow_middle_no_change"
         return True, "valid"
 
     def _visual_simplification_valid(self, beat: dict[str, Any], concept: dict[str, Any]) -> bool:
@@ -1094,7 +1463,17 @@ class ConceptService:
         return count <= 1
 
     def _beat_matches_concept_type(self, beat: dict[str, Any], concept: dict[str, Any]) -> bool:
-        return str(beat.get("beat_type") or "").lower() == self.STRICT_COMPONENT_BY_CONCEPT.get(self._concept_type(concept), "flow_diagram")
+        beat_type = str(beat.get("beat_type") or "").lower()
+        concept_type = self._concept_type(concept)
+        strict = self.STRICT_COMPONENT_BY_CONCEPT.get(concept_type, "flow_diagram")
+        if beat_type == strict:
+            return True
+        # Also accept types from visual_verb component mapping (SceneDirector sequences)
+        visual_verb = str(concept.get("visual_verb") or "")
+        if visual_verb and visual_verb in SceneDirector.VERB_COMPONENT_MAP:
+            return beat_type in SceneDirector.VERB_COMPONENT_MAP[visual_verb]
+        # text_burst is always acceptable as a final/punch beat
+        return beat_type == "text_burst"
 
     def _has_required_contrast(self, beat: dict[str, Any], concept: dict[str, Any], narration: str) -> bool:
         concept_type = self._concept_type(concept)
@@ -1116,6 +1495,273 @@ class ConceptService:
         if current["beat_type"] == "flow_diagram":
             current["flow_stages"] = list(self.flow_stages(concept, narration))
         return current
+
+    # ------------------------------------------------------------------
+    # RULE 6 — Real transformation check
+    # ------------------------------------------------------------------
+
+    def _flow_has_real_transformation(self, stages: list[dict[str, str]]) -> bool:
+        """Reject flows where all stages show the same value (e.g. ₹5000 → ₹5000 → ₹5000)."""
+        if len(stages) < 3:
+            return False
+        values = [_numeric_amount(stage["value"]) for stage in stages]
+        # If all numeric values are identical and non-zero, it's fake
+        if values[0] > 0 and values[0] == values[1] == values[2]:
+            return False
+        return True
+
+    # ------------------------------------------------------------------
+    # RULE 7 — Flow middle must show measurable change
+    # ------------------------------------------------------------------
+
+    def _flow_middle_has_change(self, stages: list[dict[str, str]]) -> bool:
+        """Middle stage must show measurable change (time, %, amount difference)."""
+        if len(stages) < 3:
+            return False
+        middle = stages[1]["value"].lower()
+        # Accept if middle contains: time reference, percentage, or a numeric value
+        if re.search(r"(day|month|year|week|%|\d+\s*months?|\d+\s*years?)", middle, re.I):
+            return True
+        # Accept if middle has a numeric value different from start
+        middle_amount = _numeric_amount(middle)
+        start_amount = _numeric_amount(stages[0]["value"])
+        if middle_amount > 0 and middle_amount != start_amount:
+            return True
+        # Accept descriptive change labels (e.g. "leak", "growth", "spend")
+        change_words = {"leak", "loss", "growth", "spend", "saved", "change", "inflation", "interest"}
+        if any(w in middle for w in change_words):
+            return True
+        return False
+
+    # ------------------------------------------------------------------
+    # RULE 8 — Fragmented beat check
+    # ------------------------------------------------------------------
+
+    def _is_fragmented(self, beat: dict[str, Any]) -> bool:
+        """Reject single-word meaningless beats. Each beat must be self-contained."""
+        content = str(beat.get("content") or "").strip()
+        caption = str(beat.get("caption") or "").strip()
+        # A beat with no numbers and only one word is fragmented
+        if not self._has_gravity(content) and len(content.split()) <= 1:
+            return True
+        # Caption must exist
+        if not caption:
+            return True
+        return False
+
+    # ------------------------------------------------------------------
+    # RULE 13 — Overloaded beat check
+    # ------------------------------------------------------------------
+
+    def _is_overloaded(self, beat: dict[str, Any]) -> bool:
+        """Each beat must be understandable in 2 seconds. Reject if too many tokens."""
+        content = str(beat.get("content") or "")
+        caption = str(beat.get("caption") or "")
+        # More than 2 numeric tokens in content = overloaded (RULE 3: one idea per beat)
+        if self._numeric_token_count(content) > 2:
+            return True
+        # Caption too long to read in 2 seconds
+        if len(caption.split()) > 8:
+            return True
+        return False
+
+    # ------------------------------------------------------------------
+    # RULE 11 — Visual rhythm enforcement
+    # ------------------------------------------------------------------
+
+    def _enforce_visual_rhythm(self, beats: list[dict[str, Any]], concept: dict[str, Any], narration: str) -> list[dict[str, Any]]:
+        """Ensure at least 2 different component types. Convert middle beat if all same."""
+        if len(beats) < 2:
+            return beats
+        unique_types = {beat["beat_type"] for beat in beats}
+        if len(unique_types) >= 2:
+            return beats
+
+        # All beats are the same type — convert middle beat
+        concept_type = self._concept_type(concept)
+        mid_index = len(beats) // 2
+        current_type = beats[mid_index]["beat_type"]
+
+        if current_type == "stat_explosion":
+            new_type = "flow_diagram" if concept_type != "emphasis" else "text_burst"
+        elif current_type == "flow_diagram":
+            new_type = "split_comparison" if concept_type == "comparison" else "stat_explosion"
+        else:
+            new_type = "stat_explosion"
+
+        beats[mid_index] = dict(beats[mid_index])
+        beats[mid_index]["beat_type"] = new_type
+        if new_type == "flow_diagram":
+            beats[mid_index]["flow_stages"] = list(self.flow_stages(concept, narration))
+        return beats
+
+    # ------------------------------------------------------------------
+    # RULES 14-18 — Semantic Sharpness helpers
+    # ------------------------------------------------------------------
+
+    def _creates_impact(self, beat: dict[str, Any]) -> bool:
+        """RULE 14: Check if beat creates loss, urgency, surprise, contrast, or consequence."""
+        content = str(beat.get("content") or "").lower()
+        caption = str(beat.get("caption") or "").lower()
+        combined = f"{content} {caption}"
+
+        # Caption is a weak/generic label? → no impact regardless
+        caption_stripped = caption.strip()
+        if caption_stripped in self.WEAK_CAPTION_WORDS:
+            return False
+
+        # RULE 15 — Neutral numbers: "₹X/year" or "₹X/month" need consequence in caption
+        if re.search(r"₹[\d,]+/(?:year|month)", content):
+            # Only passes if caption itself carries consequence
+            caption_impact = {"lost", "vanished", "gone", "wasted", "leaked", "drained",
+                              "blown", "wiped", "burnt", "destroyed", "rent", "emi",
+                              "built", "earned", "saved", "hurts", "painful", "shocking"}
+            return any(w in caption for w in caption_impact)
+
+        # Has strong impact words in caption?
+        if any(w in caption for w in self.IMPACT_WORDS):
+            return True
+
+        # Has ₹0 or zero endpoint?
+        if "₹0" in combined or "zero" in combined:
+            return True
+
+        # Has strong transformation signal (arrow with different values)?
+        if "->" in combined or "→" in combined:
+            return True
+
+        # Has percentage that implies loss/gain?
+        if re.search(r"\d+%", combined) and any(w in combined for w in ("cut", "lose", "gain", "grow", "drop")):
+            return True
+
+        # Content has a number and caption has some substance (not just a label)
+        if self._has_gravity(content) and len(caption.split()) >= 2:
+            return True
+
+        return False
+
+    def _upgrade_to_impact(self, beat: dict[str, Any], concept: dict[str, Any], narration: str, index: int) -> dict[str, Any]:
+        """RULE 16: Convert neutral beat into one with human meaning."""
+        upgraded = dict(beat)
+        content = str(upgraded.get("content") or "")
+        concept_type = self._concept_type(concept)
+
+        # Build a strong caption from the number
+        new_caption = self._humanize_number(content, narration, concept_type, index)
+        if new_caption:
+            upgraded["caption"] = new_caption
+        else:
+            # Fallback: use semantic label + consequence
+            role_caption = self._semantic_label_for_index(concept, narration, index)
+            if role_caption and role_caption.lower() not in self.WEAK_CAPTION_WORDS:
+                upgraded["caption"] = role_caption
+            else:
+                upgraded["caption"] = self._consequence_from_concept(concept, narration, index)
+
+        return upgraded
+
+    def _humanize_number(self, content: str, narration: str, concept_type: str, index: int) -> str:
+        """RULE 16: Turn raw numbers into real-world meaning."""
+        amount = _numeric_amount(content)
+        lowered = narration.lower()
+
+        if amount <= 0 or "₹0" in content:
+            if "day" in lowered:
+                day_match = re.search(r"day\s*(\d+)", lowered)
+                return f"Gone in {day_match.group(1)} days" if day_match else "Completely gone"
+            return "Completely gone"
+
+        # Monthly → yearly conversion for impact
+        if "month" in lowered and amount < 50000:
+            yearly = int(amount * 12)
+            return f"₹{yearly:,} wasted yearly"
+
+        # Large amounts → lifestyle anchor
+        if amount >= 100000:
+            months_rent = round(amount / 30000)
+            if months_rent >= 2:
+                return f"That's {months_rent} months rent"
+
+        # Decay: emphasize loss
+        if concept_type == "decay":
+            if index == 0:
+                return "Had this much"
+            return "Lost forever"
+
+        # Growth: emphasize gain
+        if concept_type == "growth":
+            if index == 0:
+                return "Started here"
+            return f"₹{int(amount):,} built"
+
+        # Comparison: emphasize gap
+        if concept_type == "comparison":
+            return "See the gap"
+
+        return ""
+
+    def _consequence_from_concept(self, concept: dict[str, Any], narration: str, index: int) -> str:
+        """Generate a consequence-driven caption when humanize fails."""
+        concept_type = self._concept_type(concept)
+        lowered = narration.lower()
+
+        if concept_type == "decay":
+            labels = ["Your money", "Silent leak", "Lost forever", "This hurts"]
+        elif concept_type == "growth":
+            labels = ["Starts small", "Growing", "Real wealth", "Worth it"]
+        elif concept_type == "comparison":
+            labels = ["One side", "Other side", "Gap is real", "Winner clear"]
+        else:
+            labels = ["The number", "What happens", "Real impact", "Remember this"]
+
+        return labels[min(index, len(labels) - 1)]
+
+    def _sharpen_final_beat(self, beat: dict[str, Any], concept: dict[str, Any], narration: str, project_id: int | None = None) -> dict[str, Any]:
+        """RULE 18: Final beat must hit hard — conclusion, realization, or punch."""
+        sharpened = dict(beat)
+        caption = str(sharpened.get("caption") or "").lower().strip()
+        content = str(sharpened.get("content") or "")
+
+        # Already strong?
+        punch_signals = (
+            "gone", "vanished", "wasted", "lost", "wiped", "destroyed",
+            "built", "earned", "worth", "rent", "emi", "hurts",
+            "real impact", "remember", "that's", "completely",
+        )
+        if any(w in caption for w in punch_signals):
+            return sharpened
+
+        # Upgrade: generate punch caption
+        self.logger.log("beat_validation", "running", "Sharpening final beat for impact", project_id)
+        concept_type = self._concept_type(concept)
+        amount = _numeric_amount(content)
+        lowered = narration.lower()
+
+        if amount <= 0 or "₹0" in content:
+            day_match = re.search(r"day\s*(\d+)", lowered)
+            sharpened["caption"] = f"Gone in {day_match.group(1)} days" if day_match else "Completely gone"
+        elif concept_type == "decay":
+            if amount >= 60000:
+                months = round(amount / 30000)
+                sharpened["caption"] = f"That's {months} months rent — lost"
+            else:
+                sharpened["caption"] = f"₹{int(amount):,} lost silently"
+        elif concept_type == "growth":
+            sharpened["caption"] = f"₹{int(amount):,} — real wealth built"
+        elif concept_type == "comparison":
+            sharpened["caption"] = "The gap is real"
+        else:
+            if "month" in lowered and amount > 0:
+                yearly = int(amount * 12)
+                sharpened["caption"] = f"₹{yearly:,} wasted every year"
+            else:
+                sharpened["caption"] = f"₹{int(amount):,} — remember this"
+
+        # Ensure final beat color signals urgency
+        if concept_type in ("decay", "comparison"):
+            sharpened["color"] = "red"
+
+        return sharpened
 
     def _same_information(self, previous: dict[str, Any], current: dict[str, Any]) -> bool:
         return self._information_signature(previous) == self._information_signature(current)
@@ -1159,7 +1805,7 @@ class ConceptService:
         return beat
 
     def _safe_emphasis_beat(self, concept: dict[str, Any], narration: str, index: int, reason: str) -> dict[str, Any]:
-        value = self._first_number_from_context(narration, concept) or "₹5,000"
+        value = self._first_number_from_context(narration, concept) or self._dynamic_fallback_number(narration)
         impact = self._emphasis_impact_value(narration, value)
         if impact == value and re.search(r"\b(cannot|can't|cant|broke|save|left|manual|emotion)\b", narration, re.I):
             impact = "₹0"

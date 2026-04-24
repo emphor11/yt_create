@@ -9,6 +9,7 @@ from youtube_ai_system import create_app
 from youtube_ai_system.db import close_db
 from youtube_ai_system.db import get_db
 from youtube_ai_system.services.script_service import ScriptService
+from youtube_ai_system.services.story_intelligence_engine import StoryIntelligenceEngine
 from youtube_ai_system.models.repository import ProjectRepository
 from youtube_ai_system.services.assembly_service import AssemblyService
 from youtube_ai_system.services.concept_service import ConceptService
@@ -134,6 +135,10 @@ class V2PipelineTestCase(unittest.TestCase):
         self.assertEqual(payload["hook"]["visual_beats"][0]["component"], "StatExplosion")
         self.assertEqual(len(payload["hook"]["visual_beats"]), 1)
         self.assertIn(payload["scenes"][0]["visual_beats"][0]["component"], {"SplitComparison", "FlowDiagram", "BarChart"})
+        self.assertIn("story_plan", payload)
+        self.assertIn(payload["story_plan"]["hook_type"], {"curiosity", "contradiction", "surprise"})
+        self.assertIn(payload["story_plan"]["arc_type"], {"reveal_ladder", "contradiction_arc", "transformation", "problem_stack"})
+        self.assertTrue(payload["story_plan"]["hook"].endswith("?") or "not what most people think" in payload["story_plan"]["hook"].lower())
 
     def test_scene_rows_store_visual_plan_json(self) -> None:
         payload = ScriptService()._demo_script("Saving money", "bad defaults")
@@ -842,6 +847,67 @@ class V2PipelineTestCase(unittest.TestCase):
     def test_assembly_caption_chunks_limit_words(self) -> None:
         chunks = AssemblyService()._caption_chunks("one two three four five six seven eight nine", words_per_line=7)
         self.assertEqual(chunks, ["one two three four five six seven", "eight nine"])
+
+    def test_story_intelligence_engine_structures_sections_and_agenda(self) -> None:
+        engine = StoryIntelligenceEngine()
+        plan = engine.plan(
+            (
+                "80% of Indians have less than ₹5,000 saved. "
+                "Most people think the problem is discipline, but a ₹8,00,000 salary can still leak ₹1,60,000. "
+                "The real reason is invisible defaults. "
+                "The fix is simple: automate ₹5,000 before emotion gets a vote."
+            )
+        )
+        self.assertIn("₹5,000", plan["hook"])
+        self.assertIn(plan["hook_type"], {"contradiction", "curiosity"})
+        self.assertEqual(plan["arc_type"], "transformation")
+        self.assertGreaterEqual(len(plan["agenda"]), 2)
+        self.assertTrue(all(section["type"] in {"problem", "explanation", "reveal", "decision", "mistake", "optimization"} for section in plan["sections"]))
+        self.assertTrue(any(section["type"] == "optimization" for section in plan["sections"]))
+        self.assertTrue(all(len(item.split()) <= 8 for item in plan["agenda"]))
+        self.assertEqual([section["weight"] for section in plan["sections"]], ["medium", "high", "high"])
+
+    def test_story_intelligence_engine_can_plan_from_payload(self) -> None:
+        service = ScriptService()
+        payload = service._normalize_payload(
+            service._demo_script("Saving money", "bad defaults"),
+            "Saving money",
+            "bad defaults",
+        )
+        plan = payload["story_plan"]
+        self.assertIn("₹5,000", plan["hook"])
+        self.assertGreaterEqual(len(plan["sections"]), 3)
+        self.assertTrue(plan["agenda"])
+        self.assertEqual(payload["meta"]["story_engine"], "story_intelligence_v1")
+
+    def test_story_intelligence_engine_detects_contradiction_arc(self) -> None:
+        engine = StoryIntelligenceEngine()
+        plan = engine.plan(
+            (
+                "Your FD says 7%, but inflation quietly eats the gain. "
+                "That sounds safe until you compare real purchasing power. "
+                "Most people call this safety, but the math says otherwise."
+            )
+        )
+        self.assertEqual(plan["arc_type"], "contradiction_arc")
+        self.assertEqual(plan["sections"][-1]["type"], "mistake")
+
+    def test_story_intelligence_engine_rejects_invalid_section_order(self) -> None:
+        engine = StoryIntelligenceEngine()
+        with self.assertRaises(ValueError):
+            engine.plan(
+                (
+                    "A ₹5,000 leak sounds small. "
+                    "The real reason is invisible defaults. "
+                    "Because your salary hits late fees and subscriptions first. "
+                    "Automate the money before you spend it."
+                )
+            )
+
+    def test_story_intelligence_engine_rejects_generic_hook(self) -> None:
+        engine = StoryIntelligenceEngine()
+        with self.assertRaises(ValueError):
+            engine.plan("Welcome back to the channel. Money habits matter.")
 
     def test_thumbnail_uses_remotion_candidate(self) -> None:
         self.app.config["REMOTION_ENABLED"] = True
