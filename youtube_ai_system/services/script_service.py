@@ -85,6 +85,28 @@ CONCEPT_PRIORITY = {
     "definition": 1,
 }
 
+FINANCIAL_NUMBER_KEYWORDS = {
+    "salary",
+    "interest",
+    "payment",
+    "bill",
+    "amount",
+    "balance",
+    "debt",
+    "cost",
+    "loss",
+    "leak",
+    "spent",
+    "save",
+    "saved",
+    "savings",
+    "principal",
+    "income",
+    "emi",
+    "return",
+    "returns",
+}
+
 
 class ScriptService:
     def __init__(self) -> None:
@@ -775,11 +797,19 @@ class ScriptService:
         ranked: list[tuple[float, int, str]] = []
         for section in sections:
             score = float((section.get("weight") or {}).get("score") or 0.0)
-            for concept in section.get("concepts") or []:
-                concept_text = str(concept.get("concept") or "").strip()
+            strongest = (section.get("concepts") or [None])[0]
+            if strongest:
+                concept_text = str(strongest.get("concept") or "").strip()
                 if concept_text:
-                    concept_type = str(concept.get("type") or "")
+                    concept_type = str(strongest.get("type") or "")
                     ranked.append((score, CONCEPT_PRIORITY.get(concept_type, 0), concept_text))
+                    continue
+            visual_plan = section.get("visual_plan") or []
+            if visual_plan:
+                visual_concept = str((visual_plan[0].get("concept") or {}).get("concept") or "").strip()
+                visual_type = str((visual_plan[0].get("concept") or {}).get("type") or "")
+                if visual_concept:
+                    ranked.append((score, CONCEPT_PRIORITY.get(visual_type, 0), visual_concept))
         ranked.sort(key=lambda item: (item[1], item[0], len(item[2].split())), reverse=True)
         agenda: list[str] = []
         seen: set[str] = set()
@@ -825,12 +855,14 @@ class ScriptService:
         unique: list[str] = []
         seen: set[str] = set()
         for value in values:
+            if not value.strip():
+                continue
             key = value.lower()
             if key in seen:
                 continue
             seen.add(key)
             unique.append(value)
-        if strongest.lower() not in seen:
+        if strongest.strip() and strongest.lower() not in seen:
             unique.append(strongest)
         return unique[:3]
 
@@ -844,14 +876,34 @@ class ScriptService:
             token = " ".join(match.group(0).strip().split())
             if not token or not re.search(r"\d", token):
                 continue
+            if not self._is_financial_number(text, token, match.start(), match.end()):
+                continue
             label = self._numeric_label(text, match.start(), match.end())
             phrase = f"{token} {label}".strip() if label else token
             phrases.append(" ".join(phrase.split()))
         return self._unique_beat_values(phrases, phrases[-1] if phrases else "")
 
+    def _is_financial_number(self, text: str, token: str, start: int, end: int) -> bool:
+        if "₹" in token or "%" in token or token.lower().startswith("rs"):
+            return True
+        trailing = text[end : min(len(text), end + 2)].lower()
+        if trailing.startswith("s"):
+            return False
+        before_words = re.findall(r"[a-z]+", text[max(0, start - 24) : start].lower())
+        after_words = re.findall(r"[a-z]+", text[end : min(len(text), end + 24)].lower())
+        if any(word in {"day", "days", "age", "aged", "year", "years"} for word in before_words[-2:]):
+            return False
+        if any(word in {"day", "days"} for word in after_words[:2]):
+            return False
+        if any(word in FINANCIAL_NUMBER_KEYWORDS for word in after_words[:4]):
+            return True
+        if any(word in FINANCIAL_NUMBER_KEYWORDS for word in before_words[-2:]):
+            return True
+        return False
+
     def _numeric_label(self, text: str, start: int, end: int) -> str:
-        before_words = re.findall(r"[a-z]+", text[max(0, start - 28) : start].lower())
-        after_words = re.findall(r"[a-z]+", text[end : min(len(text), end + 28)].lower())
+        before_words = re.findall(r"[a-z]+", text[max(0, start - 40) : start].lower())
+        after_words = re.findall(r"[a-z]+", text[end : min(len(text), end + 40)].lower())
         keywords = {
             "interest": "interest",
             "bill": "bill",
@@ -866,13 +918,34 @@ class ScriptService:
             "principal": "principal",
             "minimum": "payment",
             "due": "payment",
+            "leak": "leak",
+            "lost": "lost",
+            "wasted": "wasted",
+            "waste": "wasted",
         }
-        for word in after_words[:3]:
+        for word in after_words[:5]:
             if word in keywords:
                 return keywords[word]
-        for word in reversed(before_words[-3:]):
+        for word in reversed(before_words[-5:]):
             if word in keywords:
                 return keywords[word]
+        impact = self._numeric_impact_label(text)
+        if impact:
+            return impact
+        return ""
+
+    def _numeric_impact_label(self, text: str) -> str:
+        lowered = text.lower()
+        if "interest" in lowered:
+            return "interest"
+        if any(token in lowered for token in ("leak", "leaks")):
+            return "leak"
+        if any(token in lowered for token in ("lost", "lose", "loss")):
+            return "lost"
+        if any(token in lowered for token in ("wasted", "waste")):
+            return "wasted"
+        if "cost" in lowered:
+            return "cost"
         return ""
 
     def _numeric_beats(self, numeric_phrases: list[str], strongest: str) -> list[dict[str, str]]:
@@ -937,6 +1010,19 @@ class ScriptService:
         }
 
     def _fallback_text(self, section_text: str) -> str:
+        lowered = section_text.lower()
+        if "fix the system" in lowered or ("automate" in lowered and "spend" in lowered):
+            return "Automate before you spend"
+        if "minimum payment" in lowered or "minimum payments" in lowered:
+            return "Minimum payments stretch debt"
+        if "salary" in lowered and any(token in lowered for token in ("vanish", "vanishes", "disappear", "disappears")):
+            return "Salary disappears early"
+        if "debt" in lowered and any(token in lowered for token in ("trap", "trapped", "stuck")):
+            return "Debt becomes sticky"
+        if "interest" in lowered and any(token in lowered for token in ("grow", "grows", "rises", "rising")):
+            return "Interest keeps rising"
+        if "savings" in lowered and any(token in lowered for token in ("zero", "0", "gone")):
+            return "Savings fall to zero"
         words = [word for word in re.findall(r"[A-Za-z0-9₹%]+", section_text) if word]
         text = " ".join(words[:3]).strip()
         return text or "Key Idea"

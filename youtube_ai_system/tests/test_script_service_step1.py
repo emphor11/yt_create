@@ -347,4 +347,38 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         )
         self.assertEqual(fallback["visual"]["component"], "ConceptCard")
         self.assertEqual(fallback["concept"]["type"], "fallback")
-        self.assertEqual(fallback["beats"]["beats"][0]["text"], "Minimum payments quietly")
+        self.assertEqual(fallback["beats"]["beats"][0]["text"], "Minimum payments stretch debt")
+
+    def test_agenda_uses_strongest_section_insights_when_concepts_missing(self) -> None:
+        agenda = self.service._agenda_from_top_concepts(
+            [
+                {
+                    "weight": {"score": 0.9},
+                    "concepts": [],
+                    "visual_plan": [{"concept": {"concept": "Salary disappears early", "type": "fallback"}}],
+                },
+                {
+                    "weight": {"score": 0.8},
+                    "concepts": [],
+                    "visual_plan": [{"concept": {"concept": "₹1,60,000 leak", "type": "numeric"}}],
+                },
+                {
+                    "weight": {"score": 0.7},
+                    "concepts": [],
+                    "visual_plan": [{"concept": {"concept": "Automate savings", "type": "fallback"}}],
+                },
+            ]
+        )
+        self.assertEqual(agenda, ["₹1,60,000 leak", "Salary disappears early", "Automate savings"])
+
+    def test_financial_number_filter_rejects_age_and_day_numbers(self) -> None:
+        phrases = self.service._numeric_phrases(
+            "In your 20s, salary can vanish by day 12, and one card bill can break the month."
+        )
+        self.assertEqual(phrases, [])
+
+    def test_numeric_labels_add_financial_meaning(self) -> None:
+        phrases = self.service._numeric_phrases(
+            "A ₹8,00,000 salary can still leak ₹1,60,000 before you notice."
+        )
+        self.assertEqual(phrases, ["₹8,00,000 salary", "₹1,60,000 leak"])
