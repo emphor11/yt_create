@@ -11,6 +11,7 @@ from flask import current_app
 import requests
 
 from ..models.repository import ProjectRepository, utcnow
+from .concept_extractor import extract as extract_concept
 from .narration_refiner import refine as refine_narration
 from .run_log import RunLogger
 from .story_intelligence_engine import StoryIntelligenceEngine
@@ -526,6 +527,7 @@ class ScriptService:
             normalized["scenes"] = self._demo_script(topic, angle)["scenes"]
 
         normalized["story_plan"] = self.story_intelligence.plan_from_script_payload(normalized)
+        normalized["story_plan"] = self._attach_section_concepts(normalized["story_plan"])
         normalized["meta"]["story_engine"] = "story_intelligence_v1"
         normalized["titles"] = self._normalize_titles(payload.get("suggested_titles") or payload.get("titles"), topic, angle)
         normalized["description"] = str(
@@ -568,6 +570,29 @@ class ScriptService:
     def _refined_narration(self, narration: str) -> str:
         refined = refine_narration(narration)
         return " ".join(refined) if refined else str(narration or "").strip()
+
+    def _attach_section_concepts(self, story_plan: dict[str, Any]) -> dict[str, Any]:
+        sections = story_plan.get("sections") or []
+        for section in sections:
+            concepts: list[dict[str, str]] = []
+            seen: set[tuple[str, str]] = set()
+            for sentence in self._split_story_sentences(str(section.get("text") or "")):
+                extracted = extract_concept(sentence)
+                concept = extracted.get("concept")
+                concept_type = extracted.get("type")
+                if not concept or concept_type == "unknown":
+                    continue
+                key = (str(concept), str(concept_type))
+                if key in seen:
+                    continue
+                seen.add(key)
+                concepts.append({"concept": str(concept), "type": str(concept_type)})
+            section["concepts"] = concepts
+        return story_plan
+
+    def _split_story_sentences(self, text: str) -> list[str]:
+        parts = re.split(r"(?<=[.!?])\s+", str(text or "").strip())
+        return [part.strip() for part in parts if part.strip()]
 
     def _demo_script(self, topic: str, angle: str) -> dict[str, Any]:
         return {

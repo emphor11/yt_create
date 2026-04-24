@@ -104,7 +104,7 @@ def _candidate_clauses(text: str) -> list[str]:
     clauses = [_normalize(text)]
     splitters = (
         r",\s+and\s+",
-        r"\s+and\s+",
+        r"\s+and\s+(?!after\b)",
         r";\s+",
     )
     for pattern in splitters:
@@ -118,6 +118,8 @@ def _candidate_clauses(text: str) -> list[str]:
 
 def _detect_type(text: str) -> str:
     lowered = f" {text.lower()} "
+    if any(token in lowered for token in (" risk ", " danger ", " trap ", " destroy ")):
+        return "risk"
     if " before " in lowered and " after " in lowered:
         return "before_after"
     if any(token in lowered for token in (" while ", " compared to ", " vs ", " versus ")):
@@ -130,7 +132,7 @@ def _detect_type(text: str) -> str:
         return "cause_effect"
     if any(token in lowered for token in ("grow", "grows", "growth", "increase", "increases", "over time", "years")):
         return "growth"
-    if any(token in lowered for token in ("risk", "danger", "trap", "lose", "destroy")):
+    if any(token in lowered for token in (" risk ", " danger ", " trap ", " lose ", " destroy ")):
         return "risk"
     return "definition"
 

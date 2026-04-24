@@ -19,8 +19,14 @@ class ConceptExtractorTestCase(unittest.TestCase):
     def test_extract_risk_concept(self) -> None:
         result = extract("Paying minimum dues creates a debt trap")
         self.assertEqual(result["concept"], "Debt Trap")
-        self.assertEqual(result["type"], "cause_effect")
+        self.assertEqual(result["type"], "risk")
         self.assertGreaterEqual(result["confidence"], 0.9)
+
+    def test_extract_before_after_concept(self) -> None:
+        result = extract("Budgeting works before and after income shocks")
+        self.assertEqual(result["concept"], "Budgeting Impact")
+        self.assertEqual(result["type"], "before_after")
+        self.assertGreaterEqual(result["confidence"], 0.6)
 
     def test_extract_growth_concept(self) -> None:
         result = extract("If you invest monthly, your money grows over time")

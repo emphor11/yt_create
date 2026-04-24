@@ -144,3 +144,49 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
                 self.assertIsInstance(payload["hook"]["duration"], int)
                 self.assertTrue(all("duration" in scene for scene in payload["scenes"]))
                 self.assertIsInstance(payload["story_plan"]["agenda"], list)
+
+    def test_story_sections_include_deterministic_concepts(self) -> None:
+        samples = [
+            {
+                "topic": "Inflation",
+                "angle": "saving value",
+                "payload": {
+                    "hook": {"narration": "Inflation can quietly damage your savings.", "duration": 6},
+                    "scenes": [
+                        {"narration": "Inflation makes your savings lose value.", "duration": 30},
+                        {"narration": "Equity is risky while debt is stable.", "duration": 30},
+                    ],
+                    "outro": {"narration": "Investment growth protects your future.", "duration": 18},
+                },
+            },
+            {
+                "topic": "Debt",
+                "angle": "avoid the trap",
+                "payload": {
+                    "hook": {"narration": "One minimum payment can keep debt alive for years.", "duration": 6},
+                    "scenes": [
+                        {"narration": "Paying minimum dues creates a debt trap.", "duration": 30},
+                        {"narration": "Budgeting works before and after income shocks.", "duration": 30},
+                    ],
+                    "outro": {"narration": "Debt risk destroys financial freedom.", "duration": 18},
+                },
+            },
+        ]
+
+        for sample in samples:
+            with self.subTest(topic=sample["topic"]):
+                payload = self.service._normalize_payload(
+                    sample["payload"],
+                    sample["topic"],
+                    sample["angle"],
+                )
+                sections = payload["story_plan"]["sections"]
+                self.assertTrue(sections)
+                self.assertTrue(all("concepts" in section for section in sections))
+                self.assertTrue(all(isinstance(section["concepts"], list) for section in sections))
+                self.assertTrue(all(section["concepts"] for section in sections))
+                for section in sections:
+                    for concept in section["concepts"]:
+                        self.assertTrue(concept["concept"])
+                        self.assertLessEqual(len(concept["concept"].split()), 3)
+                        self.assertNotEqual(concept["type"], "unknown")
