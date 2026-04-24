@@ -145,6 +145,7 @@ class StoryIntelligenceEngine:
 
         sections = self._build_sections(body_units)
         sections = self._ensure_section_progression(sections)
+        sections = self._stable_sort_sections_by_stage(sections)
         hook = self._ensure_distinct_hook(hook, sections)
 
         self._validate_minimum_sections(sections)
@@ -486,6 +487,9 @@ class StoryIntelligenceEngine:
     def _validate_minimum_sections(self, sections: list[dict[str, Any]]) -> None:
         if len(sections) < 2:
             raise ValueError("Story plan requires at least two sections.")
+
+    def _stable_sort_sections_by_stage(self, sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return sorted(sections, key=lambda section: self._FLOW_STAGE.get(section["type"], 1))
 
     def _validate_section_flow(self, sections: list[dict[str, Any]]) -> None:
         previous_stage = -1

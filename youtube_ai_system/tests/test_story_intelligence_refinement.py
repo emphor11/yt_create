@@ -94,3 +94,17 @@ class StoryIntelligenceRefinementTestCase(unittest.TestCase):
         self.assertGreaterEqual(len(plan["sections"]), 2)
         self.assertIn(plan["sections"][0]["type"], {"problem", "mistake"})
         self.assertTrue(all(". " not in section["text"] for section in plan["sections"]))
+
+    def test_section_flow_is_stably_sorted_before_validation(self) -> None:
+        sections = [
+            {"type": "problem", "text": "Problem text.", "weight": {"level": "medium", "score": 0.55}},
+            {"type": "explanation", "text": "Explanation text.", "weight": {"level": "medium", "score": 0.5}},
+            {"type": "problem", "text": "Second problem text.", "weight": {"level": "medium", "score": 0.55}},
+            {"type": "reveal", "text": "Reveal text.", "weight": {"level": "high", "score": 0.82}},
+        ]
+        ordered = self.engine._stable_sort_sections_by_stage(sections)
+        self.assertEqual(
+            [section["type"] for section in ordered],
+            ["problem", "problem", "explanation", "reveal"],
+        )
+        self.engine._validate_section_flow(ordered)

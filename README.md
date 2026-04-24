@@ -19,6 +19,15 @@ Personal-use AI-assisted YouTube production app built with Flask and SQLite.
 - publish record + schedule metadata
 - analytics snapshot table
 
+## Known Issues (v1)
+
+- numeric override sometimes produces empty visuals
+- concept extraction fallback occasionally fails (e.g., "we", "if")
+- grouping still produces more sections than ideal
+- some beats are low quality
+
+These will be fixed in the v2 refinement pass.
+
 ## What still needs external tooling or credentials
 
 - Flask installation

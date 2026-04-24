@@ -94,6 +94,66 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.assertTrue(all("visual_type" not in row for row in rows))
         self.assertTrue(all("visual_plan_json" not in row for row in rows))
 
+    def test_group_sentences_into_sections_pairs_simple_sequence(self) -> None:
+        grouped = self.service.group_sentences_into_sections(
+            ["Sentence 1", "Sentence 2", "Sentence 3", "Sentence 4"]
+        )
+        self.assertEqual(grouped, ["Sentence 1 Sentence 2", "Sentence 3 Sentence 4"])
+
+    def test_group_sentences_merges_short_section_with_next(self) -> None:
+        grouped = self.service.group_sentences_into_sections(
+            [
+                "Debt hurts families.",
+                "Interest grows monthly.",
+                "Budgeting works before income shocks.",
+            ]
+        )
+        self.assertEqual(len(grouped), 1)
+        self.assertGreaterEqual(len(grouped[0].split()), 8)
+
+    def test_group_sentences_breaks_before_transition_starter(self) -> None:
+        grouped = self.service.group_sentences_into_sections(
+            [
+                "Debt hurts families badly.",
+                "Interest grows every month.",
+                "Because banks earn more from delay.",
+                "Budgeting can reduce the damage.",
+            ]
+        )
+        self.assertEqual(
+            grouped,
+            [
+                "Debt hurts families badly. Interest grows every month.",
+                "Because banks earn more from delay. Budgeting can reduce the damage.",
+            ],
+        )
+
+    def test_group_payload_filters_short_and_filler_sentences_before_grouping(self) -> None:
+        grouped_payload = self.service._group_payload_for_story_plan(
+            {
+                "hook": {"narration": "Debt grows quietly.", "duration": 6},
+                "scenes": [
+                    {
+                        "narration": (
+                            "Let's start with the obvious. "
+                            "Minimum payments often look completely harmless. "
+                            "For instance, this is a common trap. "
+                            "Interest charges keep growing every month."
+                        )
+                    }
+                ],
+                "outro": {"narration": "You know this already. Build a repayment plan this month."},
+            }
+        )
+        narrations = [scene["narration"] for scene in grouped_payload["scenes"]]
+        self.assertEqual(
+            narrations,
+            [
+                "Minimum payments often look completely harmless. Interest charges keep growing every month.",
+                "Build a repayment plan this month.",
+            ],
+        )
+
     def test_three_sample_scripts_normalize_to_minimal_shape(self) -> None:
         samples = [
             (
@@ -183,10 +243,108 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
                 sections = payload["story_plan"]["sections"]
                 self.assertTrue(sections)
                 self.assertTrue(all("concepts" in section for section in sections))
+                self.assertTrue(all("visual_plan" in section for section in sections))
                 self.assertTrue(all(isinstance(section["concepts"], list) for section in sections))
+                self.assertTrue(all(isinstance(section["visual_plan"], list) for section in sections))
                 self.assertTrue(all(section["concepts"] for section in sections))
+                self.assertTrue(all(section["visual_plan"] for section in sections))
                 for section in sections:
                     for concept in section["concepts"]:
                         self.assertTrue(concept["concept"])
                         self.assertLessEqual(len(concept["concept"].split()), 3)
                         self.assertNotEqual(concept["type"], "unknown")
+                    for item in section["visual_plan"]:
+                        self.assertIn("concept", item)
+                        self.assertIn("visual", item)
+                        self.assertIn("beats", item)
+
+    def test_story_plan_uses_grouped_sections_before_engine(self) -> None:
+        payload = self.service._normalize_payload(
+            {
+                "hook": {"narration": "Debt can quietly take over your life.", "duration": 6},
+                "scenes": [
+                    {
+                        "narration": (
+                            "Paying minimum dues creates a debt trap. "
+                            "Interest keeps growing every month. "
+                            "But most people notice too late. "
+                            "Debt risk destroys financial freedom."
+                        ),
+                        "duration": 30,
+                    }
+                ],
+                "outro": {"narration": "Budgeting works before and after income shocks.", "duration": 18},
+            },
+            "Debt",
+            "avoid the trap",
+        )
+        self.assertIn("story_plan", payload)
+        self.assertGreaterEqual(len(payload["story_plan"]["sections"]), 2)
+
+    def test_numeric_visuals_override_generic_concepts_and_agenda_uses_top_concepts(self) -> None:
+        payload = self.service._normalize_payload(
+            {
+                "hook": {"narration": "A ₹50,000 balance can quietly explode.", "duration": 6},
+                "scenes": [
+                    {
+                        "narration": (
+                            "A ₹50,000 bill with a ₹2,000 minimum can create ₹15,000 interest. "
+                            "Paying minimum dues creates a debt trap."
+                        ),
+                        "duration": 35,
+                    },
+                    {
+                        "narration": "Inflation makes your savings lose value.",
+                        "duration": 35,
+                    },
+                ],
+                "outro": {"narration": "Investment growth protects your long-term financial freedom.", "duration": 18},
+            },
+            "Debt",
+            "minimum payment trap",
+        )
+        sections = payload["story_plan"]["sections"]
+        self.assertTrue(sections[0]["visual_plan"])
+        self.assertEqual(sections[0]["visual_plan"][0]["concept"]["type"], "numeric")
+        self.assertEqual(sections[0]["visual_plan"][0]["visual"]["component"], "CalculationStrip")
+        self.assertEqual(
+            sections[0]["visual_plan"][0]["visual"]["props"]["values"],
+            ["₹50,000 bill", "₹2,000 payment", "₹15,000 interest"],
+        )
+        self.assertEqual(
+            payload["story_plan"]["agenda"],
+            ["Debt Trap", "Investment Growth", "Inflation Loss"],
+        )
+
+    def test_invalid_numeric_candidate_falls_back_to_concept_visual(self) -> None:
+        payload = self.service._normalize_payload(
+            {
+                "hook": {"narration": "Minimum payments feel harmless.", "duration": 6},
+                "scenes": [
+                    {
+                        "narration": "A minimum payment cycle can last 10 years.",
+                        "duration": 35,
+                    }
+                ],
+                "outro": {"narration": "Minimum payment cycles quietly extend debt.", "duration": 18},
+            },
+            "Debt",
+            "minimum payment trap",
+        )
+        concept_section = payload["story_plan"]["sections"][1]
+        self.assertTrue(concept_section["concepts"])
+        self.assertTrue(concept_section["visual_plan"])
+        self.assertNotEqual(concept_section["visual_plan"][0]["concept"]["type"], "numeric")
+
+    def test_invalid_visual_item_falls_back_to_concept_card(self) -> None:
+        fallback = self.service._safe_visual_item(
+            {
+                "concept": {"concept": "", "type": "numeric"},
+                "visual": {"component": "StatCard", "props": {"title": ""}},
+                "beats": {"beats": [{"component": "StatCard", "text": ""}]},
+            },
+            "Minimum payments quietly extend debt.",
+        )
+        self.assertEqual(fallback["visual"]["component"], "ConceptCard")
+        self.assertEqual(fallback["concept"]["type"], "fallback")
+        self.assertEqual(fallback["beats"]["beats"][0]["text"], "Minimum payments quietly")

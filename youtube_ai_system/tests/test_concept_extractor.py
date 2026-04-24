@@ -6,7 +6,7 @@ from youtube_ai_system.services.concept_extractor import extract, extract_all
 class ConceptExtractorTestCase(unittest.TestCase):
     def test_extract_cause_effect_concept(self) -> None:
         result = extract("Inflation makes your savings lose value")
-        self.assertEqual(result["concept"], "Inflation")
+        self.assertEqual(result["concept"], "Inflation Loss")
         self.assertEqual(result["type"], "cause_effect")
         self.assertGreaterEqual(result["confidence"], 0.9)
 
@@ -21,6 +21,11 @@ class ConceptExtractorTestCase(unittest.TestCase):
         self.assertEqual(result["concept"], "Debt Trap")
         self.assertEqual(result["type"], "risk")
         self.assertGreaterEqual(result["confidence"], 0.9)
+
+    def test_extract_consequence_based_interest_loss(self) -> None:
+        result = extract("Banks make money from the interest cost you pay")
+        self.assertEqual(result["concept"], "Interest Loss")
+        self.assertEqual(result["type"], "risk")
 
     def test_extract_before_after_concept(self) -> None:
         result = extract("Budgeting works before and after income shocks")
@@ -40,10 +45,20 @@ class ConceptExtractorTestCase(unittest.TestCase):
         self.assertEqual(result["type"], "unknown")
         self.assertLess(result["confidence"], 0.6)
 
+    def test_extract_rejects_generic_opening_phrase(self) -> None:
+        result = extract("We've all been there with our credit cards")
+        self.assertIsNone(result["concept"])
+        self.assertEqual(result["type"], "unknown")
+
+    def test_extract_minimum_payment_cycle_from_credit_card_sentence(self) -> None:
+        result = extract("When you pay just the minimum on your credit card.")
+        self.assertEqual(result["concept"], "Minimum Payment Cycle")
+        self.assertEqual(result["type"], "definition")
+
     def test_extract_all_supports_two_concepts_max(self) -> None:
         result = extract_all("Inflation makes savings lose value and returns grow over time")
         self.assertEqual(len(result), 2)
-        self.assertEqual(result[0]["concept"], "Inflation")
+        self.assertEqual(result[0]["concept"], "Inflation Loss")
         self.assertEqual(result[0]["type"], "cause_effect")
         self.assertEqual(result[1]["concept"], "Returns Growth")
         self.assertEqual(result[1]["type"], "growth")

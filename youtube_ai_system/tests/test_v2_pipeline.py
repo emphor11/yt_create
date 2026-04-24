@@ -892,17 +892,26 @@ class V2PipelineTestCase(unittest.TestCase):
         self.assertEqual(plan["arc_type"], "contradiction_arc")
         self.assertEqual(plan["sections"][-1]["type"], "mistake")
 
-    def test_story_intelligence_engine_rejects_invalid_section_order(self) -> None:
+    def test_story_intelligence_engine_reorders_invalid_section_order(self) -> None:
         engine = StoryIntelligenceEngine()
-        with self.assertRaises(ValueError):
-            engine.plan(
-                (
-                    "A ₹5,000 leak sounds small. "
-                    "The real reason is invisible defaults. "
-                    "Because your salary hits late fees and subscriptions first. "
-                    "Automate the money before you spend it."
-                )
+        plan = engine.plan(
+            (
+                "A ₹5,000 leak sounds small. "
+                "The real reason is invisible defaults. "
+                "Because your salary hits late fees and subscriptions first. "
+                "Automate the money before you spend it."
             )
+        )
+        stage_map = {
+            "problem": 0,
+            "mistake": 0,
+            "explanation": 1,
+            "reveal": 2,
+            "decision": 3,
+            "optimization": 3,
+        }
+        stages = [stage_map[section["type"]] for section in plan["sections"]]
+        self.assertEqual(stages, sorted(stages))
 
     def test_story_intelligence_engine_rejects_generic_hook(self) -> None:
         engine = StoryIntelligenceEngine()

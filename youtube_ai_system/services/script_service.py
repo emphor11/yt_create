@@ -11,10 +11,12 @@ from flask import current_app
 import requests
 
 from ..models.repository import ProjectRepository, utcnow
+from .beat_planner import generate_beats
 from .concept_extractor import extract as extract_concept
 from .narration_refiner import refine as refine_narration
 from .run_log import RunLogger
 from .story_intelligence_engine import StoryIntelligenceEngine
+from .visual_logic_engine import map_concept_to_visual
 
 TENSION_KEYWORDS = {
     "?",
@@ -73,6 +75,14 @@ VALID_TENSION_TYPES = {
     "contrarian_claim",
     "common_mistake_reveal",
     "before_after",
+}
+
+CONCEPT_PRIORITY = {
+    "numeric": 5,
+    "risk": 4,
+    "comparison": 3,
+    "growth": 2,
+    "definition": 1,
 }
 
 
@@ -526,8 +536,10 @@ class ScriptService:
         if not normalized["scenes"]:
             normalized["scenes"] = self._demo_script(topic, angle)["scenes"]
 
-        normalized["story_plan"] = self.story_intelligence.plan_from_script_payload(normalized)
+        planning_payload = self._group_payload_for_story_plan(normalized)
+        normalized["story_plan"] = self.story_intelligence.plan_from_script_payload(planning_payload)
         normalized["story_plan"] = self._attach_section_concepts(normalized["story_plan"])
+        normalized["story_plan"] = self._attach_section_visual_plan(normalized["story_plan"])
         normalized["meta"]["story_engine"] = "story_intelligence_v1"
         normalized["titles"] = self._normalize_titles(payload.get("suggested_titles") or payload.get("titles"), topic, angle)
         normalized["description"] = str(
@@ -571,6 +583,59 @@ class ScriptService:
         refined = refine_narration(narration)
         return " ".join(refined) if refined else str(narration or "").strip()
 
+    def group_sentences_into_sections(self, sentences: list[str]) -> list[str]:
+        cleaned = [self._normalize_text(sentence) for sentence in sentences if self._normalize_text(sentence)]
+        if not cleaned:
+            return []
+
+        groups: list[list[str]] = []
+        index = 0
+
+        while index < len(cleaned):
+            current = [cleaned[index]]
+            index += 1
+
+            if index < len(cleaned):
+                current.append(cleaned[index])
+                index += 1
+
+            if index < len(cleaned):
+                next_sentence = cleaned[index]
+                if (
+                    len(current) < 3
+                    and self._section_word_count(current) < 8
+                    and not self._sentence_starts_new_section(next_sentence)
+                    and self._shares_topic_with_current(current, next_sentence)
+                    and self._section_word_count(current + [next_sentence]) <= 20
+                ):
+                    current.append(next_sentence)
+                    index += 1
+
+            groups.append(current)
+
+        groups = self._merge_short_sections(groups)
+        return [" ".join(group) for group in groups if group]
+
+    def _group_payload_for_story_plan(self, payload: dict[str, Any]) -> dict[str, Any]:
+        hook = dict(payload.get("hook") or {})
+        raw_sentences: list[str] = []
+        for scene in payload.get("scenes") or []:
+            raw_sentences.extend(self._split_story_sentences(str(scene.get("narration") or "")))
+        outro = payload.get("outro") or {}
+        raw_sentences.extend(self._split_story_sentences(str(outro.get("narration") or "")))
+        body_sentences = [sentence for sentence in raw_sentences if self._keep_story_sentence(sentence)]
+        if len(body_sentences) < 2:
+            body_sentences = [sentence for sentence in raw_sentences if self._keep_story_sentence(sentence, allow_short=True)]
+
+        grouped_sections = self.group_sentences_into_sections(body_sentences)
+        grouped_scenes = [{"narration": section_text} for section_text in grouped_sections]
+
+        return {
+            "hook": hook,
+            "scenes": grouped_scenes,
+            "outro": {"narration": ""},
+        }
+
     def _attach_section_concepts(self, story_plan: dict[str, Any]) -> dict[str, Any]:
         sections = story_plan.get("sections") or []
         for section in sections:
@@ -587,12 +652,294 @@ class ScriptService:
                     continue
                 seen.add(key)
                 concepts.append({"concept": str(concept), "type": str(concept_type)})
+            concepts.sort(
+                key=lambda item: (
+                    CONCEPT_PRIORITY.get(item.get("type", ""), 0),
+                    len(str(item.get("concept") or "").split()),
+                ),
+                reverse=True,
+            )
             section["concepts"] = concepts
+        story_plan["agenda"] = self._agenda_from_top_concepts(sections)
+        return story_plan
+
+    def _attach_section_visual_plan(self, story_plan: dict[str, Any]) -> dict[str, Any]:
+        sections = story_plan.get("sections") or []
+        for section in sections:
+            text = str(section.get("text") or "")
+            visual_plan: list[dict[str, Any]] = []
+            for concept in section.get("concepts") or []:
+                candidate = {
+                    "concept": dict(concept),
+                    "visual": map_concept_to_visual(concept),
+                    "beats": generate_beats(
+                        {**concept, "weight_level": section.get("weight", {}).get("level", "medium")},
+                        text,
+                    ),
+                }
+                visual_plan.append(self._safe_visual_item(candidate, text))
+            numeric_plan = self._numeric_visual_plan(text)
+            if self._is_valid_visual_item(numeric_plan):
+                section["visual_plan"] = [numeric_plan]
+                continue
+            if visual_plan:
+                section["visual_plan"] = visual_plan
+                continue
+            if text.strip():
+                section["visual_plan"] = [self._fallback_visual_item(text)]
+            else:
+                section["visual_plan"] = []
         return story_plan
 
     def _split_story_sentences(self, text: str) -> list[str]:
         parts = re.split(r"(?<=[.!?])\s+", str(text or "").strip())
         return [part.strip() for part in parts if part.strip()]
+
+    def _sentence_starts_new_section(self, sentence: str) -> bool:
+        lowered = sentence.lower().strip()
+        if any(lowered.startswith(token) for token in ("but", "however", "so", "now", "because", "this means")):
+            return True
+        return len(sentence.split()) > 15
+
+    def _keep_story_sentence(self, sentence: str, allow_short: bool = False) -> bool:
+        lowered = sentence.lower().strip()
+        if len(sentence.split()) < 6 and not allow_short:
+            return False
+        if any(phrase in lowered for phrase in ("for instance", "let's", "we've all", "you know")):
+            return False
+        return True
+
+    def _normalize_text(self, text: str) -> str:
+        return " ".join(str(text or "").strip().split())
+
+    def _shares_topic_with_current(self, current: list[str], next_sentence: str) -> bool:
+        if not next_sentence:
+            return False
+        current_terms = self._topic_terms(" ".join(current))
+        next_terms = self._topic_terms(next_sentence)
+        return bool(current_terms.intersection(next_terms))
+
+    def _topic_terms(self, text: str) -> set[str]:
+        keywords = {
+            "debt",
+            "credit",
+            "payment",
+            "minimum",
+            "interest",
+            "inflation",
+            "savings",
+            "investment",
+            "returns",
+            "budget",
+            "budgeting",
+            "income",
+            "fund",
+            "loan",
+            "emi",
+            "sip",
+            "trap",
+            "risk",
+        }
+        return {word for word in re.findall(r"[a-z]+", text.lower()) if word in keywords}
+
+    def _section_word_count(self, section: list[str]) -> int:
+        return len(" ".join(section).split())
+
+    def _merge_short_sections(self, groups: list[list[str]]) -> list[list[str]]:
+        merged: list[list[str]] = []
+        index = 0
+        while index < len(groups):
+            current = list(groups[index])
+            next_group = groups[index + 1] if index + 1 < len(groups) else None
+            if (
+                self._section_word_count(current) < 8
+                and next_group is not None
+                and self._can_merge_short_sections(current, next_group)
+            ):
+                current.extend(groups[index + 1])
+                index += 1
+            merged.append(current)
+            index += 1
+        return merged
+
+    def _can_merge_short_sections(self, current: list[str], next_group: list[str]) -> bool:
+        current_text = " ".join(current)
+        next_text = " ".join(next_group)
+        current_terms = self._topic_terms(current_text)
+        next_terms = self._topic_terms(next_text)
+        if current_terms and next_terms:
+            return True
+        return bool(current_terms.intersection(next_terms))
+
+    def _agenda_from_top_concepts(self, sections: list[dict[str, Any]]) -> list[str]:
+        ranked: list[tuple[float, int, str]] = []
+        for section in sections:
+            score = float((section.get("weight") or {}).get("score") or 0.0)
+            for concept in section.get("concepts") or []:
+                concept_text = str(concept.get("concept") or "").strip()
+                if concept_text:
+                    concept_type = str(concept.get("type") or "")
+                    ranked.append((score, CONCEPT_PRIORITY.get(concept_type, 0), concept_text))
+        ranked.sort(key=lambda item: (item[1], item[0], len(item[2].split())), reverse=True)
+        agenda: list[str] = []
+        seen: set[str] = set()
+        for _, _, concept_text in ranked:
+            key = concept_text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            agenda.append(concept_text)
+            if len(agenda) == 3:
+                break
+        return agenda
+
+    def _numeric_visual_plan(self, text: str) -> dict[str, Any] | None:
+        numeric_phrases = self._numeric_phrases(text)
+        if not self._numeric_visual_allowed(text, numeric_phrases):
+            return None
+        if len(numeric_phrases) >= 2:
+            strongest = numeric_phrases[-1]
+            return {
+                "concept": {"concept": strongest, "type": "numeric"},
+                "visual": {
+                    "component": "CalculationStrip",
+                    "props": {"values": numeric_phrases[:3]},
+                },
+                "beats": {
+                    "beats": self._numeric_beats(numeric_phrases[:3], strongest),
+                },
+            }
+        strongest = numeric_phrases[0]
+        return {
+            "concept": {"concept": strongest, "type": "numeric"},
+            "visual": {
+                "component": "StatCard",
+                "props": {"title": strongest},
+            },
+            "beats": {
+                "beats": [{"component": "StatCard", "text": strongest}],
+            },
+        }
+
+    def _unique_beat_values(self, values: list[str], strongest: str) -> list[str]:
+        unique: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            key = value.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(value)
+        if strongest.lower() not in seen:
+            unique.append(strongest)
+        return unique[:3]
+
+    def _numeric_phrases(self, text: str) -> list[str]:
+        if not re.search(r"(₹|Rs\.?\s*|\d|%)", text, flags=re.IGNORECASE):
+            return []
+        pattern = r"(?:₹\s*|Rs\.?\s*)?\d[\d,]*(?:\.\d+)?\s*(?:%|years?|months?|lakhs?)?"
+        matches = list(re.finditer(pattern, text, flags=re.IGNORECASE))
+        phrases: list[str] = []
+        for match in matches:
+            token = " ".join(match.group(0).strip().split())
+            if not token or not re.search(r"\d", token):
+                continue
+            label = self._numeric_label(text, match.start(), match.end())
+            phrase = f"{token} {label}".strip() if label else token
+            phrases.append(" ".join(phrase.split()))
+        return self._unique_beat_values(phrases, phrases[-1] if phrases else "")
+
+    def _numeric_label(self, text: str, start: int, end: int) -> str:
+        before_words = re.findall(r"[a-z]+", text[max(0, start - 28) : start].lower())
+        after_words = re.findall(r"[a-z]+", text[end : min(len(text), end + 28)].lower())
+        keywords = {
+            "interest": "interest",
+            "bill": "bill",
+            "balance": "balance",
+            "debt": "debt",
+            "payment": "payment",
+            "salary": "salary",
+            "return": "return",
+            "returns": "returns",
+            "cost": "cost",
+            "emi": "emi",
+            "principal": "principal",
+            "minimum": "payment",
+            "due": "payment",
+        }
+        for word in after_words[:3]:
+            if word in keywords:
+                return keywords[word]
+        for word in reversed(before_words[-3:]):
+            if word in keywords:
+                return keywords[word]
+        return ""
+
+    def _numeric_beats(self, numeric_phrases: list[str], strongest: str) -> list[dict[str, str]]:
+        values = self._unique_beat_values(numeric_phrases, strongest)
+        if len(values) >= 3:
+            return [
+                {"component": "StatCard", "text": values[0]},
+                {"component": "CalculationStrip", "text": values[1]},
+                {"component": "StatCard", "text": values[2]},
+            ]
+        if len(values) == 2:
+            return [
+                {"component": "StatCard", "text": values[0]},
+                {"component": "CalculationStrip", "text": values[1]},
+            ]
+        return [{"component": "StatCard", "text": values[0]}] if values else [{"component": "StatCard", "text": strongest}]
+
+    def _numeric_visual_allowed(self, text: str, numeric_phrases: list[str]) -> bool:
+        if not numeric_phrases:
+            return False
+        lowered = text.lower()
+        has_comparison = any(word in lowered for word in (" more ", " less ", " vs ", " versus "))
+        has_transformation = any(word in lowered for word in (" increase", " increases", " reduce", " reduces", " grow", " grows "))
+        if len(numeric_phrases) >= 2:
+            return True
+        return has_comparison or has_transformation
+
+    def _is_valid_visual_item(self, item: dict[str, Any] | None) -> bool:
+        if not item:
+            return False
+        visual = item.get("visual") or {}
+        props = visual.get("props") or {}
+        title = str(props.get("title", "")).strip()
+        if "title" in props and not title:
+            return False
+        beats = (item.get("beats") or {}).get("beats") or []
+        if not beats:
+            return False
+        if any(not str(beat.get("text", "")).strip() for beat in beats):
+            return False
+        concept_text = str((item.get("concept") or {}).get("concept", "")).strip()
+        if not concept_text:
+            return False
+        return True
+
+    def _safe_visual_item(self, item: dict[str, Any], section_text: str) -> dict[str, Any]:
+        if self._is_valid_visual_item(item):
+            return item
+        return self._fallback_visual_item(section_text)
+
+    def _fallback_visual_item(self, section_text: str) -> dict[str, Any]:
+        fallback_text = self._fallback_text(section_text)
+        return {
+            "concept": {"concept": fallback_text, "type": "fallback"},
+            "visual": {
+                "component": "ConceptCard",
+                "props": {"title": fallback_text.upper()},
+            },
+            "beats": {
+                "beats": [{"component": "ConceptCard", "text": fallback_text}],
+            },
+        }
+
+    def _fallback_text(self, section_text: str) -> str:
+        words = [word for word in re.findall(r"[A-Za-z0-9₹%]+", section_text) if word]
+        text = " ".join(words[:3]).strip()
+        return text or "Key Idea"
 
     def _demo_script(self, topic: str, angle: str) -> dict[str, Any]:
         return {

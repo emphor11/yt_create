@@ -12,8 +12,11 @@ FINANCE_KEYWORDS = (
     "debt trap",
     "compound interest",
     "lifestyle inflation",
+    "minimum payment cycle",
     "minimum dues",
     "minimum payment",
+    "interest profit",
+    "inflation loss",
     "investment",
     "inflation",
     "returns",
@@ -28,6 +31,30 @@ FINANCE_KEYWORDS = (
     "fund",
     "money",
 )
+
+GENERIC_NOUNS = {"credit", "system", "people", "money", "result", "change", "problem"}
+CONCEPT_STOPWORDS = {"we", "if", "this", "that", "it", "they", "let", "start", "thing", "which", "what", "and"}
+MEANINGFUL_SUFFIXES = {
+    "fund",
+    "trap",
+    "growth",
+    "risk",
+    "returns",
+    "return",
+    "debt",
+    "inflation",
+    "budget",
+    "investment",
+    "savings",
+    "payment",
+    "profit",
+    "loss",
+    "cycle",
+    "erosion",
+    "income",
+    "interest",
+    "impact",
+}
 
 VAGUE_CONCEPTS = {
     "this",
@@ -91,12 +118,17 @@ def _extract_from_clause(text: str) -> dict[str, Any]:
     concept_type = _detect_type(text)
     concept = _extract_concept(text, concept_type)
     concept = _normalize_concept(concept, concept_type)
+    if not _is_valid_concept_shape(concept):
+        concept = _normalize_concept(_retry_stronger_concept(text, concept_type), concept_type)
     confidence = _score_confidence(text, concept_type, concept)
 
     if confidence < CONFIDENCE_THRESHOLD or not concept:
         return {"concept": None, "type": "unknown", "confidence": round(confidence, 2)}
 
-    _validate_concept(concept)
+    try:
+        _validate_concept(concept)
+    except ValueError:
+        return {"concept": None, "type": "unknown", "confidence": round(confidence, 2)}
     return {"concept": concept, "type": concept_type, "confidence": round(confidence, 2)}
 
 
@@ -118,7 +150,7 @@ def _candidate_clauses(text: str) -> list[str]:
 
 def _detect_type(text: str) -> str:
     lowered = text.lower()
-    if _contains_keyword(lowered, "risk", "danger", "trap", "destroy"):
+    if _contains_keyword(lowered, "risk", "danger", "trap", "loss", "cost", "destroy"):
         return "risk"
     if _contains_keyword(lowered, "before") and _contains_keyword(lowered, "after"):
         return "before_after"
@@ -132,7 +164,7 @@ def _detect_type(text: str) -> str:
         return "cause_effect"
     if any(token in lowered for token in ("grow", "grows", "growth", "increase", "increases", "over time", "years")):
         return "growth"
-    if _contains_keyword(lowered, "risk", "danger", "trap", "lose", "destroy"):
+    if _contains_keyword(lowered, "risk", "danger", "trap", "loss", "cost", "lose", "destroy"):
         return "risk"
     return "definition"
 
@@ -211,6 +243,13 @@ def _extract_cause_effect(text: str) -> str:
         risk_concept = _extract_risk(text)
         if risk_concept:
             return risk_concept
+    lowered = text.lower()
+    if "minimum payment" in lowered or "minimum dues" in lowered or ("minimum" in lowered and "credit card" in lowered):
+        return "Minimum Payment Cycle"
+    if "banks" in lowered and "interest" in lowered and any(token in lowered for token in ("earn", "earns", "profit", "profits", "make more money")):
+        return "Interest Profit"
+    if "inflation" in lowered and any(token in lowered for token in ("lose value", "reduces value", "cuts value", "loss")):
+        return "Inflation Loss"
     entity = _finance_keyword_entity(text)
     if entity:
         return entity
@@ -235,14 +274,21 @@ def _extract_growth(text: str) -> str:
 
 
 def _extract_risk(text: str) -> str:
+    lowered = text.lower()
     match = re.search(r"\b([A-Za-z]+)\s+trap\b", text, flags=re.IGNORECASE)
     if match:
         return f"{_title_phrase(match.group(1))} Trap"
     match = re.search(r"\b([A-Za-z]+)\s+risk\b", text, flags=re.IGNORECASE)
     if match:
         return f"{_title_phrase(match.group(1))} Risk"
-    if "debt" in text.lower():
-        if "trap" in text.lower():
+    if "interest" in lowered and any(token in lowered for token in ("loss", "cost", "destroy")):
+        return "Interest Loss"
+    if any(token in lowered for token in ("wealth", "savings", "inflation")) and any(
+        token in lowered for token in ("loss", "cost", "destroy", "erosion")
+    ):
+        return "Wealth Erosion"
+    if "debt" in lowered:
+        if "trap" in lowered:
             return "Debt Trap"
         return "Debt Risk"
     entity = _best_entity(text)
@@ -250,17 +296,49 @@ def _extract_risk(text: str) -> str:
 
 
 def _extract_definition(text: str) -> str:
+    lowered = text.lower()
+    if "minimum payment" in lowered or "minimum dues" in lowered or ("minimum" in lowered and "credit card" in lowered):
+        return "Minimum Payment Cycle"
+    if "interest" in lowered and any(token in lowered for token in ("profit", "earns", "earn")):
+        return "Interest Profit"
+    if "inflation" in lowered and any(token in lowered for token in ("lose value", "reduces value", "cuts value")):
+        return "Inflation Loss"
     return _best_entity(text)
+
+
+def _retry_stronger_concept(text: str, concept_type: str) -> str:
+    lowered = text.lower()
+    if "minimum" in lowered and any(token in lowered for token in ("payment", "dues", "credit card")):
+        return "Minimum Payment Cycle"
+    if "interest" in lowered and any(token in lowered for token in ("cost", "loss", "destroy")):
+        return "Interest Loss"
+    if "banks" in lowered and "interest" in lowered:
+        return "Interest Profit"
+    if "inflation" in lowered and any(token in lowered for token in ("lose value", "reduces value", "cuts value", "loss")):
+        return "Inflation Loss"
+    if any(token in lowered for token in ("wealth", "savings", "inflation")) and any(
+        token in lowered for token in ("loss", "cost", "destroy", "erosion")
+    ):
+        return "Wealth Erosion"
+    if "debt" in lowered and "trap" in lowered:
+        return "Debt Trap"
+    if concept_type == "comparison":
+        return _extract_comparison(text)
+    if concept_type == "growth":
+        return _extract_growth(text)
+    return ""
 
 
 def _best_entity(text: str) -> str:
     keyword_entity = _finance_keyword_entity(text)
-    if keyword_entity:
+    if keyword_entity and keyword_entity.lower() not in GENERIC_NOUNS:
         return keyword_entity
 
     capitalized = re.findall(r"\b[A-Z][a-zA-Z]+\b(?:\s+[A-Z][a-zA-Z]+\b)?", text)
     if capitalized:
-        return _title_phrase(capitalized[0])
+        candidate = _title_phrase(capitalized[0])
+        if candidate.lower() not in GENERIC_NOUNS:
+            return candidate
 
     noun_phrase = re.search(
         r"\b([A-Za-z]+(?:\s+[A-Za-z]+)?)\s+(fund|trap|growth|risk|returns?|debt|inflation|budget|investment|savings)\b",
@@ -270,7 +348,11 @@ def _best_entity(text: str) -> str:
     if noun_phrase:
         return _title_phrase(f"{noun_phrase.group(1)} {noun_phrase.group(2)}")
 
-    tokens = [token for token in _tokens(text) if token not in {"you", "your", "this", "that", "manage", "better", "helps"}]
+    tokens = [
+        token
+        for token in _tokens(text)
+        if token not in {"you", "your", "this", "that", "manage", "better", "helps"} and token not in GENERIC_NOUNS
+    ]
     return _title_phrase(tokens[0]) if tokens else ""
 
 
@@ -295,7 +377,7 @@ def _normalize_concept(concept: str, concept_type: str) -> str:
         base = cleaned.replace(" Growth", "")
         return f"{base} Growth"
     if concept_type == "risk":
-        if cleaned.endswith(" Trap") or cleaned.endswith(" Risk"):
+        if cleaned.endswith(" Trap") or cleaned.endswith(" Risk") or cleaned.endswith(" Loss") or cleaned.endswith(" Erosion"):
             return cleaned
         return f"{cleaned} Risk"
     if concept_type == "comparison" and " vs " in cleaned:
@@ -344,12 +426,46 @@ def _validate_concept(concept: str) -> None:
     words = concept.split()
     if not concept:
         raise ValueError("Concept cannot be empty.")
-    if len(words) < 1 or len(words) > 3:
+    if len(concept) < 4:
+        raise ValueError("Concept is too short.")
+    if len(words) < 2 or len(words) > 3:
         raise ValueError("Concept must be 1-3 words.")
-    if concept.lower() in VAGUE_CONCEPTS:
+    lowered = concept.lower()
+    if lowered in VAGUE_CONCEPTS or lowered in CONCEPT_STOPWORDS:
         raise ValueError("Concept is too vague.")
+    if any(word.lower() in CONCEPT_STOPWORDS for word in words):
+        raise ValueError("Concept contains stopword tokens.")
+    if not _is_meaningful_phrase(concept):
+        raise ValueError("Concept is not a meaningful phrase.")
     if re.search(r"[.!?]", concept):
         raise ValueError("Concept must not be a sentence.")
+
+
+def _is_valid_concept_shape(concept: str) -> bool:
+    if not concept or len(concept) < 4:
+        return False
+    words = concept.split()
+    if len(words) < 2 or len(words) > 3:
+        return False
+    if any(word.lower() in CONCEPT_STOPWORDS for word in words):
+        return False
+    if not _is_meaningful_phrase(concept):
+        return False
+    return True
+
+
+def _is_meaningful_phrase(concept: str) -> bool:
+    words = concept.split()
+    if len(words) < 2:
+        return False
+    lowered_words = [word.lower() for word in words]
+    if any(word in GENERIC_NOUNS for word in lowered_words):
+        return False
+    if lowered_words[-1] in MEANINGFUL_SUFFIXES:
+        return True
+    if any(" ".join(lowered_words[:length]) in FINANCE_KEYWORDS for length in (2, 3) if len(lowered_words) >= length):
+        return True
+    return bool(set(lowered_words) & MEANINGFUL_SUFFIXES)
 
 
 def _title_phrase(text: str) -> str:
