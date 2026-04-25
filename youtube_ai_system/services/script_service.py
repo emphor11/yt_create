@@ -12,7 +12,8 @@ import requests
 
 from ..models.repository import ProjectRepository, utcnow
 from .beat_planner import generate_beats
-from .concept_extractor import extract as extract_concept
+from .finance_concept_extractor import FinanceConceptExtractor
+from .idea_grouper import IdeaGrouper
 from .narration_refiner import refine as refine_narration
 from .run_log import RunLogger
 from .story_intelligence_engine import StoryIntelligenceEngine
@@ -113,6 +114,8 @@ class ScriptService:
         self.repo = ProjectRepository()
         self.logger = RunLogger()
         self.story_intelligence = StoryIntelligenceEngine()
+        self.idea_grouper = IdeaGrouper()
+        self.finance_concept_extractor = FinanceConceptExtractor()
 
     def generate_script(
         self,
@@ -559,7 +562,7 @@ class ScriptService:
             normalized["scenes"] = self._demo_script(topic, angle)["scenes"]
 
         planning_payload = self._group_payload_for_story_plan(normalized)
-        normalized["story_plan"] = self.story_intelligence.plan_from_script_payload(planning_payload)
+        normalized["story_plan"] = self._story_plan_from_idea_groups(planning_payload)
         normalized["story_plan"] = self._attach_section_concepts(normalized["story_plan"])
         normalized["story_plan"] = self._attach_section_visual_plan(normalized["story_plan"])
         normalized["meta"]["story_engine"] = "story_intelligence_v1"
@@ -640,17 +643,42 @@ class ScriptService:
 
     def _group_payload_for_story_plan(self, payload: dict[str, Any]) -> dict[str, Any]:
         hook = dict(payload.get("hook") or {})
-        raw_sentences: list[str] = []
+        grouped_scenes: list[dict[str, Any]] = []
         for scene in payload.get("scenes") or []:
-            raw_sentences.extend(self._split_story_sentences(str(scene.get("narration") or "")))
-        outro = payload.get("outro") or {}
-        raw_sentences.extend(self._split_story_sentences(str(outro.get("narration") or "")))
-        body_sentences = [sentence for sentence in raw_sentences if self._keep_story_sentence(sentence)]
-        if len(body_sentences) < 2:
-            body_sentences = [sentence for sentence in raw_sentences if self._keep_story_sentence(sentence, allow_short=True)]
+            raw_sentences = self._split_story_sentences(str(scene.get("narration") or ""))
+            body_sentences = [sentence for sentence in raw_sentences if self._keep_story_sentence(sentence)]
+            if len(body_sentences) < 2:
+                body_sentences = [sentence for sentence in raw_sentences if self._keep_story_sentence(sentence, allow_short=True)]
 
-        grouped_sections = self.group_sentences_into_sections(body_sentences)
-        grouped_scenes = [{"narration": section_text} for section_text in grouped_sections]
+            scene_groups = self._idea_grouped_scenes(body_sentences)
+            if not scene_groups:
+                combined_text = self._normalize_text(" ".join(body_sentences))
+                scene_groups = (
+                    [
+                        {
+                            "narration": combined_text,
+                            "idea_group_id": f"idea_{len(grouped_scenes):02d}",
+                            "dominant_entity": "money",
+                            "idea_type": "emphasis",
+                            "has_numbers": bool(re.search(r"₹|%|\d+", combined_text)),
+                            "has_comparison": bool(
+                                re.search(r"\bvs\b|\bversus\b|\bbut\b|\bhowever\b|\binstead\b", combined_text, re.IGNORECASE)
+                            ),
+                            "has_causation": bool(
+                                re.search(
+                                    r"\bbecause\b|\bso\b|\btherefore\b|\bleads to\b|\bresults in\b",
+                                    combined_text,
+                                    re.IGNORECASE,
+                                )
+                            ),
+                        }
+                    ]
+                    if combined_text
+                    else []
+                )
+            for scene_group in scene_groups:
+                scene_group["idea_group_id"] = f"idea_{len(grouped_scenes):02d}"
+                grouped_scenes.append(scene_group)
 
         return {
             "hook": hook,
@@ -658,22 +686,130 @@ class ScriptService:
             "outro": {"narration": ""},
         }
 
+    def _idea_grouped_scenes(self, body_sentences: list[str]) -> list[dict[str, Any]]:
+        narration_text = " ".join(sentence.strip() for sentence in body_sentences if sentence.strip())
+        if not narration_text.strip():
+            return []
+
+        idea_groups = self.idea_grouper.group(narration_text)
+        if not idea_groups:
+            return []
+
+        grouped_scenes: list[dict[str, Any]] = []
+        for group in idea_groups:
+            combined_text = self._normalize_text(group.combined_text)
+            if not combined_text:
+                continue
+            grouped_scenes.append(
+                {
+                    "narration": combined_text,
+                    "idea_group_id": group.group_id,
+                    "dominant_entity": group.dominant_entity,
+                    "idea_type": group.idea_type,
+                    "has_numbers": group.has_numbers,
+                    "has_comparison": group.has_comparison,
+                    "has_causation": group.has_causation,
+                }
+            )
+        return grouped_scenes
+
+    def _story_plan_from_idea_groups(self, payload: dict[str, Any]) -> dict[str, Any]:
+        hook_payload = payload.get("hook") or {}
+        hook_text = str(hook_payload.get("narration") or "").strip()
+        sections: list[dict[str, Any]] = []
+
+        for scene in payload.get("scenes") or []:
+            if not isinstance(scene, dict):
+                continue
+            text = self._normalize_text(str(scene.get("narration") or scene.get("narration_text") or ""))
+            if not text:
+                continue
+            section_type = self.story_intelligence._classify_sentence(text)
+            sections.append(
+                {
+                    "type": section_type,
+                    "text": text,
+                    "weight": self.story_intelligence._weight_for(section_type),
+                    "idea_group_id": scene.get("idea_group_id"),
+                    "dominant_entity": scene.get("dominant_entity") or "money",
+                    "idea_type": scene.get("idea_type") or "emphasis",
+                    "has_numbers": bool(scene.get("has_numbers")),
+                    "has_comparison": bool(scene.get("has_comparison")),
+                    "has_causation": bool(scene.get("has_causation")),
+                }
+            )
+
+        if len(sections) < 2 and hook_text:
+            hook_section_type = self.story_intelligence._classify_sentence(hook_text)
+            sections.insert(
+                0,
+                {
+                    "type": hook_section_type,
+                    "text": self._normalize_text(hook_text),
+                    "weight": self.story_intelligence._weight_for(hook_section_type),
+                    "idea_group_id": "idea_hook",
+                    "dominant_entity": "money",
+                    "idea_type": "emphasis",
+                    "has_numbers": bool(re.search(r"₹|%|\d+", hook_text)),
+                    "has_comparison": bool(re.search(r"\bvs\b|\bversus\b|\bbut\b|\bhowever\b|\binstead\b", hook_text, re.IGNORECASE)),
+                    "has_causation": bool(
+                        re.search(
+                            r"\bbecause\b|\bso\b|\btherefore\b|\bleads to\b|\bresults in\b",
+                            hook_text,
+                            re.IGNORECASE,
+                        )
+                    ),
+                },
+            )
+
+        sections = self.story_intelligence._ensure_section_progression(sections)
+        sections = self.story_intelligence._stable_sort_sections_by_stage(sections)
+        hook = self.story_intelligence._clean_hook_text(hook_text)
+        hook = self.story_intelligence._ensure_distinct_hook(hook, sections)
+        self.story_intelligence._validate_minimum_sections(sections)
+        self.story_intelligence._validate_section_flow(sections)
+
+        hook_type = self.story_intelligence._classify_hook_type(hook)
+        return {
+            "hook": hook,
+            "hook_type": hook_type,
+            "arc_type": self.story_intelligence._classify_arc_type(sections, hook_type),
+            "agenda": [],
+            "sections": sections,
+        }
+
     def _attach_section_concepts(self, story_plan: dict[str, Any]) -> dict[str, Any]:
         sections = story_plan.get("sections") or []
         for section in sections:
             concepts: list[dict[str, str]] = []
             seen: set[tuple[str, str]] = set()
-            for sentence in self._split_story_sentences(str(section.get("text") or "")):
-                extracted = extract_concept(sentence)
-                concept = extracted.get("concept")
-                concept_type = extracted.get("type")
-                if not concept or concept_type == "unknown":
-                    continue
+            finance_concept = self.finance_concept_extractor.extract(
+                {
+                    "combined_text": str(section.get("text") or ""),
+                    "dominant_entity": str(section.get("dominant_entity") or "money"),
+                    "idea_type": str(section.get("idea_type") or "emphasis"),
+                }
+            )
+            section["finance_concept"] = {
+                "concept_name": finance_concept.concept_name,
+                "concept_type": finance_concept.concept_type,
+                "primary_entity": finance_concept.primary_entity,
+                "action": finance_concept.action,
+                "start_value": finance_concept.start_value,
+                "end_value": finance_concept.end_value,
+                "percentage": finance_concept.percentage,
+                "time_period": finance_concept.time_period,
+                "agent": finance_concept.agent,
+                "victim": finance_concept.victim,
+                "confidence": finance_concept.confidence,
+            }
+            concept = finance_concept.concept_name if finance_concept.concept_name != "Unknown" else None
+            concept_type = finance_concept.concept_type
+            if concept:
                 key = (str(concept), str(concept_type))
-                if key in seen:
-                    continue
-                seen.add(key)
-                concepts.append({"concept": str(concept), "type": str(concept_type)})
+                if key not in seen:
+                    seen.add(key)
+                    concepts.append({"concept": str(concept), "type": str(concept_type)})
             concepts.sort(
                 key=lambda item: (
                     CONCEPT_PRIORITY.get(item.get("type", ""), 0),
@@ -699,7 +835,9 @@ class ScriptService:
                         text,
                     ),
                 }
-                visual_plan.append(self._safe_visual_item(candidate, text))
+                safe_item = self._safe_visual_item(candidate)
+                if safe_item:
+                    visual_plan.append(safe_item)
             numeric_plan = self._numeric_visual_plan(text)
             if self._is_valid_visual_item(numeric_plan):
                 section["visual_plan"] = [numeric_plan]
@@ -707,10 +845,7 @@ class ScriptService:
             if visual_plan:
                 section["visual_plan"] = visual_plan
                 continue
-            if text.strip():
-                section["visual_plan"] = [self._fallback_visual_item(text)]
-            else:
-                section["visual_plan"] = []
+            section["visual_plan"] = []
         return story_plan
 
     def _split_story_sentences(self, text: str) -> list[str]:
@@ -726,7 +861,28 @@ class ScriptService:
     def _keep_story_sentence(self, sentence: str, allow_short: bool = False) -> bool:
         lowered = sentence.lower().strip()
         if len(sentence.split()) < 6 and not allow_short:
-            return False
+            finance_short_tokens = (
+                "debt",
+                "credit",
+                "interest",
+                "salary",
+                "income",
+                "expense",
+                "expenses",
+                "spending",
+                "savings",
+                "investment",
+                "inflation",
+                "budget",
+                "fund",
+                "payment",
+                "trap",
+                "risk",
+                "wealth",
+                "tax",
+            )
+            if not re.search(r"₹|%|\d+", sentence) and not any(token in lowered for token in finance_short_tokens):
+                return False
         if any(phrase in lowered for phrase in ("for instance", "let's", "we've all", "you know")):
             return False
         return True
@@ -997,10 +1153,10 @@ class ScriptService:
             return False
         return True
 
-    def _safe_visual_item(self, item: dict[str, Any], section_text: str) -> dict[str, Any]:
+    def _safe_visual_item(self, item: dict[str, Any]) -> dict[str, Any] | None:
         if self._is_valid_visual_item(item):
             return item
-        return self._fallback_visual_item(section_text)
+        return None
 
     def _fallback_visual_item(self, section_text: str) -> dict[str, Any]:
         fallback_text = self._fallback_text(section_text)

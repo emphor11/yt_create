@@ -10,7 +10,6 @@ from .scene_mapper import map_pattern_to_component
 from .voice_service import VoiceService
 
 MIN_BEAT_DURATION = 0.6
-MAX_BEAT_DURATION = 2.5
 WEIGHT_MULTIPLIERS = {
     "high": 1.2,
     "medium": 1.0,
@@ -96,20 +95,33 @@ class SceneBuilder:
         multiplier = WEIGHT_MULTIPLIERS.get(weight_level, 1.0)
         weighted_lengths = self._weighted_lengths(beats)
         total_weight = max(sum(weighted_lengths), 1.0)
-        raw_durations = []
+        scaled_weights = []
         for index, weight in enumerate(weighted_lengths):
-            base = (audio_duration * (weight / total_weight)) * multiplier
             variation = self._timing_variation(beats[index]["text"], index)
-            raw_durations.append(base * variation)
-        durations = [max(MIN_BEAT_DURATION, min(MAX_BEAT_DURATION, duration)) for duration in raw_durations]
+            scaled_weights.append(max(weight * multiplier * variation, 0.01))
+        total_scaled_weight = max(sum(scaled_weights), 0.01)
+
+        if audio_duration <= 0:
+            durations = [MIN_BEAT_DURATION for _ in beats]
+        else:
+            durations = [
+                (scaled_weight / total_scaled_weight) * audio_duration
+                for scaled_weight in scaled_weights
+            ]
+        durations = [max(duration, MIN_BEAT_DURATION) for duration in durations]
+        total_duration = max(sum(durations), MIN_BEAT_DURATION)
+        durations = [
+            (duration / total_duration) * audio_duration
+            for duration in durations
+        ]
 
         timeline: list[dict[str, Any]] = []
         current_time = 0.0
         for index, beat in enumerate(beats):
-            duration = durations[index]
-            end_time = min(audio_duration, current_time + duration)
-            if end_time <= current_time:
-                end_time = min(audio_duration, current_time + MIN_BEAT_DURATION)
+            if index == len(beats) - 1:
+                end_time = audio_duration
+            else:
+                end_time = current_time + durations[index]
             timeline.append(
                 {
                     "component": beat["component"],
@@ -174,14 +186,16 @@ class SceneBuilder:
         if "fix the system" in lowered or ("automate" in lowered and "spend" in lowered):
             return "Automate before you spend"
         words = section_text.split()
-        return " ".join(words[:3]).strip() or "Key Idea"
+        if not words:
+            return "Core message"
+        phrase = " ".join(words[: min(len(words), 3)]).strip(" ,.-")
+        return self._clean_beat_text(phrase, section_text)
 
     def _weighted_lengths(self, beats: list[dict[str, str]]) -> list[float]:
         weights: list[float] = []
         for index, beat in enumerate(beats):
-            word_count = max(len(str(beat.get("text") or "").split()), 1)
-            char_bonus = min(len(str(beat.get("text") or "")) / 24.0, 1.5)
-            weight = word_count + char_bonus
+            word_count = max(len(str(beat.get("text") or "").strip().split()), 1)
+            weight = float(word_count)
             if index == len(beats) - 1:
                 weight *= 1.35
             weights.append(weight)
@@ -214,13 +228,10 @@ class SceneBuilder:
 
     def _short_phrase(self, text: str) -> str:
         words = text.split()
-        phrase = " ".join(words[:4]).strip() or "Key Idea"
+        phrase = " ".join(words[:4]).strip() or self._fallback_text(text)
         return self._clean_beat_text(phrase, text)
 
     def _scene_duration(self, audio_duration: float, section: dict[str, Any]) -> float:
-        beats = ((section.get("visual_plan") or [{}])[0].get("beats") or {}).get("beats") or []
-        if len([beat for beat in beats if str(beat.get("text") or "").strip()]) <= 1:
-            return round(min(audio_duration, 2.8), 2)
         return audio_duration
 
     def _clean_beat_text(self, text: str, section_text: str) -> str:
@@ -260,7 +271,13 @@ class SceneBuilder:
             return "Money leaks away"
         if "debt" in lowered and "trap" in lowered:
             return "Debt keeps growing"
-        return self._fallback_text(section_text) if self._fallback_text(section_text).lower() != primary_text.lower() else "Key impact"
+        fallback = self._fallback_text(section_text)
+        if fallback.lower() != primary_text.lower():
+            return fallback
+        words = [word for word in re.findall(r"[A-Za-z0-9₹%,']+", section_text) if word]
+        if len(words) >= 2:
+            return self._clean_beat_text(" ".join(words[-2:]), section_text)
+        return self._clean_beat_text(section_text, section_text)
 
     def _timing_variation(self, text: str, index: int) -> float:
         checksum = sum(ord(char) for char in text) + index

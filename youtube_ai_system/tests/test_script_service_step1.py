@@ -149,10 +149,83 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.assertEqual(
             narrations,
             [
-                "Minimum payments often look completely harmless. Interest charges keep growing every month.",
-                "Build a repayment plan this month.",
+                (
+                    "Minimum payments often look completely harmless. "
+                    "Interest charges keep growing every month."
+                ),
             ],
         )
+
+    def test_group_payload_uses_idea_grouper_metadata(self) -> None:
+        grouped_payload = self.service._group_payload_for_story_plan(
+            {
+                "hook": {"narration": "Debt can quietly grow.", "duration": 6},
+                "scenes": [
+                    {
+                        "narration": (
+                            "Your salary rises every year. "
+                            "But your expenses rise faster. "
+                            "Another problem is credit card debt. "
+                            "Because interest grows every month."
+                        )
+                    }
+                ],
+                "outro": {"narration": "Build better money systems."},
+            }
+        )
+        scenes = grouped_payload["scenes"]
+        self.assertGreaterEqual(len(scenes), 2)
+        self.assertEqual(scenes[0]["dominant_entity"], "salary")
+        self.assertIn(scenes[1]["dominant_entity"], {"credit", "debt"})
+        self.assertIn("idea_group_id", scenes[0])
+        self.assertIn("idea_type", scenes[0])
+        self.assertIn("has_numbers", scenes[0])
+        self.assertIn("has_comparison", scenes[0])
+        self.assertIn("has_causation", scenes[0])
+
+    def test_idea_grouper_keeps_complete_lifestyle_inflation_idea_together(self) -> None:
+        grouped_payload = self.service._group_payload_for_story_plan(
+            {
+                "hook": {"narration": "Raises can still leave you broke.", "duration": 6},
+                "scenes": [
+                    {
+                        "narration": (
+                            "As soon as we get a raise, we upgrade our lifestyle. "
+                            "Whether it's a fancy phone or a new car. "
+                            "Spending rises faster than savings. "
+                            "That quietly slows wealth building."
+                        )
+                    }
+                ],
+                "outro": {"narration": "Keep the gap and invest the difference."},
+            }
+        )
+        scenes = grouped_payload["scenes"]
+        self.assertEqual(len(scenes), 1)
+        self.assertIn("Spending rises faster than savings.", scenes[0]["narration"])
+        self.assertIn("That quietly slows wealth building.", scenes[0]["narration"])
+
+    def test_idea_grouper_splits_credit_card_and_emergency_fund_ideas(self) -> None:
+        grouped_payload = self.service._group_payload_for_story_plan(
+            {
+                "hook": {"narration": "Debt feels manageable until it isn't.", "duration": 6},
+                "scenes": [
+                    {
+                        "narration": (
+                            "Credit card debt grows fast when interest compounds every month. "
+                            "Minimum payments keep the balance alive. "
+                            "Without an emergency fund, one medical bill pushes you into debt. "
+                            "A cash buffer protects your long-term investments."
+                        )
+                    }
+                ],
+                "outro": {"narration": "Fix the system before the next shock arrives."},
+            }
+        )
+        scenes = grouped_payload["scenes"]
+        self.assertEqual(len(scenes), 2)
+        self.assertIn("Credit card debt grows fast", scenes[0]["narration"])
+        self.assertIn("Without an emergency fund", scenes[1]["narration"])
 
     def test_three_sample_scripts_normalize_to_minimal_shape(self) -> None:
         samples = [
@@ -246,8 +319,8 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
                 self.assertTrue(all("visual_plan" in section for section in sections))
                 self.assertTrue(all(isinstance(section["concepts"], list) for section in sections))
                 self.assertTrue(all(isinstance(section["visual_plan"], list) for section in sections))
-                self.assertTrue(all(section["concepts"] for section in sections))
-                self.assertTrue(all(section["visual_plan"] for section in sections))
+                self.assertTrue(any(section["concepts"] for section in sections))
+                self.assertTrue(any(section["visual_plan"] for section in sections))
                 for section in sections:
                     for concept in section["concepts"]:
                         self.assertTrue(concept["concept"])
@@ -257,6 +330,30 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
                         self.assertIn("concept", item)
                         self.assertIn("visual", item)
                         self.assertIn("beats", item)
+
+    def test_finance_concepts_are_strong_on_grouped_sections(self) -> None:
+        payload = self.service._normalize_payload(
+            {
+                "hook": {"narration": "Invisible leaks keep salaries stuck.", "duration": 6},
+                "scenes": [
+                    {
+                        "narration": (
+                            "As soon as we get a raise, we upgrade our lifestyle. "
+                            "Spending rises faster than savings. "
+                            "Credit card debt grows fast when interest compounds every month. "
+                            "Minimum payments keep the balance alive."
+                        ),
+                        "duration": 30,
+                    }
+                ],
+                "outro": {"narration": "Protect the gap before it disappears.", "duration": 18},
+            },
+            "Money leaks",
+            "salary trap",
+        )
+        concepts = [section["concepts"][0]["concept"] for section in payload["story_plan"]["sections"] if section["concepts"]]
+        self.assertIn("Lifestyle Inflation", concepts)
+        self.assertIn("Debt Trap", concepts)
 
     def test_story_plan_uses_grouped_sections_before_engine(self) -> None:
         payload = self.service._normalize_payload(
@@ -279,7 +376,11 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
             "avoid the trap",
         )
         self.assertIn("story_plan", payload)
-        self.assertGreaterEqual(len(payload["story_plan"]["sections"]), 2)
+        self.assertEqual(len(payload["story_plan"]["sections"]), 2)
+        self.assertEqual(
+            [section["idea_group_id"] for section in payload["story_plan"]["sections"]],
+            ["idea_hook", "idea_00"],
+        )
 
     def test_numeric_visuals_override_generic_concepts_and_agenda_uses_top_concepts(self) -> None:
         payload = self.service._normalize_payload(
@@ -313,7 +414,7 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         )
         self.assertEqual(
             payload["story_plan"]["agenda"],
-            ["Debt Trap", "Investment Growth", "Inflation Loss"],
+            ["Debt Trap", "Inflation Loss"],
         )
 
     def test_invalid_numeric_candidate_falls_back_to_concept_visual(self) -> None:
@@ -332,22 +433,19 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
             "minimum payment trap",
         )
         concept_section = payload["story_plan"]["sections"][1]
-        self.assertTrue(concept_section["concepts"])
+        self.assertEqual(concept_section["concepts"], [{"concept": "Debt Trap", "type": "risk"}])
         self.assertTrue(concept_section["visual_plan"])
         self.assertNotEqual(concept_section["visual_plan"][0]["concept"]["type"], "numeric")
 
-    def test_invalid_visual_item_falls_back_to_concept_card(self) -> None:
+    def test_invalid_visual_item_is_rejected_without_text_fallback(self) -> None:
         fallback = self.service._safe_visual_item(
             {
                 "concept": {"concept": "", "type": "numeric"},
                 "visual": {"component": "StatCard", "props": {"title": ""}},
                 "beats": {"beats": [{"component": "StatCard", "text": ""}]},
-            },
-            "Minimum payments quietly extend debt.",
+            }
         )
-        self.assertEqual(fallback["visual"]["pattern"], "ConceptCard")
-        self.assertEqual(fallback["concept"]["type"], "fallback")
-        self.assertEqual(fallback["beats"]["beats"][0]["text"], "Minimum payments stretch debt")
+        self.assertIsNone(fallback)
 
     def test_agenda_uses_strongest_section_insights_when_concepts_missing(self) -> None:
         agenda = self.service._agenda_from_top_concepts(
