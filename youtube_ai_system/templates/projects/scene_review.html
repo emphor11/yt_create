@@ -14,13 +14,13 @@
 
 <div class="card bg-panel border-secondary-subtle mb-4">
   <div class="card-body">
-    <strong>What this step does now</strong>
-    <ul class="small text-secondary helper-list mt-2 mb-0">
-      <li>Tries Kokoro narration first, then the configured fallback voice provider</li>
-      <li>Uses silent fallback only as a last-resort development safety net</li>
-      <li>Generates Remotion stat, chart, and b-roll overlay videos when available</li>
-      <li>Stores scene-level source information in the database</li>
-    </ul>
+      <strong>What this step does now</strong>
+      <ul class="small text-secondary helper-list mt-2 mb-0">
+        <li>Tries Kokoro narration first, then the configured fallback voice provider</li>
+        <li>Uses silent fallback only as a last-resort development safety net</li>
+        <li>Builds derived visuals from the concept-first pipeline and renders them with Remotion</li>
+        <li>Stores scene-level source information in the database</li>
+      </ul>
   </div>
 </div>
 
@@ -66,14 +66,14 @@
 <div class="row g-4">
   {% for scene in scenes %}
     <div class="col-lg-6">
-      <div class="card bg-panel border-secondary-subtle h-100">
+        <div class="card bg-panel border-secondary-subtle h-100">
         <div class="card-body">
           <div class="d-flex justify-content-between mb-2">
             <span class="badge text-bg-dark">{{ scene.kind }}</span>
-            <span class="small text-secondary">{{ scene.visual_type }}</span>
+            <span class="small text-secondary">{{ scene.visual_type or "derived" }}</span>
           </div>
           <p>{{ scene.narration_text }}</p>
-          <p class="small text-secondary">{{ scene.visual_instruction }}</p>
+          <p class="small text-secondary">{{ scene.visual_instruction or "Derived from current scene concepts and beats." }}</p>
           {% if scene.visual_path %}
             {% if scene.visual_path.endswith('.mp4') or scene.visual_path.endswith('.mov') or scene.visual_path.endswith('.webm') or scene.visual_path.endswith('.mkv') %}
               <div class="mb-3">

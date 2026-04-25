@@ -8,8 +8,8 @@ class VisualLogicEngineTestCase(unittest.TestCase):
         self.assertEqual(
             map_concept_to_visual({"concept": "Debt Trap", "type": "risk"}),
             {
-                "component": "RiskCard",
-                "props": {"title": "DEBT TRAP"},
+                "pattern": "RiskCard",
+                "data": {"title": "DEBT TRAP"},
             },
         )
 
@@ -17,8 +17,8 @@ class VisualLogicEngineTestCase(unittest.TestCase):
         self.assertEqual(
             map_concept_to_visual({"concept": "Equity vs Debt", "type": "comparison"}),
             {
-                "component": "SplitComparison",
-                "props": {
+                "pattern": "SplitComparison",
+                "data": {
                     "left": {"label": "Equity"},
                     "right": {"label": "Debt"},
                 },
@@ -29,8 +29,8 @@ class VisualLogicEngineTestCase(unittest.TestCase):
         self.assertEqual(
             map_concept_to_visual({"concept": "Inflation", "type": "definition"}),
             {
-                "component": "ConceptCard",
-                "props": {"title": "INFLATION"},
+                "pattern": "ConceptCard",
+                "data": {"title": "INFLATION"},
             },
         )
 
@@ -38,8 +38,8 @@ class VisualLogicEngineTestCase(unittest.TestCase):
         self.assertEqual(
             map_concept_to_visual({"concept": "Money Flow", "type": "process"}),
             {
-                "component": "StepFlow",
-                "props": {"steps": ["Money Flow"]},
+                "pattern": "StepFlow",
+                "data": {"steps": ["Money Flow"]},
             },
         )
 
@@ -47,8 +47,8 @@ class VisualLogicEngineTestCase(unittest.TestCase):
         self.assertEqual(
             map_concept_to_visual({"concept": "Inflation", "type": "cause_effect"}),
             {
-                "component": "FlowBar",
-                "props": {"start_label": "Inflation", "end_label": ""},
+                "pattern": "StepFlow",
+                "data": {"steps": ["Inflation"]},
             },
         )
 
@@ -56,8 +56,8 @@ class VisualLogicEngineTestCase(unittest.TestCase):
         self.assertEqual(
             map_concept_to_visual({"concept": "Investment Growth", "type": "growth"}),
             {
-                "component": "GrowthChart",
-                "props": {"start": "", "end": "Investment Growth", "curve": "up"},
+                "pattern": "GrowthChart",
+                "data": {"start": "", "end": "Investment Growth", "curve": "up"},
             },
         )
 
@@ -65,8 +65,8 @@ class VisualLogicEngineTestCase(unittest.TestCase):
         self.assertEqual(
             map_concept_to_visual({"concept": "Budgeting Impact", "type": "before_after"}),
             {
-                "component": "BeforeAfterSplit",
-                "props": {"before": "", "after": "Budgeting Impact"},
+                "pattern": "SplitComparison",
+                "data": {"left": {"label": "Before"}, "right": {"label": "Budgeting Impact"}},
             },
         )
 
@@ -74,8 +74,8 @@ class VisualLogicEngineTestCase(unittest.TestCase):
         self.assertEqual(
             map_concept_to_visual({"concept": "Rich but Broke", "type": "paradox"}),
             {
-                "component": "RiskCard",
-                "props": {"title": "RICH BUT BROKE"},
+                "pattern": "RiskCard",
+                "data": {"title": "RICH BUT BROKE"},
             },
         )
 

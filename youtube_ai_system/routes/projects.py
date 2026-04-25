@@ -196,25 +196,10 @@ def save_script(project_id: int):
         "hook": {
             "narration": request.form.get("hook_narration", "").strip(),
             "estimated_duration_sec": float(request.form.get("hook_duration", 0) or 0),
-            "tension_type": request.form.get("hook_tension_type", "").strip(),
-            "visual_instruction": request.form.get("hook_visual_instruction", "").strip(),
-            "visual_type": request.form.get("hook_visual_type", "motion_text").strip(),
-            "visual_beats": _parse_beats_json(
-                "hook",
-                request.form.get("hook_visual_beats", "[]"),
-                existing_payload.get("hook", {}).get("visual_beats", []),
-            ),
         },
         "scenes": [],
         "outro": {
             "narration": request.form.get("outro_narration", "").strip(),
-            "visual_instruction": request.form.get("outro_visual_instruction", "").strip(),
-            "visual_type": request.form.get("outro_visual_type", "motion_text").strip(),
-            "visual_beats": _parse_beats_json(
-                "outro",
-                request.form.get("outro_visual_beats", "[]"),
-                existing_payload.get("outro", {}).get("visual_beats", []),
-            ),
         },
         "titles": [line.strip() for line in request.form.get("titles", "").splitlines() if line.strip()],
         "description": request.form.get("description", "").strip(),
@@ -230,13 +215,6 @@ def save_script(project_id: int):
             {
                 "kind": "body",
                 "narration": request.form.get(f"scene_{index}_narration", "").strip(),
-                "visual_instruction": request.form.get(f"scene_{index}_visual_instruction", "").strip(),
-                "visual_type": request.form.get(f"scene_{index}_visual_type", "motion_text").strip(),
-                "visual_beats": _parse_beats_json(
-                    f"scene {index + 1}",
-                    request.form.get(f"scene_{index}_visual_beats", "[]"),
-                    existing_scene.get("visual_beats", []),
-                ),
             }
         )
 

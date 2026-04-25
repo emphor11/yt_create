@@ -5,7 +5,7 @@
   <div>
     <div class="section-label mb-2">Step 2</div>
     <h1 class="h3 mb-1">Script Editor</h1>
-    <p class="text-secondary mb-0">You must edit the generated script yourself before approval. The hook must also pass validation.</p>
+    <p class="text-secondary mb-0">Edit the spoken script here. The concept, visual, and beat layers below are derived automatically from the current pipeline.</p>
   </div>
   <form method="post" action="{{ url_for('projects.approve_script', project_id=project.id) }}">
     <button class="btn btn-success">Approve Script</button>
@@ -35,7 +35,7 @@
           {% if source == 'live_claude' %}
             This draft was generated using your live Claude API configuration.
           {% elif source == 'live_groq_ten_minute_finance' %}
-            This draft was generated using your live Groq API configuration with 10 Minute Finance visual beats.
+            This draft was generated using your live Groq API configuration with the finance prompt.
           {% elif source == 'live_groq' %}
             This draft was generated using your live Groq API configuration.
           {% elif source == 'demo' %}
@@ -63,12 +63,12 @@
 <form method="post" action="{{ url_for('projects.save_script', project_id=project.id) }}">
   <div class="card bg-panel border-secondary-subtle mb-4">
     <div class="card-body">
-      <strong>What to do on this page</strong>
+      <strong>How this page works now</strong>
       <ul class="small text-secondary helper-list mt-2 mb-0">
-        <li>Review the generated draft for the selected topic and angle</li>
-        <li>Edit the hook and body scenes in your own words</li>
-        <li>Save the changes at least once</li>
-        <li>Approve only after the blockers disappear</li>
+        <li>Edit the narration here</li>
+        <li>Save once to rerun story intelligence, concept extraction, visual logic, and beats</li>
+        <li>The sections below are derived output from the current deterministic pipeline</li>
+        <li>Legacy visual instruction and visual beats fields were removed because they are no longer the source of truth</li>
       </ul>
     </div>
   </div>
@@ -83,29 +83,16 @@
       <div class="row g-3">
         <div class="col-md-4">
           <label class="form-label">Estimated duration</label>
-          <input class="form-control" type="number" step="0.1" name="hook_duration" value="{{ script_payload.hook.estimated_duration_sec }}">
+          <input class="form-control" type="number" step="0.1" name="hook_duration" value="{{ script_payload.hook.duration or script_payload.hook.estimated_duration_sec }}">
         </div>
         <div class="col-md-4">
-          <label class="form-label">Tension type</label>
-          <input class="form-control" name="hook_tension_type" value="{{ script_payload.hook.tension_type }}">
+          <label class="form-label">Hook type</label>
+          <input class="form-control" value="{{ script_payload.story_plan.hook_type if script_payload.story_plan else '' }}" readonly>
         </div>
         <div class="col-md-4">
-          <label class="form-label">Visual type</label>
-          <select class="form-select" name="hook_visual_type">
-            {% for visual_type in ['motion_text', 'broll', 'graph', 'stat_explosion', 'text_burst', 'reaction_card', 'split_comparison', 'broll_caption', 'chart'] %}
-              <option value="{{ visual_type }}" {% if script_payload.hook.visual_type == visual_type %}selected{% endif %}>{{ visual_type }}</option>
-            {% endfor %}
-          </select>
+          <label class="form-label">Arc type</label>
+          <input class="form-control" value="{{ script_payload.story_plan.arc_type if script_payload.story_plan else '' }}" readonly>
         </div>
-      </div>
-      <div class="mt-3">
-        <label class="form-label">Visual instruction</label>
-        <input class="form-control" name="hook_visual_instruction" value="{{ script_payload.hook.visual_instruction }}">
-      </div>
-      <div class="mt-3">
-        <label class="form-label">Visual beats (JSON)</label>
-        <textarea class="form-control" rows="8" name="hook_visual_beats">{{ script_payload.hook.visual_beats|default([])|tojson(indent=2) }}</textarea>
-        <small class="text-secondary">New beats: intent, visual_logic, pattern, props, animation_intent, context_ref. Legacy beat_type still works.</small>
       </div>
     </div>
   </div>
@@ -114,27 +101,13 @@
   {% for scene in script_payload.scenes %}
     <div class="card bg-panel border-secondary-subtle mb-4">
       <div class="card-body">
-        <h2 class="h5">Scene {{ loop.index }}</h2>
-        <div class="mb-3">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h2 class="h5 mb-0">Scene {{ loop.index }}</h2>
+          <span class="small text-secondary">{{ scene.duration or 35 }} sec target</span>
+        </div>
+        <div class="mb-0">
           <label class="form-label">Narration</label>
-          <textarea class="form-control" rows="3" name="scene_{{ loop.index0 }}_narration">{{ scene.narration }}</textarea>
-        </div>
-        <div class="mb-3">
-          <label class="form-label">Visual instruction</label>
-          <input class="form-control" name="scene_{{ loop.index0 }}_visual_instruction" value="{{ scene.visual_instruction }}">
-        </div>
-        <div>
-          <label class="form-label">Visual type</label>
-          <select class="form-select" name="scene_{{ loop.index0 }}_visual_type">
-            {% for visual_type in ['motion_text', 'broll', 'graph', 'stat_explosion', 'text_burst', 'reaction_card', 'split_comparison', 'broll_caption', 'chart'] %}
-              <option value="{{ visual_type }}" {% if scene.visual_type == visual_type %}selected{% endif %}>{{ visual_type }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="mt-3">
-          <label class="form-label">Visual beats (JSON)</label>
-          <textarea class="form-control" rows="8" name="scene_{{ loop.index0 }}_visual_beats">{{ scene.visual_beats|default([])|tojson(indent=2) }}</textarea>
-          <small class="text-secondary">New beats: intent, visual_logic, pattern, props, animation_intent, context_ref. Legacy beat_type still works.</small>
+          <textarea class="form-control" rows="4" name="scene_{{ loop.index0 }}_narration">{{ scene.narration }}</textarea>
         </div>
       </div>
     </div>
@@ -143,27 +116,95 @@
   <div class="card bg-panel border-secondary-subtle mb-4">
     <div class="card-body">
       <h2 class="h5">Outro</h2>
-      <div class="mb-3">
+      <div class="mb-0">
         <label class="form-label">Narration</label>
         <textarea class="form-control" rows="3" name="outro_narration">{{ script_payload.outro.narration }}</textarea>
       </div>
-      <div class="mb-3">
-        <label class="form-label">Visual instruction</label>
-        <input class="form-control" name="outro_visual_instruction" value="{{ script_payload.outro.visual_instruction }}">
+    </div>
+  </div>
+
+  <div class="card bg-panel border-secondary-subtle mb-4">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2 class="h5 mb-0">Derived Story Plan</h2>
+        <span class="small text-secondary">{{ (script_payload.story_plan.sections or [])|length }} sections</span>
       </div>
-      <div>
-        <label class="form-label">Visual type</label>
-        <select class="form-select" name="outro_visual_type">
-          {% for visual_type in ['motion_text', 'broll', 'graph', 'stat_explosion', 'text_burst', 'reaction_card', 'split_comparison', 'broll_caption', 'chart'] %}
-            <option value="{{ visual_type }}" {% if script_payload.outro.visual_type == visual_type %}selected{% endif %}>{{ visual_type }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="mt-3">
-        <label class="form-label">Visual beats (JSON)</label>
-        <textarea class="form-control" rows="8" name="outro_visual_beats">{{ script_payload.outro.visual_beats|default([])|tojson(indent=2) }}</textarea>
-        <small class="text-secondary">New beats: intent, visual_logic, pattern, props, animation_intent, context_ref. Legacy beat_type still works.</small>
-      </div>
+      {% if script_payload.story_plan %}
+        <div class="mb-4">
+          <div class="section-label mb-2">Agenda</div>
+          <div class="d-flex flex-wrap gap-2">
+            {% for item in script_payload.story_plan.agenda or [] %}
+              <span class="badge text-bg-secondary">{{ item }}</span>
+            {% else %}
+              <span class="small text-secondary">No agenda items derived yet.</span>
+            {% endfor %}
+          </div>
+        </div>
+
+        {% for section in script_payload.story_plan.sections or [] %}
+          <div class="border border-secondary-subtle rounded p-3 mb-3">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+              <div>
+                <div class="section-label mb-1">Section {{ loop.index }}</div>
+                <div class="d-flex flex-wrap gap-2">
+                  <span class="badge text-bg-dark">{{ section.type }}</span>
+                  <span class="badge text-bg-secondary">{{ section.weight.level if section.weight else 'medium' }}</span>
+                  <span class="badge text-bg-secondary">score {{ '%.2f'|format((section.weight.score if section.weight else 0) or 0) }}</span>
+                </div>
+              </div>
+            </div>
+
+            <p class="mb-3">{{ section.text }}</p>
+
+            <div class="mb-3">
+              <div class="section-label mb-2">Concepts</div>
+              <div class="d-flex flex-wrap gap-2">
+                {% for concept in section.concepts or [] %}
+                  <span class="badge text-bg-info">{{ concept.concept }} · {{ concept.type }}</span>
+                {% else %}
+                  <span class="small text-secondary">No concept extracted for this section.</span>
+                {% endfor %}
+              </div>
+            </div>
+
+            <div>
+              <div class="section-label mb-2">Visual Plan</div>
+              {% for item in section.visual_plan or [] %}
+                <div class="bg-dark-subtle rounded p-3 mb-2">
+                  <div class="mb-2">
+                    <strong>Pattern:</strong> {{ item.visual.pattern if item.visual else '' }}
+                    {% if item.concept %}
+                      <span class="text-secondary">· {{ item.concept.concept }} ({{ item.concept.type }})</span>
+                    {% endif %}
+                  </div>
+
+                  {% if item.visual and item.visual.data %}
+                    <div class="small mb-2">
+                      <strong>Data:</strong>
+                      <code>{{ item.visual.data|tojson }}</code>
+                    </div>
+                  {% endif %}
+
+                  <div class="small">
+                    <strong>Beats:</strong>
+                    <ul class="mb-0 mt-1">
+                      {% for beat in item.beats.beats if item.beats and item.beats.beats %}
+                        <li><code>{{ beat.component }}</code> → {{ beat.text }}</li>
+                      {% else %}
+                        <li class="text-secondary">No beats derived.</li>
+                      {% endfor %}
+                    </ul>
+                  </div>
+                </div>
+              {% else %}
+                <p class="small text-secondary mb-0">No visual plan derived for this section yet.</p>
+              {% endfor %}
+            </div>
+          </div>
+        {% endfor %}
+      {% else %}
+        <p class="text-secondary mb-0">Story plan is not available yet.</p>
+      {% endif %}
     </div>
   </div>
 

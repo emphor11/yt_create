@@ -51,15 +51,17 @@ class SceneBuilderTestCase(unittest.TestCase):
 
         self.assertEqual(len(result["scenes"]), 1)
         scene = result["scenes"][0]
-        self.assertEqual(scene["scene_id"], "scene_1")
+        self.assertEqual(scene["concept"], "Debt Trap")
+        self.assertEqual(scene["pattern"], "RiskCard")
+        self.assertEqual(scene["data"], {"title": "DEBT TRAP"})
         self.assertTrue(Path(scene["audio_file"]).exists())
-        self.assertGreater(scene["total_duration"], 0)
+        self.assertGreater(scene["duration"], 0)
         self.assertEqual(len(scene["beats"]), 3)
         self.assertEqual(scene["beats"][0]["component"], "StatCard")
         self.assertEqual(scene["beats"][-1]["text"], "Debt Trap")
         self.assertEqual(scene["beats"][0]["start_time"], 0.0)
         self.assertEqual(scene["beats"][-1]["emphasis"], "hero")
-        self.assertLessEqual(scene["beats"][-1]["end_time"], scene["total_duration"])
+        self.assertLessEqual(scene["beats"][-1]["end_time"], scene["duration"])
 
     def test_build_scenes_falls_back_to_single_concept_card_when_beats_missing(self) -> None:
         result = build_scenes(
@@ -74,6 +76,7 @@ class SceneBuilderTestCase(unittest.TestCase):
 
         scene = result["scenes"][0]
         self.assertEqual(len(scene["beats"]), 2)
+        self.assertEqual(scene["pattern"], "ConceptCard")
         self.assertEqual(scene["beats"][0]["text"], "Inflation quietly reduces")
         self.assertEqual(scene["beats"][-1]["emphasis"], "hero")
 

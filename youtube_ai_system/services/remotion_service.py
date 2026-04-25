@@ -84,18 +84,32 @@ class RemotionService:
 
     def _props_for_render(self, spec: RenderSpec, project_path: Path) -> dict:
         props = dict(spec.props)
+        if spec.composition == "VideoRenderer":
+            scenes = []
+            for scene in props.get("scenes", []):
+                scene_copy = dict(scene)
+                audio_file = str(scene_copy.get("audio_file") or "").strip()
+                if audio_file:
+                    staged_audio = self._stage_public_asset(
+                        project_path,
+                        Path(audio_file).expanduser().resolve(),
+                        asset_subdir="audio",
+                    )
+                    scene_copy["audio_file"] = staged_audio
+                scenes.append(scene_copy)
+            props["scenes"] = scenes
         if spec.composition == "BrollOverlay" and spec.source_asset_path is not None:
             props["videoPath"] = self._stage_public_asset(project_path, spec.source_asset_path)
         return props
 
-    def _stage_public_asset(self, project_path: Path, source_path: Path) -> str:
+    def _stage_public_asset(self, project_path: Path, source_path: Path, asset_subdir: str = "broll") -> str:
         source_path = source_path.expanduser().resolve()
         if not source_path.exists():
             raise RuntimeError(f"Remotion source asset does not exist: {source_path}")
         stat = source_path.stat()
         digest = hashlib.sha1(f"{source_path}:{stat.st_mtime_ns}:{stat.st_size}".encode("utf-8")).hexdigest()[:12]
         suffix = source_path.suffix or ".mp4"
-        relative_path = Path("render-assets") / "broll" / f"{source_path.stem}-{digest}{suffix}"
+        relative_path = Path("render-assets") / asset_subdir / f"{source_path.stem}-{digest}{suffix}"
         destination = project_path / "public" / relative_path
         destination.parent.mkdir(parents=True, exist_ok=True)
         if not destination.exists() or destination.stat().st_size != stat.st_size:

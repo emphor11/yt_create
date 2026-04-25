@@ -86,6 +86,15 @@ class AppFlowTestCase(unittest.TestCase):
         body = response.get_data(as_text=True)
         self.assertNotIn("Hook must include a curiosity/tension signal.", body)
 
+    def test_script_editor_shows_derived_pipeline_not_legacy_visual_fields(self) -> None:
+        project_id = self._create_topic_ready_project()
+        response = self.client.post(f"/projects/{project_id}/script/generate", follow_redirects=True)
+        body = response.get_data(as_text=True)
+        self.assertIn("Derived Story Plan", body)
+        self.assertIn("How this page works now", body)
+        self.assertNotIn("Visual instruction", body)
+        self.assertNotIn("Visual beats (JSON)", body)
+
     def test_end_to_end_demo_flow_reaches_scheduled(self) -> None:
         project_id = self._create_topic_ready_project()
         self.client.post(f"/projects/{project_id}/script/generate", follow_redirects=True)

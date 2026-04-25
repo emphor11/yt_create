@@ -3,14 +3,14 @@ from __future__ import annotations
 from typing import Any
 
 
-COMPONENT_BY_TYPE = {
+PATTERN_BY_TYPE = {
     "definition": "ConceptCard",
     "comparison": "SplitComparison",
     "process": "StepFlow",
-    "cause_effect": "FlowBar",
+    "cause_effect": "StepFlow",
     "risk": "RiskCard",
     "growth": "GrowthChart",
-    "before_after": "BeforeAfterSplit",
+    "before_after": "SplitComparison",
     "paradox": "RiskCard",
 }
 
@@ -23,15 +23,15 @@ def map_concept_to_visual(concept_item: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Concept is required.")
     if len(concept.split()) > 3:
         raise ValueError("Concept title must be 3 words or fewer.")
-    if concept_type not in COMPONENT_BY_TYPE:
+    if concept_type not in PATTERN_BY_TYPE:
         raise ValueError(f"Unsupported concept type: {concept_type}")
 
-    component = COMPONENT_BY_TYPE[concept_type]
-    props = _props_for(concept, concept_type)
-    return {"component": component, "props": props}
+    pattern = PATTERN_BY_TYPE[concept_type]
+    data = _data_for(concept, concept_type)
+    return {"pattern": pattern, "data": data}
 
 
-def _props_for(concept: str, concept_type: str) -> dict[str, Any]:
+def _data_for(concept: str, concept_type: str) -> dict[str, Any]:
     if concept_type == "definition":
         return {"title": concept.upper()}
     if concept_type == "risk":
@@ -42,11 +42,11 @@ def _props_for(concept: str, concept_type: str) -> dict[str, Any]:
     if concept_type == "process":
         return {"steps": [concept]}
     if concept_type == "cause_effect":
-        return {"start_label": concept, "end_label": ""}
+        return {"steps": [concept]}
     if concept_type == "growth":
         return {"start": "", "end": concept, "curve": "up"}
     if concept_type == "before_after":
-        return {"before": "", "after": concept}
+        return {"left": {"label": "Before"}, "right": {"label": concept}}
     if concept_type == "paradox":
         return {"title": concept.upper()}
     raise ValueError(f"Unsupported concept type: {concept_type}")

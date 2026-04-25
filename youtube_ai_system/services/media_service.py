@@ -19,8 +19,11 @@ import requests
 from ..models.repository import ProjectRepository
 from .concept_service import ConceptService
 from .remotion_service import RemotionService
+from .render_spec_service import RenderSpec
 from .render_spec_service import RenderSpecService
 from .run_log import RunLogger
+from .scene_builder import build_scenes
+from .script_service import ScriptService
 from .voice_service import VoiceService
 
 # ---------------------------------------------------------------------------
@@ -79,6 +82,7 @@ class MediaService:
         self.render_specs = RenderSpecService()
         self.remotion = RemotionService()
         self.concepts = ConceptService()
+        self.script_service = ScriptService()
 
     # -----------------------------------------------------------------------
     # Public entry points
@@ -86,98 +90,15 @@ class MediaService:
     def generate_voice_and_visuals(self, project_id: int) -> None:
         project = self.repo.get_project(project_id)
         scenes = self.repo.list_scenes(project_id)
-        audio_root = Path(current_app.config["STORAGE_ROOT"]) / "audio" / str(project_id)
-        image_root = Path(current_app.config["STORAGE_ROOT"]) / "images" / str(project_id)
+        storage_root = Path(current_app.config["STORAGE_ROOT"]).expanduser().resolve()
+        audio_root = storage_root / "audio" / str(project_id)
+        image_root = storage_root / "images" / str(project_id)
         audio_root.mkdir(parents=True, exist_ok=True)
         image_root.mkdir(parents=True, exist_ok=True)
         self.logger.log("media_generation", "running", "Generating scene media.", project_id)
 
         for scene in scenes:
-            if self._scene_media_complete(scene):
-                if self._visual_debug_enabled():
-                    self._print_existing_scene_debug(scene)
-                self.logger.log(
-                    "media_generation",
-                    "completed",
-                    f"Skipping scene {scene['scene_order']} because media already exists.",
-                    project_id,
-                )
-                continue
-            # --- voice ---
-            self.logger.log(
-                "voice_generation", "running",
-                f"Starting voice generation for scene {scene['scene_order']}.",
-                project_id,
-            )
-            try:
-                voice_result = self._generate_audio(audio_root, scene["scene_order"], scene["narration_text"])
-                audio_path = voice_result.audio_path
-                subtitle_path = voice_result.subtitle_path
-                duration = voice_result.duration_sec
-                audio_source = voice_result.source
-                audio_status = "completed"
-            except Exception as exc:
-                self.logger.log(
-                    "voice_generation", "failed",
-                    f"Voice generation failed for scene {scene['scene_order']}: {exc}",
-                    project_id,
-                )
-                duration = self._estimate_duration(scene["narration_text"])
-                audio_path = audio_root / f"scene-{scene['scene_order']:02d}.wav"
-                self._create_silent_wav(audio_path, duration)
-                subtitle_path = None
-                audio_source = "demo_silent"
-                audio_status = "failed"
-
-            self.logger.log(
-                "voice_generation", audio_status,
-                f"Voice generation {audio_status} for scene {scene['scene_order']} (source={audio_source}, duration={duration}s).",
-                project_id,
-            )
-
-            # --- visual ---
-            self.logger.log(
-                "visual_generation", "running",
-                f"Starting visual generation for scene {scene['scene_order']} (type={scene.get('visual_type')}).",
-                project_id,
-            )
-            try:
-                if self._ten_minute_finance_enabled():
-                    visual_path, visual_source = self.generate_beat_clips(project_id, image_root, scene, duration)
-                else:
-                    visual_path, visual_source = self._generate_visual(
-                        project_id, image_root, scene,
-                        scene["scene_order"],
-                        scene["narration_text"], scene["visual_type"],
-                        scene.get("visual_instruction"), duration,
-                    )
-                visual_status = "completed"
-                self.logger.log(
-                    "visual_generation", "completed",
-                    f"Visual generation completed for scene {scene['scene_order']} (source={visual_source}).",
-                    project_id,
-                )
-            except Exception as exc:
-                self.logger.log(
-                    "visual_generation", "failed",
-                    f"Visual generation failed for scene {scene['scene_order']}: {exc}",
-                    project_id,
-                )
-                visual_path = None
-                visual_source = "remotion_failed"
-                visual_status = "failed"
-
-            scene_status = "generated" if (audio_status == "completed" and visual_status == "completed") else "failed"
-            self.repo.update_scene(
-                scene["id"],
-                audio_path=str(audio_path),
-                audio_duration_sec=duration,
-                subtitle_path=str(subtitle_path) if subtitle_path else None,
-                visual_path=str(visual_path) if visual_path else None,
-                audio_source=audio_source,
-                visual_source=visual_source,
-                status=scene_status,
-            )
+            self._generate_scene_media(project_id, scene, audio_root, image_root)
 
         live_audio_count = sum(
             1
@@ -194,13 +115,190 @@ class MediaService:
             project_id,
         )
 
+    def generate_scene_media(self, project_id: int, scene_id: int) -> None:
+        scene = self.repo.get_scene(scene_id)
+        if not scene or int(scene["video_project_id"]) != int(project_id):
+            raise ValueError(f"Scene {scene_id} does not belong to project {project_id}.")
+        storage_root = Path(current_app.config["STORAGE_ROOT"]).expanduser().resolve()
+        audio_root = storage_root / "audio" / str(project_id)
+        image_root = storage_root / "images" / str(project_id)
+        audio_root.mkdir(parents=True, exist_ok=True)
+        image_root.mkdir(parents=True, exist_ok=True)
+        self._generate_scene_media(project_id, scene, audio_root, image_root, force=True)
+
+    def _generate_scene_media(
+        self,
+        project_id: int,
+        scene: dict,
+        audio_root: Path,
+        image_root: Path,
+        force: bool = False,
+    ) -> None:
+        if not force and self._scene_media_complete(scene):
+            if self._visual_debug_enabled():
+                self._print_existing_scene_debug(scene)
+            self.logger.log(
+                "media_generation",
+                "completed",
+                f"Skipping scene {scene['scene_order']} because media already exists.",
+                project_id,
+            )
+            return
+
+        self.logger.log(
+            "voice_generation", "running",
+            f"Starting voice generation for scene {scene['scene_order']}.",
+            project_id,
+        )
+        try:
+            voice_result = self._generate_audio(audio_root, scene["scene_order"], scene["narration_text"])
+            audio_path = voice_result.audio_path
+            subtitle_path = voice_result.subtitle_path
+            duration = voice_result.duration_sec
+            audio_source = voice_result.source
+            audio_status = "completed"
+        except Exception as exc:
+            self.logger.log(
+                "voice_generation", "failed",
+                f"Voice generation failed for scene {scene['scene_order']}: {exc}",
+                project_id,
+            )
+            duration = self._estimate_duration(scene["narration_text"])
+            audio_path = audio_root / f"scene-{scene['scene_order']:02d}.wav"
+            self._create_silent_wav(audio_path, duration)
+            subtitle_path = None
+            audio_source = "demo_silent"
+            audio_status = "failed"
+
+        self.logger.log(
+            "voice_generation", audio_status,
+            f"Voice generation {audio_status} for scene {scene['scene_order']} (source={audio_source}, duration={duration}s).",
+            project_id,
+        )
+
+        self.logger.log(
+            "visual_generation", "running",
+            f"Starting visual generation for scene {scene['scene_order']} using scene renderer.",
+            project_id,
+        )
+        visual_pattern = str(scene.get("visual_type") or "")
+        visual_concept = str(scene.get("visual_instruction") or "")
+        scene_section: dict[str, object] = {"visual_plan": self._scene_visual_plan(scene)}
+        try:
+            scene_section = self._section_for_scene_render(scene, duration, audio_path)
+            visual_path, visual_source, visual_pattern, visual_concept = self._render_scene_with_scene_builder(
+                image_root,
+                scene["scene_order"],
+                scene_section,
+            )
+            visual_status = "completed"
+            self.logger.log(
+                "visual_generation", "completed",
+                f"Visual generation completed for scene {scene['scene_order']} (source={visual_source}).",
+                project_id,
+            )
+        except Exception as exc:
+            self.logger.log(
+                "visual_generation", "failed",
+                f"Visual generation failed for scene {scene['scene_order']}: {exc}",
+                project_id,
+            )
+            visual_path = None
+            visual_source = "remotion_failed"
+            visual_status = "failed"
+
+        scene_status = "generated" if (audio_status == "completed" and visual_status == "completed") else "failed"
+        self.repo.update_scene(
+            scene["id"],
+            audio_path=str(Path(audio_path).expanduser().resolve()),
+            audio_duration_sec=duration,
+            subtitle_path=str(subtitle_path) if subtitle_path else None,
+            visual_path=str(visual_path) if visual_path else None,
+            audio_source=audio_source,
+            visual_source=visual_source,
+            visual_type=visual_pattern,
+            visual_instruction=visual_concept,
+            visual_plan_json=json.dumps(scene_section.get("visual_plan") or [], ensure_ascii=False),
+            status=scene_status,
+        )
+
     def compute_dynamic_visual_ratio(self, project_id: int) -> tuple[float, list[dict]]:
-        dynamic_types = set(current_app.config["ALLOWED_VISUAL_TYPES"])
         scenes = self.repo.list_scenes(project_id)
         if not scenes:
             return 0.0, []
-        dynamic_count = sum(1 for scene in scenes if scene.get("visual_type") in dynamic_types)
+        dynamic_count = sum(
+            1
+            for scene in scenes
+            if scene.get("visual_path") and str(scene.get("visual_source") or "") not in {"remotion_failed", "unknown"}
+        )
         return dynamic_count / len(scenes), scenes
+
+    def _section_for_scene_render(self, scene: dict, audio_duration: float, audio_path: Path) -> dict:
+        visual_plan = self._scene_visual_plan(scene)
+        if not visual_plan:
+            visual_plan = self._derived_visual_plan_from_narration(
+                str(scene.get("narration_text") or ""),
+                str(scene.get("kind") or "body"),
+            )
+        return {
+            "text": str(scene.get("narration_text") or ""),
+            "weight": self._weight_for_scene_kind(str(scene.get("kind") or "body")),
+            "visual_plan": visual_plan,
+            "audio_file": str(audio_path),
+            "audio_duration": float(audio_duration),
+        }
+
+    def _scene_visual_plan(self, scene: dict) -> list[dict]:
+        raw = scene.get("visual_plan_json")
+        if not raw:
+            return []
+        if isinstance(raw, list):
+            return raw
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+        return parsed if isinstance(parsed, list) else []
+
+    def _derived_visual_plan_from_narration(self, narration: str, kind: str) -> list[dict]:
+        section = {
+            "type": "problem" if kind == "hook" else ("optimization" if kind == "outro" else "explanation"),
+            "text": narration,
+            "weight": self._weight_for_scene_kind(kind),
+        }
+        story_plan = {"hook": "", "agenda": [], "sections": [section]}
+        story_plan = self.script_service._attach_section_concepts(story_plan)
+        story_plan = self.script_service._attach_section_visual_plan(story_plan)
+        return list((story_plan.get("sections") or [{}])[0].get("visual_plan") or [])
+
+    def _weight_for_scene_kind(self, kind: str) -> dict[str, object]:
+        if kind == "hook":
+            return {"level": "high", "score": 0.9}
+        if kind == "outro":
+            return {"level": "medium", "score": 0.7}
+        return {"level": "medium", "score": 0.55}
+
+    def _render_scene_with_scene_builder(
+        self,
+        image_root: Path,
+        scene_order: int,
+        section: dict,
+    ) -> tuple[Path, str, str, str]:
+        scene_result = build_scenes([section])["scenes"][0]
+        output_path = image_root / f"scene-{scene_order:02d}.mp4"
+        spec = RenderSpec(
+            composition="VideoRenderer",
+            props={"scenes": [scene_result]},
+            duration_sec=float(scene_result.get("duration") or 0),
+            source="remotion_scene_builder",
+        )
+        self.remotion.render_video(spec, output_path)
+        return (
+            output_path,
+            "remotion_scene_builder",
+            str(scene_result.get("pattern") or ""),
+            str(scene_result.get("concept") or ""),
+        )
 
     def project_media_summary(self, project_id: int) -> dict[str, object]:
         scenes = self.repo.list_scenes(project_id)

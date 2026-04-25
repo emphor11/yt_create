@@ -306,9 +306,9 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         sections = payload["story_plan"]["sections"]
         self.assertTrue(sections[0]["visual_plan"])
         self.assertEqual(sections[0]["visual_plan"][0]["concept"]["type"], "numeric")
-        self.assertEqual(sections[0]["visual_plan"][0]["visual"]["component"], "CalculationStrip")
+        self.assertEqual(sections[0]["visual_plan"][0]["visual"]["pattern"], "NumericComparison")
         self.assertEqual(
-            sections[0]["visual_plan"][0]["visual"]["props"]["values"],
+            sections[0]["visual_plan"][0]["visual"]["data"]["values"],
             ["₹50,000 bill", "₹2,000 payment", "₹15,000 interest"],
         )
         self.assertEqual(
@@ -345,7 +345,7 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
             },
             "Minimum payments quietly extend debt.",
         )
-        self.assertEqual(fallback["visual"]["component"], "ConceptCard")
+        self.assertEqual(fallback["visual"]["pattern"], "ConceptCard")
         self.assertEqual(fallback["concept"]["type"], "fallback")
         self.assertEqual(fallback["beats"]["beats"][0]["text"], "Minimum payments stretch debt")
 

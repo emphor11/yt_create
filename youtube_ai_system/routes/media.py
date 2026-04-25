@@ -101,11 +101,11 @@ def regenerate_scene(project_id: int, scene_id: int):
     repo = ProjectRepository()
     scene = repo.get_scene(scene_id)
     if scene and scene["video_project_id"] == project_id:
-        repo.update_scene(scene_id, status="generated")
-        flash(
-            f"Marked scene {scene['scene_order']} for regeneration. Demo scaffold keeps the generated asset in place.",
-            "info",
-        )
+        try:
+            MediaService().generate_scene_media(project_id, scene_id)
+            flash(f"Regenerated scene {scene['scene_order']}.", "success")
+        except Exception as exc:
+            flash(f"Scene {scene['scene_order']} regeneration failed: {exc}", "danger")
     return redirect(url_for("media.scene_review", project_id=project_id))
 
 

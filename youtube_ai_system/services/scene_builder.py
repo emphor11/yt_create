@@ -6,6 +6,7 @@ from typing import Any
 
 from flask import current_app
 
+from .scene_mapper import map_pattern_to_component
 from .voice_service import VoiceService
 
 MIN_BEAT_DURATION = 0.6
@@ -30,17 +31,31 @@ class SceneBuilder:
             if not narration:
                 continue
 
-            voice_result = self.voice_service.generate_scene_audio(audio_root, index, narration)
-            audio_duration = self._scene_duration(float(voice_result.duration_sec), section)
+            audio_file = str(section.get("audio_file") or "").strip()
+            supplied_duration = section.get("audio_duration")
+            if audio_file and supplied_duration:
+                resolved_audio_file = str(Path(audio_file).expanduser().resolve())
+                resolved_duration = float(supplied_duration)
+            else:
+                voice_result = self.voice_service.generate_scene_audio(audio_root, index, narration)
+                resolved_audio_file = str(Path(voice_result.audio_path).expanduser().resolve())
+                resolved_duration = float(voice_result.duration_sec)
+
+            audio_duration = self._scene_duration(resolved_duration, section)
             beats = self._section_beats(section)
             timed_beats = self._timeline_from_beats(beats, audio_duration, section)
+            pattern, data, concept = self._scene_visual_contract(section)
+            map_pattern_to_component(pattern)
 
             scenes.append(
                 {
                     "scene_id": f"scene_{index}",
+                    "concept": concept,
+                    "pattern": pattern,
+                    "data": data,
                     "beats": timed_beats,
-                    "total_duration": round(audio_duration, 2),
-                    "audio_file": str(voice_result.audio_path),
+                    "duration": round(audio_duration, 2),
+                    "audio_file": resolved_audio_file,
                 }
             )
 
@@ -109,10 +124,48 @@ class SceneBuilder:
         return timeline
 
     def _audio_root(self) -> Path:
-        storage_root = Path(current_app.config["STORAGE_ROOT"])
+        storage_root = Path(current_app.config["STORAGE_ROOT"]).expanduser().resolve()
         audio_root = storage_root / "audio" / "scene_builder"
         audio_root.mkdir(parents=True, exist_ok=True)
         return audio_root
+
+    def _scene_visual_contract(self, section: dict[str, Any]) -> tuple[str, dict[str, Any], str]:
+        visual_plan = section.get("visual_plan") or []
+        if visual_plan:
+            item = visual_plan[0]
+            visual = item.get("visual") or {}
+            pattern = str(visual.get("pattern") or "").strip()
+            data = dict(visual.get("data") or {})
+            concept = str((item.get("concept") or {}).get("concept") or "").strip()
+            if pattern and data and concept:
+                return pattern, data, concept
+            inferred = self._infer_contract_from_beats(item)
+            if inferred is not None:
+                return inferred
+        fallback_text = self._fallback_text(str(section.get("text") or ""))
+        return "ConceptCard", {"title": fallback_text.upper()}, fallback_text
+
+    def _infer_contract_from_beats(self, item: dict[str, Any]) -> tuple[str, dict[str, Any], str] | None:
+        beats = ((item.get("beats") or {}).get("beats") or [])
+        if not beats:
+            return None
+        last_beat = beats[-1]
+        component = str(last_beat.get("component") or "").strip()
+        concept = str(last_beat.get("text") or "").strip()
+        if not component or not concept:
+            return None
+        if component == "RiskCard":
+            return "RiskCard", {"title": concept.upper()}, concept
+        if component == "SplitComparison":
+            return "SplitComparison", {"headline": concept}, concept
+        if component == "StepFlow":
+            return "StepFlow", {"steps": [concept]}, concept
+        if component == "GrowthChart":
+            return "GrowthChart", {"end": concept, "curve": "up"}, concept
+        if component in {"CalculationStrip", "StatCard"}:
+            values = [str(beat.get("text") or "").strip() for beat in beats if str(beat.get("text") or "").strip()]
+            return "NumericComparison", {"values": values}, concept
+        return "ConceptCard", {"title": concept.upper()}, concept
 
     def _fallback_text(self, section_text: str) -> str:
         lowered = section_text.lower()

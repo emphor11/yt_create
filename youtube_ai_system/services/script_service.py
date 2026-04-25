@@ -832,8 +832,8 @@ class ScriptService:
             return {
                 "concept": {"concept": strongest, "type": "numeric"},
                 "visual": {
-                    "component": "CalculationStrip",
-                    "props": {"values": numeric_phrases[:3]},
+                    "pattern": "NumericComparison",
+                    "data": {"values": numeric_phrases[:3]},
                 },
                 "beats": {
                     "beats": self._numeric_beats(numeric_phrases[:3], strongest),
@@ -843,8 +843,8 @@ class ScriptService:
         return {
             "concept": {"concept": strongest, "type": "numeric"},
             "visual": {
-                "component": "StatCard",
-                "props": {"title": strongest},
+                "pattern": "NumericComparison",
+                "data": {"values": [strongest]},
             },
             "beats": {
                 "beats": [{"component": "StatCard", "text": strongest}],
@@ -977,9 +977,15 @@ class ScriptService:
         if not item:
             return False
         visual = item.get("visual") or {}
-        props = visual.get("props") or {}
-        title = str(props.get("title", "")).strip()
-        if "title" in props and not title:
+        pattern = str(visual.get("pattern") or "").strip()
+        data = visual.get("data") or {}
+        if not pattern:
+            return False
+        if not isinstance(data, dict) or not data:
+            return False
+        if "title" in data and not str(data.get("title", "")).strip():
+            return False
+        if "values" in data and not [value for value in data.get("values") or [] if str(value).strip()]:
             return False
         beats = (item.get("beats") or {}).get("beats") or []
         if not beats:
@@ -1001,8 +1007,8 @@ class ScriptService:
         return {
             "concept": {"concept": fallback_text, "type": "fallback"},
             "visual": {
-                "component": "ConceptCard",
-                "props": {"title": fallback_text.upper()},
+                "pattern": "ConceptCard",
+                "data": {"title": fallback_text.upper()},
             },
             "beats": {
                 "beats": [{"component": "ConceptCard", "text": fallback_text}],
