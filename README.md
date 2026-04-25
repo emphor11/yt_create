@@ -28,6 +28,21 @@ Personal-use AI-assisted YouTube production app built with Flask and SQLite.
 
 These will be fixed in the v2 refinement pass.
 
+## Current Pipeline Checkpoint
+
+The current pipeline now includes:
+- semantic idea grouping
+- structured finance concept extraction
+- concept-first visual logic
+- audio-driven scene building
+- standalone visual expander work in progress
+
+This is a deliberate checkpoint. Come back here for the next refinement pass on:
+- idea grouping precision
+- finance concept quality
+- numeric visual storytelling
+- beat expansion quality
+
 ## What still needs external tooling or credentials
 
 - Flask installation
