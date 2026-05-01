@@ -74,6 +74,8 @@ class Config:
     )
     REMOTION_ENTRY = os.environ.get("REMOTION_ENTRY", "src/index.ts")
     REMOTION_CLI = os.environ.get("REMOTION_CLI", "npx")
+    REMOTION_RENDER_TIMEOUT = int(os.environ.get("REMOTION_RENDER_TIMEOUT", "300"))
+    REMOTION_CONCURRENCY = int(os.environ.get("REMOTION_CONCURRENCY", "2"))
     WHISPER_CLI = os.environ.get("WHISPER_CLI", "whisper")
     CAPTION_TOOL = os.environ.get("CAPTION_TOOL", "whisper").lower()
     BACKGROUND_MUSIC_PATH = os.environ.get("BACKGROUND_MUSIC_PATH")
