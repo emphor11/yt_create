@@ -7,11 +7,12 @@ import {COLORS, sceneText, sceneValues} from './visualUtils';
 export const GrowthChart: React.FC<BeatComponentProps> = ({beat, scene, frameWithinBeat}) => {
 	const {fps} = useVideoConfig();
 	const values = sceneValues(scene);
-	const start = sceneText(scene, 'start', values[0] || 'Start');
-	const end = sceneText(scene, 'end', values[values.length - 1] || beat.text || 'Result');
-	const rate = sceneText(scene, 'rate', beat.subtext || '');
+	const start = String(beat.props?.start ?? sceneText(scene, 'start', values[0] || 'Start'));
+	const end = String(beat.props?.end ?? sceneText(scene, 'end', values[values.length - 1] || beat.text || 'Result'));
+	const rate = String(beat.props?.rate ?? sceneText(scene, 'rate', beat.subtext || ''));
+	const curve = String(beat.props?.curve ?? sceneText(scene, 'curve', '')).toLowerCase();
 	const visualType = sceneText(scene, 'visual_type', '').toLowerCase();
-	const curveDown = visualType.includes('decay') || beat.text.toLowerCase().includes('leak') || beat.text.toLowerCase().includes('fall');
+	const curveDown = curve === 'down' || visualType.includes('decay') || beat.text.toLowerCase().includes('leak') || beat.text.toLowerCase().includes('fall');
 	const progress = interpolate(frameWithinBeat, [0, fps * 1.4], [0, 1], {
 		extrapolateLeft: 'clamp',
 		extrapolateRight: 'clamp',
@@ -81,4 +82,3 @@ const ValueBlock: React.FC<{label: string; value: string; accent: string}> = ({l
 		<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 72, lineHeight: 0.95, marginTop: 18}}>{value.toUpperCase()}</div>
 	</div>
 );
-

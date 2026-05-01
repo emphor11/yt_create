@@ -34,6 +34,13 @@ export const beatTitle = (beat: Beat): string =>
 export const beatSubtitle = (beat: Beat, fallback = ''): string =>
 	propText(beat.props, 'subtitle', beat.subtext || fallback);
 
+export type VisualNode = {
+	label: string;
+	value?: string;
+	subtext?: string;
+	color?: string;
+};
+
 export const compactWords = (text: string, fallback = 'Money'): string => {
 	const words = text
 		.replace(/\s+/g, ' ')
@@ -82,6 +89,33 @@ export const stepLabels = (beat: Beat, scene?: Scene): string[] => {
 		return pieces.map((piece) => compactWords(piece)).slice(0, 5);
 	}
 	return [compactWords(beat.text, 'Start'), compactWords(beat.subtext || 'Result', 'Result')];
+};
+
+export const visualNodes = (beat: Beat, scene?: Scene): VisualNode[] => {
+	const propNodes = beat.props?.nodes;
+	const dataNodes = scene?.data?.nodes;
+	const raw = Array.isArray(propNodes) ? propNodes : Array.isArray(dataNodes) ? dataNodes : undefined;
+	if (raw && raw.length > 0) {
+		return raw
+			.map((node) => {
+				if (typeof node === 'string' || typeof node === 'number') {
+					return {label: String(node)};
+				}
+				if (node && typeof node === 'object') {
+					const item = node as Record<string, unknown>;
+					return {
+						label: propText(item, 'label', propText(item, 'text', propText(item, 'value', 'Money'))),
+						value: propText(item, 'value'),
+						subtext: propText(item, 'subtext'),
+						color: propText(item, 'color'),
+					};
+				}
+				return {label: ''};
+			})
+			.filter((node) => node.label || node.value)
+			.slice(0, 5);
+	}
+	return stepLabels(beat, scene).map((label) => ({label}));
 };
 
 export const sceneValues = (scene?: Scene): string[] => {

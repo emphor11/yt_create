@@ -392,6 +392,8 @@ class StoryPipeline:
         numeric_phrases = self.numeric_phrases(text)
         start_value = str(finance_concept.get("start_value") or (numeric_phrases[0] if numeric_phrases else "")).strip()
         end_value = str(finance_concept.get("end_value") or (numeric_phrases[-1] if len(numeric_phrases) > 1 else "")).strip()
+        start_value = self._visual_state_value(start_value)
+        end_value = self._visual_state_value(end_value)
         rate = self._rate_value(finance_concept, numeric_phrases)
         visual_type = self._visual_type_for_section(section, concept_type, numeric_phrases, rate)
         process = self._arc_process(finance_concept, text, rate)
@@ -415,14 +417,37 @@ class StoryPipeline:
         concepts = section.get("concepts") or []
         if concepts:
             concept = dict(concepts[0])
+            concept_text = str(concept.get("concept") or "Money Change")
+            if concept_text == "Money Change":
+                inferred = self._concept_from_section_text(str(section.get("text") or ""))
+                if inferred:
+                    return inferred
             return {
-                "concept": str(concept.get("concept") or "Money Change"),
+                "concept": concept_text,
                 "type": str(concept.get("type") or "definition"),
             }
         finance_concept = dict(section.get("finance_concept") or {})
         concept_name = str(finance_concept.get("concept_name") or "Money Change").strip()
         concept_type = str(finance_concept.get("concept_type") or "definition").strip()
+        if concept_name in {"Unknown", "Money Change"}:
+            inferred = self._concept_from_section_text(str(section.get("text") or ""))
+            if inferred:
+                return inferred
         return {"concept": concept_name if concept_name != "Unknown" else "Money Change", "type": concept_type}
+
+    def _concept_from_section_text(self, text: str) -> dict[str, str] | None:
+        lowered = text.lower()
+        if "salary" in lowered and any(token in lowered for token in ("vanish", "disappear", "gone", "drain", "left")):
+            return {"concept": "Salary Depletion", "type": "risk"}
+        if "emi" in lowered:
+            return {"concept": "EMI Pressure", "type": "risk"}
+        if "debt" in lowered and "interest" in lowered:
+            return {"concept": "Debt Trap", "type": "risk"}
+        if "inflation" in lowered:
+            return {"concept": "Inflation Erosion", "type": "risk"}
+        if "sip" in lowered or "compound" in lowered:
+            return {"concept": "Compounding Growth", "type": "growth"}
+        return None
 
     def _visual_from_narrative_arc(self, section: dict[str, Any]) -> dict[str, Any]:
         arc = dict(section.get("narrative_arc") or {})
@@ -432,6 +457,8 @@ class StoryPipeline:
             values = [value for value in arc.get("numeric_values") or [] if str(value).strip()]
             if not values:
                 values = [value for value in (arc.get("start_state"), arc.get("rate"), arc.get("end_state")) if str(value or "").strip()]
+            if not values:
+                return {"pattern": "ConceptCard", "data": {"title": str(concept.get("concept") or "Money Change").upper()}}
             return {"pattern": "NumericComparison", "data": {"values": values}}
 
         try:
@@ -448,6 +475,7 @@ class StoryPipeline:
         concept = self._primary_visual_concept(section)
         concept_name = str(concept.get("concept") or "Money Change")
         concept_type = str(concept.get("type") or "definition")
+        visual_props = self._visual_props_for_arc(section, arc, concept)
         values = [str(value).strip() for value in arc.get("numeric_values") or [] if str(value).strip()]
         start_state = str(arc.get("start_state") or "").strip()
         end_state = str(arc.get("end_state") or "").strip()
@@ -457,42 +485,192 @@ class StoryPipeline:
 
         if values:
             beats = self._numeric_beats(values, values[-1])
-            if len(beats) < 5 and punch:
-                beats.append({"component": "HighlightText", "text": self._short_visual_text(punch)})
-            return [beat for beat in beats if self._is_valid_beat(beat)][:5]
+            if visual_props.get("nodes") and len(values) >= 2:
+                beats.insert(
+                    1,
+                    {
+                        "component": "FlowBar",
+                        "text": self._short_visual_text(str(visual_props.get("title") or "Money flow")),
+                        "subtext": "money movement",
+                        "props": visual_props,
+                    },
+                )
+            if punch:
+                beats.append({"component": "HighlightText", "text": self._short_visual_text(punch), "props": {"title": punch, "subtitle": concept_name}})
+            return [beat for beat in beats if self._is_valid_beat(beat)][:6]
 
         if concept_type == "comparison" or arc.get("has_comparison"):
             beats = [
-                {"component": "ConceptCard", "text": self._short_visual_text(concept_name)},
-                {"component": "SplitComparison", "text": self._short_visual_text(process or concept_name)},
-                {"component": "HighlightText", "text": self._short_visual_text(punch)},
+                {"component": "ConceptCard", "text": self._short_visual_text(concept_name), "props": {"title": concept_name, "subtitle": self._short_visual_text(process)}},
+                {"component": "SplitComparison", "text": self._short_visual_text(process or concept_name), "props": visual_props},
+                {"component": "HighlightText", "text": self._short_visual_text(punch), "props": {"title": punch, "subtitle": concept_name}},
             ]
             return [beat for beat in beats if self._is_valid_beat(beat)]
 
         if concept_type == "growth":
             beats = [
-                {"component": "StatCard", "text": self._short_visual_text(start_state or "Start small")},
-                {"component": "GrowthChart", "text": self._short_visual_text(process or concept_name)},
-                {"component": "StatCard", "text": self._short_visual_text(end_state or "Growth builds")},
-                {"component": "HighlightText", "text": self._short_visual_text(punch)},
+                {"component": "StatCard", "text": self._short_visual_text(start_state or "Start small"), "subtext": "start"},
+                {"component": "GrowthChart", "text": self._short_visual_text(process or concept_name), "props": visual_props},
+                {"component": "StatCard", "text": self._short_visual_text(end_state or "Growth builds"), "subtext": "result"},
+                {"component": "HighlightText", "text": self._short_visual_text(punch), "props": {"title": punch, "subtitle": concept_name}},
             ]
             return [beat for beat in beats if self._is_valid_beat(beat)]
 
         if concept_type == "risk" or arc.get("has_causation"):
+            middle_component = "BalanceBar" if visual_props.get("left") and visual_props.get("right") else "FlowBar"
             beats = [
-                {"component": "StatCard", "text": self._short_visual_text(start_state or concept_name)},
-                {"component": "FlowBar", "text": self._short_visual_text(rate or process or "Pressure rises")},
-                {"component": "FlowBar", "text": self._short_visual_text(end_state or "Money leaks")},
-                {"component": "HighlightText", "text": self._short_visual_text(punch)},
+                {"component": "StatCard" if start_state else "ConceptCard", "text": self._short_visual_text(start_state or concept_name), "props": {"title": concept_name, "subtitle": process}},
+                {"component": middle_component, "text": self._short_visual_text(rate or process or "Pressure rises"), "props": visual_props},
+                {"component": "FlowBar", "text": self._short_visual_text(end_state or "Money leaks"), "props": visual_props},
+                {"component": "HighlightText", "text": self._short_visual_text(punch), "props": {"title": punch, "subtitle": concept_name}},
             ]
             return [beat for beat in beats if self._is_valid_beat(beat)]
 
         beats = [
-            {"component": "ConceptCard", "text": self._short_visual_text(concept_name)},
-            {"component": "FlowBar", "text": self._short_visual_text(process or "Money moves")},
-            {"component": "HighlightText", "text": self._short_visual_text(punch)},
+            {"component": "ConceptCard", "text": self._short_visual_text(concept_name), "props": {"title": concept_name, "subtitle": self._short_visual_text(process)}},
+            {"component": "FlowBar", "text": self._short_visual_text(process or "Money moves"), "props": visual_props},
+            {"component": "HighlightText", "text": self._short_visual_text(punch), "props": {"title": punch, "subtitle": concept_name}},
         ]
         return [beat for beat in beats if self._is_valid_beat(beat)]
+
+    def _visual_props_for_arc(
+        self,
+        section: dict[str, Any],
+        arc: dict[str, Any],
+        concept: dict[str, str],
+    ) -> dict[str, Any]:
+        text = str(section.get("text") or "")
+        concept_name = str(concept.get("concept") or "Money Change").strip()
+        visual_type = str(arc.get("visual_type") or "concept").strip()
+        start_state = str(arc.get("start_state") or "").strip()
+        process = str(arc.get("process") or "").strip()
+        end_state = str(arc.get("end_state") or "").strip()
+        rate = str(arc.get("rate") or "").strip()
+        punch = str(arc.get("punch") or concept_name).strip()
+        values = [str(value).strip() for value in arc.get("numeric_values") or [] if str(value).strip()]
+
+        if visual_type == "comparison" or arc.get("has_comparison"):
+            left, right = self._comparison_pair(text, start_state, end_state, concept_name)
+            return {
+                "title": self._short_visual_text(concept_name),
+                "left": {"label": left},
+                "right": {"label": right},
+                "connector": "vs",
+            }
+        if visual_type == "growth":
+            return {
+                "title": self._short_visual_text(concept_name),
+                "start": start_state or (values[0] if values else "Start"),
+                "end": end_state or (values[-1] if values else punch),
+                "rate": rate or process,
+                "curve": "up",
+            }
+        if visual_type in {"balance_decay", "pressure"}:
+            left_value = self._percent_from_text(rate or text) or 65
+            return {
+                "title": self._short_visual_text(concept_name),
+                "left": {"label": self._balance_left_label(text), "value": left_value, "color": "#E63946"},
+                "right": {"label": "leftover", "value": max(0, 100 - left_value), "color": "#2EC4B6"},
+                "nodes": self._flow_nodes(values, start_state, process, end_state, punch, text),
+            }
+        return {
+            "title": self._short_visual_text(concept_name if concept_name != "Money Change" else self._flow_title(text)),
+            "nodes": self._flow_nodes(values, start_state, process, end_state, punch, text),
+        }
+
+    def _flow_nodes(
+        self,
+        values: list[str],
+        start_state: str,
+        process: str,
+        end_state: str,
+        punch: str,
+        text: str,
+    ) -> list[dict[str, str]]:
+        if values:
+            nodes = []
+            labels = ["start", "cost", "result"]
+            for index, value in enumerate(values[:4]):
+                subtext = self._value_subtext(value)
+                if not ("₹" in value or "%" in value or subtext):
+                    continue
+                nodes.append({"label": subtext or (labels[index] if index < len(labels) else "value"), "value": self._strip_value_label(value), "subtext": subtext})
+            if len(nodes) >= 2:
+                return nodes
+        candidates = [
+            ("salary", "Salary", start_state),
+            ("emi", "EMI", process),
+            ("rent", "Rent", ""),
+            ("spending", "Lifestyle", process),
+            ("expense", "Expenses", process),
+            ("saving", "Savings", end_state),
+            ("sip", "SIP", end_state),
+            ("debt", "Debt", start_state),
+            ("interest", "Interest", process),
+        ]
+        lowered = text.lower()
+        nodes: list[dict[str, str]] = []
+        for token, label, value in candidates:
+            if token in lowered and label.lower() not in {node["label"].lower() for node in nodes}:
+                nodes.append({"label": label, "value": self._strip_value_label(value) or "", "subtext": self._short_visual_text(value)})
+            if len(nodes) >= 4:
+                break
+        if len(nodes) < 2:
+            if "salary" in text.lower():
+                return [
+                    {"label": "Salary", "value": self._strip_value_label(start_state), "subtext": self._value_subtext(start_state)},
+                    {"label": "EMI + rent", "value": "", "subtext": "fixed costs"},
+                    {"label": "Lifestyle", "value": "", "subtext": "daily leaks"},
+                    {"label": "Left", "value": self._strip_value_label(end_state), "subtext": "month-end reality"},
+                ]
+            nodes = [
+                {"label": self._short_visual_text(start_state or "Start"), "value": self._strip_value_label(start_state), "subtext": self._value_subtext(start_state)},
+                {"label": self._short_visual_text(process or "Change"), "value": self._strip_value_label(process), "subtext": self._value_subtext(process)},
+                {"label": self._short_visual_text(end_state or punch or "Result"), "value": self._strip_value_label(end_state), "subtext": self._value_subtext(end_state)},
+            ]
+        return [node for node in nodes if str(node.get("label") or node.get("value") or "").strip()][:4]
+
+    def _comparison_pair(self, text: str, start_state: str, end_state: str, concept_name: str) -> tuple[str, str]:
+        lowered = text.lower()
+        if " vs " in lowered:
+            parts = re.split(r"\bvs\b|\bversus\b", text, maxsplit=1, flags=re.IGNORECASE)
+            if len(parts) == 2:
+                return self._short_visual_text(parts[0]), self._short_visual_text(parts[1])
+        if start_state and end_state:
+            return self._short_visual_text(start_state), self._short_visual_text(end_state)
+        if "before" in lowered and "after" in lowered:
+            return "Before", "After"
+        if "saving" in lowered and "spending" in lowered:
+            return "Saving", "Spending"
+        if "fd" in lowered and ("mutual" in lowered or "sip" in lowered):
+            return "FD", "Mutual Fund"
+        return "Before", self._short_visual_text(concept_name or "After")
+
+    def _percent_from_text(self, text: str) -> int | None:
+        match = re.search(r"(\d+(?:\.\d+)?)\s*%", str(text or ""))
+        if not match:
+            return None
+        return max(0, min(100, int(round(float(match.group(1))))))
+
+    def _balance_left_label(self, text: str) -> str:
+        lowered = text.lower()
+        if "emi" in lowered:
+            return "EMIs"
+        if "debt" in lowered:
+            return "debt pressure"
+        if "rent" in lowered:
+            return "fixed costs"
+        return "money out"
+
+    def _flow_title(self, text: str) -> str:
+        lowered = text.lower()
+        if "salary" in lowered:
+            return "Where salary goes"
+        if "emi" in lowered:
+            return "EMI pressure"
+        if "debt" in lowered:
+            return "Debt flow"
+        return "Money movement"
 
     def _visual_type_for_section(
         self,
@@ -502,6 +680,8 @@ class StoryPipeline:
         rate: str,
     ) -> str:
         lowered = str(section.get("text") or "").lower()
+        if "salary" in lowered and any(token in lowered for token in ("vanish", "disappear", "gone", "drain", "left")):
+            return "money_flow"
         if concept_type == "comparison" or section.get("has_comparison"):
             return "comparison"
         if concept_type == "growth":
@@ -595,9 +775,25 @@ class StoryPipeline:
                 return phrase
         return ""
 
+    def _visual_state_value(self, value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        if "₹" in text or "%" in text or text.lower().startswith("rs"):
+            return text
+        if self._value_subtext(text):
+            return text
+        if re.fullmatch(r"\d+(?:\.\d+)?", text):
+            return ""
+        return text
+
     def _arc_process(self, finance_concept: dict[str, Any], text: str, rate: str) -> str:
         action = str(finance_concept.get("action") or "").strip()
         lowered = text.lower()
+        if "salary" in lowered and any(token in lowered for token in ("vanish", "disappear", "gone", "drain", "left")):
+            return "Salary drains"
+        if "emi" in lowered:
+            return "EMI pressure"
         if rate and "interest" in lowered:
             return f"{rate} interest"
         if rate:

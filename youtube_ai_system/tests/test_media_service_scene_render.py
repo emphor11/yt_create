@@ -61,7 +61,7 @@ class MediaServiceSceneRenderTestCase(unittest.TestCase):
         self.assertEqual(section["finance_concept"]["concept_name"], "Salary Depletion")
         self.assertTrue(section["narrative_arc"])
         self.assertTrue(section["visual_plan"])
-        self.assertEqual(section["visual_type"], "pressure")
+        self.assertEqual(section["visual_type"], "money_flow")
 
     def test_format_number_uses_indian_finance_style(self) -> None:
         self.assertEqual(self.service._format_number(1000), "1,000")

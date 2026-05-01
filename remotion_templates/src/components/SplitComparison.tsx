@@ -13,8 +13,8 @@ export const SplitComparison: React.FC<BeatComponentProps> = ({beat, scene, fram
 		durationInFrames: 16,
 	});
 	const fallback = splitComparisonText(beat.text);
-	const dataLeft = scene?.data?.left;
-	const dataRight = scene?.data?.right;
+	const dataLeft = beat.props?.left ?? scene?.data?.left;
+	const dataRight = beat.props?.right ?? scene?.data?.right;
 	const left =
 		typeof dataLeft === 'object' && dataLeft
 			? propText(dataLeft as Record<string, unknown>, 'label', fallback.left)
