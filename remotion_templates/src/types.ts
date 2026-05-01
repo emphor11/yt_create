@@ -6,6 +6,7 @@ export type Beat = {
 	emphasis: 'normal' | 'subtle' | 'hero';
 	subtext?: string;
 	steps?: Array<Record<string, unknown>>;
+	props?: Record<string, unknown>;
 };
 
 export type Scene = {

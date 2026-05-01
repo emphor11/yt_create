@@ -1,18 +1,34 @@
 import React from 'react';
 import {useCurrentFrame, useVideoConfig} from 'remotion';
+import {BalanceBar} from './components/BalanceBar';
 import {CalculationStrip} from './components/CalculationStrip';
+import {ConceptCard} from './components/ConceptCard';
+import {FlowDiagram} from './components/FlowDiagram';
+import {GrowthChart} from './components/GrowthChart';
+import {RiskCard} from './components/RiskCard';
+import {SplitComparison} from './components/SplitComparison';
 import {StatCard} from './components/StatCard';
+import {StepFlow} from './components/StepFlow';
 import {Beat, Scene} from './types';
 import {timeToFrame} from './utils/timing';
 
 const COMPONENT_MAP = {
 	StatCard,
 	CalculationStrip,
-	ConceptCardScene: StatCard,
-	SplitComparisonScene: StatCard,
-	StepFlowScene: StatCard,
-	GrowthChartScene: StatCard,
-	RiskCardScene: StatCard,
+	ConceptCard,
+	ConceptCardScene: ConceptCard,
+	HighlightText: ConceptCard,
+	FlowBar: FlowDiagram,
+	FlowDiagram,
+	SplitComparison,
+	SplitComparisonScene: SplitComparison,
+	StepFlow,
+	StepFlowScene: StepFlow,
+	GrowthChart,
+	GrowthChartScene: GrowthChart,
+	RiskCard,
+	RiskCardScene: RiskCard,
+	BalanceBar,
 } as const;
 
 type Props = {
@@ -46,6 +62,7 @@ export const SceneRenderer: React.FC<Props> = ({scene}) => {
 	return (
 		<Component
 			beat={activeBeat}
+			scene={scene}
 			frameWithinBeat={frameWithinBeat}
 			durationFrames={durationFrames}
 		/>

@@ -123,7 +123,7 @@ class SceneBuilder:
                 "end_time": round(end_time, 2),
                 "emphasis": self._beat_emphasis(index, len(beats)),
             }
-            for key in ("subtext", "steps"):
+            for key in ("subtext", "steps", "props"):
                 if key in beat:
                     timed_beat[key] = beat[key]
             timeline.append(timed_beat)
@@ -281,7 +281,7 @@ class SceneBuilder:
                 "component": str(beat.get("component") or "").strip() or "ConceptCard",
                 "text": text,
             }
-            for extra_key in ("subtext", "steps"):
+            for extra_key in ("subtext", "steps", "props"):
                 if extra_key in beat:
                     cleaned_beat[extra_key] = beat[extra_key]
             cleaned.append(cleaned_beat)

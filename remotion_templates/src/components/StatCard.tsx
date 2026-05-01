@@ -49,7 +49,7 @@ export const StatCard: React.FC<BeatComponentProps> = ({
 					style={{
 						fontFamily: DISPLAY_FONT_FAMILY,
 						fontSize: isHero ? 154 : 132,
-						letterSpacing: '-0.04em',
+						letterSpacing: 0,
 						lineHeight: 0.92,
 						textTransform: 'uppercase',
 					}}
@@ -66,7 +66,7 @@ export const StatCard: React.FC<BeatComponentProps> = ({
 							color: 'rgba(255,255,255,0.72)',
 						}}
 					>
-						{isHero ? 'Key impact' : 'Core idea'}
+						{beat.subtext || (isHero ? 'Key impact' : 'Core idea')}
 					</div>
 				) : null}
 			</div>

@@ -80,6 +80,7 @@ class Config:
     CAPTION_TOOL = os.environ.get("CAPTION_TOOL", "whisper").lower()
     BACKGROUND_MUSIC_PATH = os.environ.get("BACKGROUND_MUSIC_PATH")
     BACKGROUND_MUSIC_VOLUME = float(os.environ.get("BACKGROUND_MUSIC_VOLUME", "0.08"))
+    ASSEMBLY_FFMPEG_TIMEOUT = int(os.environ.get("ASSEMBLY_FFMPEG_TIMEOUT", "600"))
     DEMO_MODE = os.environ.get("DEMO_MODE", "true").lower() == "true"
 
     TOPIC_LOOKBACK_DAYS = 7

@@ -8,6 +8,13 @@ const splitLabelAndValue = (text: string): {label: string; value: string} => {
 	if (parts.length <= 1) {
 		return {label: 'Value', value: text};
 	}
+	const firstLooksLikeValue = /^[₹$]?\d|^\d|^\d+%|^[+-]?\d/.test(parts[0]);
+	if (!firstLooksLikeValue) {
+		return {
+			label: parts.slice(0, -1).join(' '),
+			value: parts[parts.length - 1],
+		};
+	}
 	return {
 		value: parts[0],
 		label: parts.slice(1).join(' '),
@@ -19,10 +26,25 @@ export const CalculationStrip: React.FC<BeatComponentProps> = ({
 	frameWithinBeat,
 }) => {
 	const {fps} = useVideoConfig();
-	const rows = beat.text
-		.split('|')
-		.map((row) => row.trim())
-		.filter(Boolean);
+	const stepRows = Array.isArray(beat.steps)
+		? beat.steps
+				.map((step) => {
+					const label = typeof step.label === 'string' ? step.label : '';
+					const value =
+						typeof step.value === 'string' || typeof step.value === 'number'
+							? String(step.value)
+							: '';
+					const operation = typeof step.operation === 'string' ? step.operation : '';
+					return `${label} ${operation} ${value}`.replace(/\s+/g, ' ').trim();
+				})
+				.filter(Boolean)
+		: [];
+	const rows = stepRows.length > 0
+		? stepRows
+		: beat.text
+				.split('|')
+				.map((row) => row.trim())
+				.filter(Boolean);
 	const visibleRows = rows.length > 0 ? rows : [beat.text];
 
 	return (

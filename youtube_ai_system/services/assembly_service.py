@@ -14,6 +14,12 @@ from .run_log import RunLogger
 
 
 class AssemblyService:
+    FINAL_CRF = "18"
+    FINAL_PRESET = "veryfast"
+    TARGET_LOUDNESS = "-16"
+    TRUE_PEAK = "-1.5"
+    LOUDNESS_RANGE = "11"
+
     def __init__(self) -> None:
         self.repo = ProjectRepository()
         self.logger = RunLogger()
@@ -83,7 +89,7 @@ class AssemblyService:
             "\n".join(f"file '{segment_path.name}'" for segment_path in segment_paths)
         )
         assembled_path = output_dir / "assembled_timeline.mp4"
-        subprocess.run(
+        self._run_ffmpeg(
             [
                 ffmpeg_bin,
                 "-y",
@@ -98,8 +104,7 @@ class AssemblyService:
                 str(assembled_path),
             ],
             cwd=output_dir,
-            check=True,
-            capture_output=True,
+            timeout=180,
         )
 
         self.logger.log("assembly", "running", "Applying music mix and burned captions when configured.", project_id)
@@ -107,7 +112,7 @@ class AssemblyService:
         self._write_caption_srt(scenes, voice_srt, intro_offset=3.0, transition_sec=0.5)
         final_path = output_dir / "final_video.mp4"
         processed_path = self._apply_music_and_captions(ffmpeg_bin, assembled_path, voice_srt, final_path)
-        self.repo.update_project(project_id, final_video_path=str(final_path))
+        self.repo.update_project(project_id, final_video_path=str(processed_path))
         self.logger.log("assembly", "completed", "Rendered V2 pre-CapCut master MP4 with ffmpeg.", project_id)
         return str(processed_path)
 
@@ -142,13 +147,15 @@ class AssemblyService:
                 "-preset",
                 "veryfast",
                 "-crf",
-                "18",
+                self.FINAL_CRF,
                 "-pix_fmt",
                 "yuv420p",
                 "-c:a",
                 "aac",
                 "-b:a",
                 "192k",
+                "-movflags",
+                "+faststart",
                 str(output_path),
             ]
         else:
@@ -173,16 +180,18 @@ class AssemblyService:
                 "-preset",
                 "veryfast",
                 "-crf",
-                "18",
+                self.FINAL_CRF,
                 "-pix_fmt",
                 "yuv420p",
                 "-c:a",
                 "aac",
                 "-b:a",
                 "192k",
+                "-movflags",
+                "+faststart",
                 str(output_path),
             ]
-        subprocess.run(command, check=True, capture_output=True)
+        self._run_ffmpeg(command)
 
     def _render_timeline_card(self, ffmpeg_bin: str, spec, output_path: Path, label: str) -> None:
         try:
@@ -196,7 +205,7 @@ class AssemblyService:
             self._render_color_clip(ffmpeg_bin, output_path, spec.duration_sec, label)
 
     def _render_color_clip(self, ffmpeg_bin: str, output_path: Path, duration_sec: float, label: str) -> None:
-        subprocess.run(
+        self._run_ffmpeg(
             [
                 ffmpeg_bin,
                 "-y",
@@ -212,23 +221,23 @@ class AssemblyService:
                 "-c:v",
                 "libx264",
                 "-preset",
-                "veryfast",
+                self.FINAL_PRESET,
                 "-crf",
-                "18",
+                self.FINAL_CRF,
                 "-pix_fmt",
                 "yuv420p",
                 "-c:a",
                 "aac",
                 "-b:a",
                 "192k",
+                "-movflags",
+                "+faststart",
                 str(output_path),
             ],
-            check=True,
-            capture_output=True,
         )
 
     def _add_silent_audio(self, ffmpeg_bin: str, input_path: Path, output_path: Path, duration_sec: float) -> None:
-        subprocess.run(
+        self._run_ffmpeg(
             [
                 ffmpeg_bin,
                 "-y",
@@ -247,8 +256,6 @@ class AssemblyService:
                 "192k",
                 str(output_path),
             ],
-            check=True,
-            capture_output=True,
         )
 
     def _has_audio_stream(self, path: Path) -> bool:
@@ -271,6 +278,7 @@ class AssemblyService:
             check=True,
             capture_output=True,
             text=True,
+            timeout=30,
         )
         payload = json.loads(result.stdout or "{}")
         return bool(payload.get("streams"))
@@ -324,80 +332,154 @@ class AssemblyService:
         music_path = current_app.config.get("BACKGROUND_MUSIC_PATH")
         if current_app.config.get("MUSIC_ENABLED") and music_path and Path(music_path).exists():
             music_output = output_path.with_name("timeline_with_music.mp4")
-            volume = float(current_app.config.get("BACKGROUND_MUSIC_VOLUME", 0.08))
-            subprocess.run(
-                [
-                    ffmpeg_bin,
-                    "-y",
-                    "-i",
-                    str(current_path),
-                    "-stream_loop",
-                    "-1",
-                    "-i",
-                    str(music_path),
-                    "-filter_complex",
-                    f"[1:a]volume={volume},afade=t=in:st=0:d=2[music];[0:a][music]amix=inputs=2:duration=first:dropout_transition=2[aout]",
-                    "-map",
-                    "0:v",
-                    "-map",
-                    "[aout]",
-                    "-c:v",
-                    "copy",
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "192k",
-                    "-shortest",
-                    str(music_output),
-                ],
-                check=True,
-                capture_output=True,
-            )
+            self._mix_background_music(ffmpeg_bin, current_path, Path(music_path), music_output)
             current_path = music_output
 
+        captioned_path = output_path.with_name("timeline_with_captions.mp4")
         if current_app.config.get("CAPTIONS_ENABLED") and captions_path.exists():
-            safe_srt = str(captions_path).replace("'", "\\'")
-            subprocess.run(
-                [
-                    ffmpeg_bin,
-                    "-y",
-                    "-i",
-                    str(current_path),
-                    "-vf",
-                    f"subtitles='{safe_srt}':force_style='Fontsize=28,Outline=2,PrimaryColour=&HFFFFFF&,Alignment=2,MarginV=90'",
-                    "-c:v",
-                    "libx264",
-                    "-preset",
-                    "veryfast",
-                    "-crf",
-                    "18",
-                    "-c:a",
-                    "copy",
-                    str(output_path),
-                ],
-                check=True,
-                capture_output=True,
-            )
-        else:
-            subprocess.run(
-                [
-                    ffmpeg_bin,
-                    "-y",
-                    "-i",
-                    str(current_path),
-                    "-c:v",
-                    "libx264",
-                    "-preset",
-                    "veryfast",
-                    "-crf",
-                    "18",
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "192k",
-                    str(output_path),
-                ],
-                check=True,
-                capture_output=True,
-            )
+            self._burn_captions(ffmpeg_bin, current_path, captions_path, captioned_path)
+            current_path = captioned_path
+
+        self._final_export(ffmpeg_bin, current_path, output_path)
         return output_path
+
+    def _mix_background_music(self, ffmpeg_bin: str, input_path: Path, music_path: Path, output_path: Path) -> None:
+        duration = max(self._probe_duration(input_path), 0.1)
+        volume = float(current_app.config.get("BACKGROUND_MUSIC_VOLUME", 0.08))
+        fade_out_start = max(duration - 3.0, duration * 0.85)
+        self._run_ffmpeg(
+            [
+                ffmpeg_bin,
+                "-y",
+                "-i",
+                str(input_path),
+                "-stream_loop",
+                "-1",
+                "-i",
+                str(music_path),
+                "-filter_complex",
+                (
+                    f"[1:a]atrim=0:{duration:.2f},afade=t=in:st=0:d=2,"
+                    f"afade=t=out:st={fade_out_start:.2f}:d=3,volume={volume}[music];"
+                    "[0:a][music]amix=inputs=2:duration=first:dropout_transition=2[aout]"
+                ),
+                "-map",
+                "0:v",
+                "-map",
+                "[aout]",
+                "-c:v",
+                "copy",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                "-shortest",
+                str(output_path),
+            ]
+        )
+
+    def _burn_captions(self, ffmpeg_bin: str, input_path: Path, captions_path: Path, output_path: Path) -> None:
+        safe_srt = str(captions_path).replace("'", "\\'")
+        self._run_ffmpeg(
+            [
+                ffmpeg_bin,
+                "-y",
+                "-i",
+                str(input_path),
+                "-vf",
+                f"subtitles='{safe_srt}':force_style='Fontsize=28,Outline=2,PrimaryColour=&HFFFFFF&,Alignment=2,MarginV=90'",
+                "-c:v",
+                "libx264",
+                "-preset",
+                self.FINAL_PRESET,
+                "-crf",
+                self.FINAL_CRF,
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "copy",
+                "-movflags",
+                "+faststart",
+                str(output_path),
+            ]
+        )
+
+    def _final_export(self, ffmpeg_bin: str, input_path: Path, output_path: Path) -> None:
+        self._run_ffmpeg(
+            [
+                ffmpeg_bin,
+                "-y",
+                "-i",
+                str(input_path),
+                "-filter_complex",
+                (
+                    "[0:v]eq=contrast=1.05:saturation=0.94:brightness=-0.01[v];"
+                    f"[0:a]loudnorm=I={self.TARGET_LOUDNESS}:TP={self.TRUE_PEAK}:LRA={self.LOUDNESS_RANGE}[a]"
+                ),
+                "-map",
+                "[v]",
+                "-map",
+                "[a]",
+                "-c:v",
+                "libx264",
+                "-preset",
+                self.FINAL_PRESET,
+                "-crf",
+                self.FINAL_CRF,
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                "-movflags",
+                "+faststart",
+                str(output_path),
+            ],
+            timeout=int(current_app.config.get("ASSEMBLY_FFMPEG_TIMEOUT", 600)),
+        )
+
+    def _probe_duration(self, path: Path) -> float:
+        ffprobe_bin = shutil.which("ffprobe")
+        if not ffprobe_bin:
+            return 0.0
+        try:
+            result = subprocess.run(
+                [
+                    ffprobe_bin,
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "json",
+                    str(path),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            payload = json.loads(result.stdout or "{}")
+            return float((payload.get("format") or {}).get("duration") or 0.0)
+        except (subprocess.SubprocessError, ValueError, json.JSONDecodeError):
+            return 0.0
+
+    def _run_ffmpeg(self, command: list[str], cwd: Path | None = None, timeout: int | None = None) -> subprocess.CompletedProcess:
+        timeout_sec = int(timeout or current_app.config.get("ASSEMBLY_FFMPEG_TIMEOUT", 600))
+        try:
+            return subprocess.run(
+                command,
+                cwd=cwd,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout_sec,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(f"FFmpeg assembly step timed out after {timeout_sec}s.") from exc
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or exc.stdout or str(exc)).strip()
+            if len(detail) > 800:
+                detail = detail[:800].rstrip() + "...[truncated]"
+            raise RuntimeError(f"FFmpeg assembly step failed: {detail}") from exc
