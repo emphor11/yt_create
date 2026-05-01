@@ -23,7 +23,7 @@ from .render_spec_service import RenderSpec
 from .render_spec_service import RenderSpecService
 from .run_log import RunLogger
 from .scene_builder import build_scenes
-from .script_service import ScriptService
+from .story_pipeline import StoryPipeline
 from .voice_service import VoiceService
 
 # ---------------------------------------------------------------------------
@@ -82,7 +82,7 @@ class MediaService:
         self.render_specs = RenderSpecService()
         self.remotion = RemotionService()
         self.concepts = ConceptService()
-        self.script_service = ScriptService()
+        self.story_pipeline = StoryPipeline(logger=self.logger)
 
     # -----------------------------------------------------------------------
     # Public entry points
@@ -234,18 +234,31 @@ class MediaService:
         return dynamic_count / len(scenes), scenes
 
     def _section_for_scene_render(self, scene: dict, audio_duration: float, audio_path: Path) -> dict:
+        narration = str(scene.get("narration_text") or "")
+        kind = str(scene.get("kind") or "body")
+        intelligence = self._section_intelligence_from_narration(narration, kind)
+        stored_finance_concept = self._json_dict_from_scene_field(scene.get("finance_concept_json"))
+        if stored_finance_concept:
+            intelligence["finance_concept"] = stored_finance_concept
+
         visual_plan = self._scene_visual_plan(scene)
         if not visual_plan:
-            visual_plan = self._derived_visual_plan_from_narration(
-                str(scene.get("narration_text") or ""),
-                str(scene.get("kind") or "body"),
-            )
+            visual_plan = list(intelligence.get("visual_plan") or [])
         return {
-            "text": str(scene.get("narration_text") or ""),
-            "weight": self._weight_for_scene_kind(str(scene.get("kind") or "body")),
+            "text": narration,
+            "weight": self._weight_for_scene_kind(kind),
             "visual_plan": visual_plan,
             "audio_file": str(audio_path),
             "audio_duration": float(audio_duration),
+            "finance_concept": intelligence.get("finance_concept") or {},
+            "narrative_arc": intelligence.get("narrative_arc") or {},
+            "state": intelligence.get("state") or {},
+            "visual_type": str(intelligence.get("visual_type") or ""),
+            "dominant_entity": str(intelligence.get("dominant_entity") or "money"),
+            "idea_type": str(intelligence.get("idea_type") or "emphasis"),
+            "has_numbers": bool(intelligence.get("has_numbers")),
+            "has_comparison": bool(intelligence.get("has_comparison")),
+            "has_causation": bool(intelligence.get("has_causation")),
         }
 
     def _scene_visual_plan(self, scene: dict) -> list[dict]:
@@ -261,15 +274,91 @@ class MediaService:
         return parsed if isinstance(parsed, list) else []
 
     def _derived_visual_plan_from_narration(self, narration: str, kind: str) -> list[dict]:
+        section = self._section_intelligence_from_narration(narration, kind)
+        return list(section.get("visual_plan") or [])
+
+    def _section_intelligence_from_narration(self, narration: str, kind: str) -> dict:
+        signals = self._scene_text_signals(narration)
         section = {
             "type": "problem" if kind == "hook" else ("optimization" if kind == "outro" else "explanation"),
             "text": narration,
             "weight": self._weight_for_scene_kind(kind),
+            **signals,
         }
         story_plan = {"hook": "", "agenda": [], "sections": [section]}
-        story_plan = self.script_service._attach_section_concepts(story_plan)
-        story_plan = self.script_service._attach_section_visual_plan(story_plan)
-        return list((story_plan.get("sections") or [{}])[0].get("visual_plan") or [])
+        story_plan = self.story_pipeline.attach_section_concepts(story_plan)
+        story_plan = self.story_pipeline.attach_section_narrative_arc(story_plan)
+        story_plan = self.story_pipeline.attach_section_visual_plan(story_plan)
+        return dict((story_plan.get("sections") or [{}])[0])
+
+    def _scene_text_signals(self, narration: str) -> dict[str, object]:
+        return {
+            "dominant_entity": self._dominant_entity_from_text(narration),
+            "idea_type": self._idea_type_from_text(narration),
+            "has_numbers": bool(re.search(r"₹|Rs\.?\s*|\d+|%", narration, re.IGNORECASE)),
+            "has_comparison": bool(
+                re.search(r"\bvs\b|\bversus\b|\bbut\b|\bhowever\b|\binstead\b|\bcompared to\b", narration, re.IGNORECASE)
+            ),
+            "has_causation": bool(
+                re.search(
+                    r"\bbecause\b|\bso\b|\btherefore\b|\bleads to\b|\bresults in\b|\bmeans\b|\bcreates\b|\bcosts\b|\bbecomes\b",
+                    narration,
+                    re.IGNORECASE,
+                )
+            ),
+        }
+
+    def _dominant_entity_from_text(self, narration: str) -> str:
+        lowered = narration.lower()
+        ordered_entities = (
+            "salary",
+            "income",
+            "debt",
+            "loan",
+            "credit",
+            "interest",
+            "emi",
+            "savings",
+            "investment",
+            "sip",
+            "fd",
+            "inflation",
+            "tax",
+            "expense",
+            "expenses",
+            "rent",
+        )
+        for entity in ordered_entities:
+            if re.search(rf"\b{re.escape(entity)}\b", lowered):
+                return "expense" if entity == "expenses" else entity
+        return "money"
+
+    def _idea_type_from_text(self, narration: str) -> str:
+        lowered = narration.lower()
+        if any(token in lowered for token in ("vs", "versus", "compare", "comparison", "difference", "instead", "while")):
+            return "comparison"
+        if any(token in lowered for token in ("grow", "grows", "growth", "increase", "rise", "compound", "multiply", "build wealth")):
+            return "growth"
+        if any(token in lowered for token in ("lose", "lost", "drain", "shrinks", "shrink", "fall", "drop", "gone", "vanish", "disappear", "erode", "leak")):
+            return "decay"
+        if any(token in lowered for token in ("risk", "danger", "trap", "mistake", "debt", "interest", "minimum due")):
+            return "risk"
+        if any(token in lowered for token in ("automate", "track", "budget", "allocate", "save first", "invest first")):
+            return "process"
+        return "emphasis"
+
+    def _json_dict_from_scene_field(self, value: object) -> dict:
+        if not value:
+            return {}
+        if isinstance(value, dict):
+            return value
+        if not isinstance(value, str):
+            return {}
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
 
     def _weight_for_scene_kind(self, kind: str) -> dict[str, object]:
         if kind == "hook":
@@ -584,6 +673,7 @@ class MediaService:
                 self.repo.update_scene(scene["id"], visual_plan_json=scene["visual_plan_json"])
         else:
             beats = self._load_scene_beats(scene, scene_duration)
+        beats = self._normalize_beat_durations(beats, scene_duration)
         scene_order = int(scene["scene_order"])
         scene_dir = image_root / f"scene-{scene_order:02d}"
         scene_dir.mkdir(parents=True, exist_ok=True)
@@ -804,6 +894,27 @@ class MediaService:
                 }
             ]
         return beats
+
+    def _normalize_beat_durations(self, beats: list[dict], scene_duration: float) -> list[dict]:
+        if not beats or scene_duration <= 0:
+            return beats
+        durations = [max(float(beat.get("estimated_duration_sec") or 3.0), 0.1) for beat in beats]
+        total = sum(durations)
+        if total <= 0:
+            return beats
+        scale = scene_duration / total
+        normalized: list[dict] = []
+        for beat, duration in zip(beats, durations):
+            next_beat = dict(beat)
+            next_beat["estimated_duration_sec"] = round(duration * scale, 2)
+            normalized.append(next_beat)
+        actual_total = round(sum(float(beat.get("estimated_duration_sec") or 0) for beat in normalized), 2)
+        if normalized:
+            normalized[-1]["estimated_duration_sec"] = round(
+                float(normalized[-1].get("estimated_duration_sec") or 0) + (scene_duration - actual_total),
+                2,
+            )
+        return normalized
 
     def _fallback_beat_type(self, visual_type: str | None) -> str:
         if visual_type == "graph":
@@ -1386,8 +1497,12 @@ class MediaService:
         color_hex = self._resolve_chart_color(str(spec.get("color", "blue")))
         bar_color = _hex_to_rgb(color_hex)
         data = spec.get("data", [])
-        if not isinstance(data, list) or not data:
-            data = [{"label": "N/A", "value": 0}]
+        if not isinstance(data, list) or len(data) < 2:
+            data = [
+                {"label": "Start", "value": 40},
+                {"label": "Middle", "value": 60},
+                {"label": "End", "value": 80},
+            ]
 
         # Title
         t_bbox = title_font.getbbox(title)
@@ -1459,8 +1574,12 @@ class MediaService:
         line_color = _hex_to_rgb(color_hex)
         fill_color = _fade_rgb(line_color, 0.15)
         data = spec.get("data", [])
-        if not isinstance(data, list) or not data:
-            data = [{"label": "N/A", "value": 0}]
+        if not isinstance(data, list) or len(data) < 2:
+            data = [
+                {"label": "Start", "value": 40},
+                {"label": "Middle", "value": 60},
+                {"label": "End", "value": 80},
+            ]
 
         # Title
         t_bbox = title_font.getbbox(title)
@@ -1672,11 +1791,29 @@ class MediaService:
         return message or "Live Edge TTS failed. The app will use demo fallback audio instead."
 
     def _format_number(self, value: float) -> str:
+        if value >= 10_000_000:
+            formatted = f"{value / 10_000_000:.1f}".rstrip("0").rstrip(".")
+            return f"{formatted}Cr"
+        if value >= 100_000:
+            formatted = f"{value / 100_000:.1f}".rstrip("0").rstrip(".")
+            return f"{formatted}L"
         if value >= 1000:
-            return f"{value:,.0f}"
+            return self._format_indian_grouped_number(int(round(value)))
         if value == int(value):
             return f"{int(value)}"
         return f"{value:.1f}"
+
+    def _format_indian_grouped_number(self, value: int) -> str:
+        sign = "-" if value < 0 else ""
+        digits = str(abs(value))
+        if len(digits) <= 3:
+            return f"{sign}{digits}"
+        grouped = digits[-3:]
+        digits = digits[:-3]
+        while digits:
+            grouped = digits[-2:] + "," + grouped
+            digits = digits[:-2]
+        return f"{sign}{grouped}"
 
     def _create_silent_wav(self, path: Path, duration_sec: float) -> None:
         frame_rate = 16000

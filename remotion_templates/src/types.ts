@@ -3,7 +3,9 @@ export type Beat = {
 	text: string;
 	start_time: number;
 	end_time: number;
-	emphasis: 'normal' | 'hero';
+	emphasis: 'normal' | 'subtle' | 'hero';
+	subtext?: string;
+	steps?: Array<Record<string, unknown>>;
 };
 
 export type Scene = {

@@ -56,12 +56,13 @@ class SceneBuilderTestCase(unittest.TestCase):
         self.assertEqual(scene["data"], {"title": "DEBT TRAP"})
         self.assertTrue(Path(scene["audio_file"]).exists())
         self.assertGreater(scene["duration"], 0)
-        self.assertEqual(len(scene["beats"]), 3)
+        self.assertEqual(scene["duration"], scene["total_duration"])
+        self.assertGreaterEqual(len(scene["beats"]), 2)
         self.assertEqual(scene["beats"][0]["component"], "StatCard")
-        self.assertEqual(scene["beats"][-1]["text"], "Debt Trap")
+        self.assertIn(scene["beats"][-1]["text"], {"Debt Trap", "Interest grows Debt Trap"})
         self.assertEqual(scene["beats"][0]["start_time"], 0.0)
         self.assertEqual(scene["beats"][-1]["emphasis"], "hero")
-        self.assertLessEqual(scene["beats"][-1]["end_time"], scene["duration"])
+        self.assertEqual(scene["beats"][-1]["end_time"], scene["duration"])
 
     def test_build_scenes_falls_back_to_single_concept_card_when_beats_missing(self) -> None:
         result = build_scenes(
@@ -80,7 +81,7 @@ class SceneBuilderTestCase(unittest.TestCase):
         self.assertEqual(scene["beats"][0]["text"], "Inflation quietly reduces")
         self.assertEqual(scene["beats"][-1]["emphasis"], "hero")
 
-    def test_low_weight_shortens_beat_duration_within_limits(self) -> None:
+    def test_equal_audio_split_respects_minimum_duration(self) -> None:
         result = build_scenes(
             [
                 {
@@ -101,10 +102,9 @@ class SceneBuilderTestCase(unittest.TestCase):
         )
 
         beat = result["scenes"][0]["beats"][0]
-        self.assertGreaterEqual(beat["end_time"] - beat["start_time"], 0.6)
-        self.assertLessEqual(beat["end_time"] - beat["start_time"], 2.5)
+        self.assertGreaterEqual(beat["end_time"] - beat["start_time"], 1.2)
 
-    def test_longer_final_beat_gets_more_time_than_short_intro_beat(self) -> None:
+    def test_equal_audio_split_gives_same_duration_per_beat(self) -> None:
         result = build_scenes(
             [
                 {
@@ -126,8 +126,94 @@ class SceneBuilderTestCase(unittest.TestCase):
         scene = result["scenes"][0]
         first_duration = scene["beats"][0]["end_time"] - scene["beats"][0]["start_time"]
         second_duration = scene["beats"][1]["end_time"] - scene["beats"][1]["start_time"]
-        self.assertGreater(second_duration, first_duration)
+        self.assertAlmostEqual(second_duration, first_duration, places=1)
         self.assertEqual(scene["beats"][1]["emphasis"], "hero")
+
+    def test_component_weighted_timing_gives_calculation_more_time(self) -> None:
+        result = build_scenes(
+            [
+                {
+                    "text": "A ₹1,00,000 card bill at 40% interest creates ₹40,000 cost.",
+                    "audio_file": str((Path(self.temp_dir.name) / "storage" / "audio" / "dummy.wav").resolve()),
+                    "audio_duration": 12.0,
+                    "weight": {"level": "high", "score": 0.9},
+                    "visual_plan": [
+                        {
+                            "beats": {
+                                "beats": [
+                                    {"component": "StatCard", "text": "₹1,00,000 debt"},
+                                    {"component": "CalculationStrip", "text": "₹1,00,000 x 40% = ₹40,000"},
+                                    {"component": "StatCard", "text": "₹40,000 cost"},
+                                ]
+                            }
+                        }
+                    ],
+                }
+            ]
+        )
+
+        beats = result["scenes"][0]["beats"]
+        stat_duration = beats[0]["end_time"] - beats[0]["start_time"]
+        calculation_duration = beats[1]["end_time"] - beats[1]["start_time"]
+        self.assertGreater(calculation_duration, stat_duration)
+        self.assertEqual(beats[1]["emphasis"], "subtle")
+        self.assertEqual(beats[-1]["emphasis"], "hero")
+
+    def test_scene_builder_merges_all_visual_plan_beats_and_prefers_numeric_contract(self) -> None:
+        result = build_scenes(
+            [
+                {
+                    "text": "Credit card debt at 40% interest means ₹1,00,000 becomes ₹1,40,000 in one year.",
+                    "audio_file": str((Path(self.temp_dir.name) / "storage" / "audio" / "dummy.wav").resolve()),
+                    "audio_duration": 12.0,
+                    "weight": {"level": "high", "score": 0.9},
+                    "finance_concept": {
+                        "start_value": "₹1,00,000",
+                        "end_value": "₹1,40,000",
+                        "percentage": 40.0,
+                    },
+                    "narrative_arc": {
+                        "visual_type": "balance_decay",
+                        "rate": "40%",
+                        "start_state": "₹1,00,000",
+                        "end_state": "₹1,40,000",
+                    },
+                    "visual_plan": [
+                        {
+                            "concept": {"concept": "Debt Trap", "type": "risk"},
+                            "visual": {"pattern": "RiskCard", "data": {"title": "DEBT TRAP"}},
+                            "beats": {
+                                "beats": [
+                                    {"component": "FlowBar", "text": "Debt Trap"},
+                                ]
+                            },
+                        },
+                        {
+                            "concept": {"concept": "40% interest", "type": "numeric"},
+                            "visual": {
+                                "pattern": "NumericComparison",
+                                "data": {"values": ["₹1,00,000", "40%", "₹1,40,000"]},
+                            },
+                            "beats": {
+                                "beats": [
+                                    {"component": "StatCard", "text": "₹1,00,000"},
+                                    {"component": "CalculationStrip", "text": "₹1,00,000 x 40% = ₹1,40,000"},
+                                    {"component": "StatCard", "text": "₹1,40,000"},
+                                ]
+                            },
+                        },
+                    ],
+                }
+            ]
+        )
+
+        scene = result["scenes"][0]
+        self.assertEqual(scene["pattern"], "NumericComparison")
+        self.assertEqual(scene["data"]["values"], ["₹1,00,000", "40%", "₹1,40,000"])
+        self.assertEqual(scene["data"]["rate"], "40%")
+        self.assertEqual(scene["data"]["visual_type"], "balance_decay")
+        self.assertIn("Debt Trap", [beat["text"] for beat in scene["beats"]])
+        self.assertIn("₹1,40,000", [beat["text"] for beat in scene["beats"]])
 
     def test_single_existing_beat_expands_into_two_story_beats(self) -> None:
         result = build_scenes(
@@ -174,7 +260,7 @@ class SceneBuilderTestCase(unittest.TestCase):
         self.assertEqual(scene["beats"][0]["text"], "Automate before you spend")
         self.assertEqual(scene["beats"][1]["text"], "Automate savings")
 
-    def test_timing_variation_stays_deterministic_and_final_beat_is_longer(self) -> None:
+    def test_timing_stays_deterministic_with_equal_audio_split(self) -> None:
         first = build_scenes(
             [
                 {
@@ -214,9 +300,35 @@ class SceneBuilderTestCase(unittest.TestCase):
         first_beats = first["scenes"][0]["beats"]
         second_beats = second["scenes"][0]["beats"]
         self.assertEqual(first_beats, second_beats)
-        first_duration = first_beats[0]["end_time"] - first_beats[0]["start_time"]
-        second_duration = first_beats[1]["end_time"] - first_beats[1]["start_time"]
-        self.assertGreater(second_duration, first_duration)
+        self.assertEqual(first_beats[-1]["end_time"], first["scenes"][0]["duration"])
+
+    def test_too_many_beats_merges_last_two_for_minimum_duration(self) -> None:
+        result = build_scenes(
+            [
+                {
+                    "text": "Debt pressure rises fast when interest compounds every month.",
+                    "audio_file": str((Path(self.temp_dir.name) / "storage" / "audio" / "dummy.wav").resolve()),
+                    "audio_duration": 4.0,
+                    "weight": {"level": "medium", "score": 0.5},
+                    "visual_plan": [
+                        {
+                            "beats": {
+                                "beats": [
+                                    {"component": "ConceptCard", "text": "Borrow money"},
+                                    {"component": "FlowBar", "text": "Interest starts"},
+                                    {"component": "FlowBar", "text": "Payments continue"},
+                                    {"component": "RiskCard", "text": "Pressure rises"},
+                                ]
+                            }
+                        }
+                    ],
+                }
+            ]
+        )
+        scene = result["scenes"][0]
+        self.assertEqual(len(scene["beats"]), 3)
+        for beat in scene["beats"]:
+            self.assertGreaterEqual(beat["end_time"] - beat["start_time"], 1.2)
 
 
 if __name__ == "__main__":

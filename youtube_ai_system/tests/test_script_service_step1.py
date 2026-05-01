@@ -5,12 +5,16 @@ from pathlib import Path
 from youtube_ai_system import create_app
 from youtube_ai_system.db import close_db
 from youtube_ai_system.services.script_service import ScriptService
+from youtube_ai_system.services.story_pipeline import StoryPipeline
 
 
 def _find_visual_keys(value, path="root"):
     found = []
     if isinstance(value, dict):
         for key, child in value.items():
+            if path.startswith("root.story_plan"):
+                found.extend(_find_visual_keys(child, f"{path}.{key}"))
+                continue
             if key in {"visual_beats", "visual_instruction", "visual_type"}:
                 found.append(f"{path}.{key}")
             found.extend(_find_visual_keys(child, f"{path}.{key}"))
@@ -38,6 +42,7 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.ctx = self.app.app_context()
         self.ctx.push()
         self.service = ScriptService()
+        self.pipeline = StoryPipeline()
 
     def tearDown(self) -> None:
         close_db()
@@ -95,13 +100,13 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.assertTrue(all("visual_plan_json" not in row for row in rows))
 
     def test_group_sentences_into_sections_pairs_simple_sequence(self) -> None:
-        grouped = self.service.group_sentences_into_sections(
+        grouped = self.pipeline.group_sentences_into_sections(
             ["Sentence 1", "Sentence 2", "Sentence 3", "Sentence 4"]
         )
         self.assertEqual(grouped, ["Sentence 1 Sentence 2", "Sentence 3 Sentence 4"])
 
     def test_group_sentences_merges_short_section_with_next(self) -> None:
-        grouped = self.service.group_sentences_into_sections(
+        grouped = self.pipeline.group_sentences_into_sections(
             [
                 "Debt hurts families.",
                 "Interest grows monthly.",
@@ -112,7 +117,7 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.assertGreaterEqual(len(grouped[0].split()), 8)
 
     def test_group_sentences_breaks_before_transition_starter(self) -> None:
-        grouped = self.service.group_sentences_into_sections(
+        grouped = self.pipeline.group_sentences_into_sections(
             [
                 "Debt hurts families badly.",
                 "Interest grows every month.",
@@ -129,7 +134,7 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         )
 
     def test_group_payload_filters_short_and_filler_sentences_before_grouping(self) -> None:
-        grouped_payload = self.service._group_payload_for_story_plan(
+        grouped_payload = self.pipeline.group_payload_for_story_plan(
             {
                 "hook": {"narration": "Debt grows quietly.", "duration": 6},
                 "scenes": [
@@ -157,7 +162,7 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         )
 
     def test_group_payload_uses_idea_grouper_metadata(self) -> None:
-        grouped_payload = self.service._group_payload_for_story_plan(
+        grouped_payload = self.pipeline.group_payload_for_story_plan(
             {
                 "hook": {"narration": "Debt can quietly grow.", "duration": 6},
                 "scenes": [
@@ -184,7 +189,7 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.assertIn("has_causation", scenes[0])
 
     def test_idea_grouper_keeps_complete_lifestyle_inflation_idea_together(self) -> None:
-        grouped_payload = self.service._group_payload_for_story_plan(
+        grouped_payload = self.pipeline.group_payload_for_story_plan(
             {
                 "hook": {"narration": "Raises can still leave you broke.", "duration": 6},
                 "scenes": [
@@ -206,7 +211,7 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.assertIn("That quietly slows wealth building.", scenes[0]["narration"])
 
     def test_idea_grouper_splits_credit_card_and_emergency_fund_ideas(self) -> None:
-        grouped_payload = self.service._group_payload_for_story_plan(
+        grouped_payload = self.pipeline.group_payload_for_story_plan(
             {
                 "hook": {"narration": "Debt feels manageable until it isn't.", "duration": 6},
                 "scenes": [
@@ -382,7 +387,7 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
             ["idea_hook", "idea_00"],
         )
 
-    def test_numeric_visuals_override_generic_concepts_and_agenda_uses_top_concepts(self) -> None:
+    def test_numeric_visuals_enhance_concept_visuals_and_agenda_uses_top_concepts(self) -> None:
         payload = self.service._normalize_payload(
             {
                 "hook": {"narration": "A ₹50,000 balance can quietly explode.", "duration": 6},
@@ -406,16 +411,113 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         )
         sections = payload["story_plan"]["sections"]
         self.assertTrue(sections[0]["visual_plan"])
-        self.assertEqual(sections[0]["visual_plan"][0]["concept"]["type"], "numeric")
-        self.assertEqual(sections[0]["visual_plan"][0]["visual"]["pattern"], "NumericComparison")
+        self.assertEqual(sections[0]["visual_plan"][0]["concept"]["type"], "risk")
+        unified_item = sections[0]["visual_plan"][0]
+        self.assertEqual(unified_item["visual"]["pattern"], "NumericComparison")
         self.assertEqual(
-            sections[0]["visual_plan"][0]["visual"]["data"]["values"],
+            unified_item["visual"]["data"]["values"],
             ["₹50,000 bill", "₹2,000 payment", "₹15,000 interest"],
         )
+        self.assertEqual(sections[0]["visual_type"], "balance_decay")
+        self.assertIn("state", sections[0])
+        self.assertTrue(sections[0]["narrative_arc"]["story_goal"])
         self.assertEqual(
             payload["story_plan"]["agenda"],
             ["Debt Trap", "Inflation Loss"],
         )
+
+    def test_visual_plan_uses_section_narrative_arc_beats(self) -> None:
+        story_plan = {
+            "hook": "",
+            "agenda": [],
+            "sections": [
+                {
+                    "type": "explanation",
+                    "text": "Credit card debt grows fast when interest compounds every month.",
+                    "weight": {"level": "medium", "score": 0.55},
+                    "concepts": [{"concept": "Debt Trap", "type": "risk"}],
+                    "has_numbers": False,
+                }
+            ],
+        }
+        story_plan = self.pipeline.attach_section_narrative_arc(story_plan)
+        planned = self.pipeline.attach_section_visual_plan(story_plan)
+        section = planned["sections"][0]
+        beats = planned["sections"][0]["visual_plan"][0]["beats"]["beats"]
+        self.assertGreaterEqual(len(beats), 1)
+        self.assertEqual(section["visual_type"], "pressure")
+        self.assertEqual(beats[0]["text"], "Debt Trap")
+        self.assertTrue(all("component" in beat for beat in beats))
+
+    def test_numeric_arc_uses_calculation_steps_when_values_are_related(self) -> None:
+        story_plan = {
+            "hook": "",
+            "agenda": [],
+            "sections": [
+                {
+                    "type": "explanation",
+                    "text": (
+                        "A ₹1,00,000 credit card debt at 40% interest costs ₹40,000 every year. "
+                        "Paying minimum dues creates a debt trap."
+                    ),
+                    "weight": {"level": "high", "score": 0.9},
+                    "dominant_entity": "debt",
+                    "idea_type": "risk",
+                    "has_numbers": True,
+                    "has_causation": True,
+                }
+            ],
+        }
+        story_plan = self.pipeline.attach_section_concepts(story_plan)
+        story_plan = self.pipeline.attach_section_narrative_arc(story_plan)
+        planned = self.pipeline.attach_section_visual_plan(story_plan)
+        beats = planned["sections"][0]["visual_plan"][0]["beats"]["beats"]
+        calculation = next(beat for beat in beats if beat["component"] == "CalculationStrip")
+
+        self.assertEqual(planned["sections"][0]["visual_type"], "balance_decay")
+        self.assertEqual(calculation["text"], "₹1,00,000 x 40% = ₹40,000")
+        self.assertEqual([step["operation"] for step in calculation["steps"][1:]], ["x", "="])
+        self.assertEqual(beats[-1]["component"], "HighlightText")
+
+    def test_section_flow_validation_logs_warning_without_failing_story_plan(self) -> None:
+        class FakeLogger:
+            def __init__(self) -> None:
+                self.messages = []
+
+            def log(self, stage_name, status, message, project_id=None) -> None:
+                self.messages.append((stage_name, status, message, project_id))
+
+        logger = FakeLogger()
+        pipeline = StoryPipeline(logger=logger)
+
+        def fail_section_flow(sections):
+            raise ValueError("Story sections are out of order.")
+
+        pipeline.story_intelligence._validate_section_flow = fail_section_flow
+        story_plan = pipeline.story_plan_from_idea_groups(
+            {
+                "hook": {"narration": "Debt can quietly trap you.", "duration": 6},
+                "scenes": [
+                    {
+                        "narration": "Paying minimum dues creates a debt trap.",
+                        "idea_group_id": "idea_00",
+                        "dominant_entity": "debt",
+                        "idea_type": "risk",
+                    },
+                    {
+                        "narration": "Budgeting can reduce the damage.",
+                        "idea_group_id": "idea_01",
+                        "dominant_entity": "budgeting",
+                        "idea_type": "optimization",
+                    },
+                ],
+            }
+        )
+
+        self.assertTrue(story_plan["sections"])
+        self.assertEqual(logger.messages[0][0], "story_planning")
+        self.assertEqual(logger.messages[0][1], "warning")
+        self.assertIn("out of order", logger.messages[0][2])
 
     def test_invalid_numeric_candidate_falls_back_to_concept_visual(self) -> None:
         payload = self.service._normalize_payload(
@@ -438,7 +540,7 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.assertNotEqual(concept_section["visual_plan"][0]["concept"]["type"], "numeric")
 
     def test_invalid_visual_item_is_rejected_without_text_fallback(self) -> None:
-        fallback = self.service._safe_visual_item(
+        fallback = self.pipeline.safe_visual_item(
             {
                 "concept": {"concept": "", "type": "numeric"},
                 "visual": {"component": "StatCard", "props": {"title": ""}},
@@ -447,8 +549,18 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         )
         self.assertIsNone(fallback)
 
+    def test_invalid_visual_item_rejects_sentence_fragments(self) -> None:
+        fallback = self.pipeline.safe_visual_item(
+            {
+                "concept": {"concept": "Debt Trap", "type": "risk"},
+                "visual": {"pattern": "RiskCard", "data": {"title": "DEBT TRAP"}},
+                "beats": {"beats": [{"component": "StatCard", "text": "as soon as"}]},
+            }
+        )
+        self.assertIsNone(fallback)
+
     def test_agenda_uses_strongest_section_insights_when_concepts_missing(self) -> None:
-        agenda = self.service._agenda_from_top_concepts(
+        agenda = self.pipeline.agenda_from_top_concepts(
             [
                 {
                     "weight": {"score": 0.9},
@@ -470,13 +582,13 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.assertEqual(agenda, ["₹1,60,000 leak", "Salary disappears early", "Automate savings"])
 
     def test_financial_number_filter_rejects_age_and_day_numbers(self) -> None:
-        phrases = self.service._numeric_phrases(
+        phrases = self.pipeline.numeric_phrases(
             "In your 20s, salary can vanish by day 12, and one card bill can break the month."
         )
         self.assertEqual(phrases, [])
 
     def test_numeric_labels_add_financial_meaning(self) -> None:
-        phrases = self.service._numeric_phrases(
+        phrases = self.pipeline.numeric_phrases(
             "A ₹8,00,000 salary can still leak ₹1,60,000 before you notice."
         )
         self.assertEqual(phrases, ["₹8,00,000 salary", "₹1,60,000 leak"])

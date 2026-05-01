@@ -2,22 +2,16 @@ from __future__ import annotations
 
 import json
 import re
-import ssl
 from typing import Any
-from urllib import error, request
+from urllib import error
 
-import certifi
 from flask import current_app
 import requests
 
 from ..models.repository import ProjectRepository, utcnow
-from .beat_planner import generate_beats
-from .finance_concept_extractor import FinanceConceptExtractor
-from .idea_grouper import IdeaGrouper
 from .narration_refiner import refine as refine_narration
 from .run_log import RunLogger
-from .story_intelligence_engine import StoryIntelligenceEngine
-from .visual_logic_engine import map_concept_to_visual
+from .story_pipeline import StoryPipeline
 
 TENSION_KEYWORDS = {
     "?",
@@ -78,44 +72,12 @@ VALID_TENSION_TYPES = {
     "before_after",
 }
 
-CONCEPT_PRIORITY = {
-    "numeric": 5,
-    "risk": 4,
-    "comparison": 3,
-    "growth": 2,
-    "definition": 1,
-}
-
-FINANCIAL_NUMBER_KEYWORDS = {
-    "salary",
-    "interest",
-    "payment",
-    "bill",
-    "amount",
-    "balance",
-    "debt",
-    "cost",
-    "loss",
-    "leak",
-    "spent",
-    "save",
-    "saved",
-    "savings",
-    "principal",
-    "income",
-    "emi",
-    "return",
-    "returns",
-}
-
 
 class ScriptService:
     def __init__(self) -> None:
         self.repo = ProjectRepository()
         self.logger = RunLogger()
-        self.story_intelligence = StoryIntelligenceEngine()
-        self.idea_grouper = IdeaGrouper()
-        self.finance_concept_extractor = FinanceConceptExtractor()
+        self.story_pipeline = StoryPipeline(logger=self.logger)
 
     def generate_script(
         self,
@@ -252,8 +214,7 @@ class ScriptService:
             "running",
             (
                 f"Script generation provider selection: provider={provider}, "
-                f"groq_key={'yes' if bool(current_app.config.get('GROQ_API_KEY')) else 'no'}, "
-                f"claude_key={'yes' if bool(current_app.config.get('CLAUDE_API_KEY')) else 'no'}."
+                f"groq_key={'yes' if bool(current_app.config.get('GROQ_API_KEY')) else 'no'}."
             ),
         )
 
@@ -269,20 +230,6 @@ class ScriptService:
                     "script_generation",
                     "failed",
                     f"Groq generation failed ({exc}). Falling back to the next provider.",
-                )
-
-        if provider in {"auto", "anthropic", "claude"} and current_app.config.get("CLAUDE_API_KEY"):
-            try:
-                payload = self._claude_script(topic, angle, prompt, current_app.config["CLAUDE_API_KEY"])
-                payload = self._normalize_payload(payload, topic, angle)
-                payload.setdefault("meta", {})["source"] = "live_claude"
-                self.logger.log("script_generation", "completed", "Script source selected: live_claude.")
-                return payload, "live Claude API"
-            except (error.URLError, ValueError, KeyError, json.JSONDecodeError) as exc:
-                self.logger.log(
-                    "script_generation",
-                    "failed",
-                    f"Claude generation failed ({exc}). Falling back to demo script.",
                 )
 
         payload = self._demo_script(topic, angle)
@@ -305,22 +252,21 @@ class ScriptService:
         )
         niche = niche or current_app.config.get("CHANNEL_NICHE", DEFAULT_CHANNEL_NICHE)
         tone = tone or current_app.config.get("SCRIPT_TONE", DEFAULT_SCRIPT_TONE)
-        if self._ten_minute_finance_enabled():
-            return self._build_ten_minute_finance_prompt(topic, angle)
         return (
             "You are a world-class YouTube script writer for a finance-explanation channel in the style of 20 Minute University-style videos (e.g. “All of Economics in 20 minutes”).\n\n"
             "Your only job is to generate raw spoken-style narration that will be processed by a deterministic system later.\n\n"
             "---\n\n"
             "OUTPUT REQUIREMENTS:\n\n"
-            "* Output only narration content inside the required JSON format\n"
+            "* Output only the required JSON object\n"
+            "* Narration fields must contain spoken narration only\n"
             "* No markdown, no bullet points, no extra text\n"
-            "* No section labels like \"Hook\", \"Body\"\n\n"
+            "* No section labels like \"Hook\", \"Body\", or \"Outro\" inside narration text\n\n"
             "---\n\n"
             "TONE & STYLE:\n\n"
             "* Direct, slightly sarcastic, warm, knowledgeable\n"
             "* Conversational (talk to the viewer, not at them)\n"
             "* Light humor + relatable analogies\n"
-            "* Use Indian finance context naturally (salary, EMI, SIP, inflation, debt trap, etc.)\n"
+            "* Use Indian finance context naturally (salary, EMI, SIP, inflation, debt trap, lifestyle inflation, compound interest, risk-vs-return, diversification, FOMO, etc.)\n"
             "* Keep language simple and spoken-friendly\n\n"
             "---\n\n"
             "CORE WRITING RULES:\n\n"
@@ -329,47 +275,59 @@ class ScriptService:
             "Do NOT combine multiple ideas using \"and\", \"because\", \"which\", etc.\n\n"
             "2. SHORT SENTENCES\n"
             "Keep sentences short (ideally under 20 words).\n"
-            "Split complex thoughts into multiple sentences.\n\n"
+            "Split complex thoughts into multiple short sentences.\n\n"
             "3. CONCEPT GROUPING\n"
             "Each concept should be expressed using 1–3 consecutive sentences.\n"
-            "Do NOT mix multiple concepts together.\n\n"
+            "Do NOT mix multiple concepts together in the same group of sentences.\n\n"
             "4. EXPLICIT CONCEPT VISIBILITY\n"
-            "The core concept must be clearly visible.\n"
-            "Avoid vague phrases like “this situation”.\n"
-            "Use clear terms like:\n\n"
+            "The core concept must be clearly visible from the sentence itself.\n"
+            "Avoid vague phrases like “this situation”, “this thing”, “this example”.\n"
+            "Use clear, concrete terms like:\n\n"
             "* emergency fund\n"
             "* debt trap\n"
             "* inflation\n"
             "* lifestyle inflation\n"
-            "* compound interest\n\n"
+            "* compound interest\n"
+            "* risk-vs-return\n"
+            "* diversification\n"
+            "* FOMO\n"
+            "* panic-selling\n"
+            "* behavioral bias\n\n"
             "---\n\n"
             "STRUCTURE (NATURAL FLOW ONLY):\n\n"
             "HOOK:\n\n"
             "* First 2–5 sentences\n"
-            "* Strong curiosity or tension\n"
-            "* No greetings or filler\n\n"
+            "* Start with strong curiosity or tension\n"
+            "* No greetings, no \"hey guys\", no \"welcome back\"\n"
+            "* Make the viewer feel like they are already in the problem (salary, EMIs, lack of savings, debt, inflation, investing confusion)\n\n"
             "BODY:\n\n"
-            "* Continuous flow of ideas\n"
-            "* Each concept explained clearly\n"
-            "* Use relatable examples and analogies\n\n"
+            "* Continuous flow of ideas with no labels, markdown, or bullet points inside narration\n"
+            "* Each body scene should focus on one concept group\n"
+            "* Each concept should be explained in 1–3 sentences\n"
+            "* For 8–12 minute scripts, prefer 8–12 body scenes\n"
+            "* Create enough body scenes for the requested duration\n"
+            "* Use relatable Indian-finance examples: salary, rent, EMI, SIP, FD, mutual funds, loans, crypto, etc.\n"
+            "* Prefer light, slightly irreverent humor and analogies\n\n"
             "OUTRO:\n\n"
             "* Last 3–6 sentences\n"
-            "* Quick recap\n"
-            "* One practical takeaway\n"
-            "* End with a strong line\n\n"
+            "* Quick recap of the main idea in 1–2 lines\n"
+            "* One clear, practical, non-guarantee takeaway (track EMIs, build an emergency fund, diversify, reduce debt, avoid panic-selling, etc.)\n"
+            "* End with one strong, memorable line that sticks in the viewer’s mind\n\n"
             "---\n\n"
             "CONSTRAINTS:\n\n"
-            "* Do NOT generate visuals\n"
-            "* Do NOT add extra fields\n"
-            "* Do NOT enforce structure labels\n"
-            "* Do NOT invent fake numbers\n\n"
+            "* Do NOT generate visuals (no \"show a bar chart here\", \"zoom in\", \"split screen\", etc.)\n"
+            "* Do NOT add extra fields in the JSON apart from the exact ones listed in the OUTPUT FORMAT below\n"
+            "* Do NOT invent fake factual claims, guaranteed returns, or predictions (no \"guaranteed 25% returns\", no \"XYZ stock will go to 1000\")\n"
+            "* You may use simple hypothetical numbers only when clearly framed as examples\n"
+            "* Duration fields are rough estimates only; do not force narration to match exact seconds\n"
+            "* Do NOT output section labels like \"Hook\", \"Body\", or \"Outro\" inside the narration text\n\n"
             "---\n\n"
             "INPUT VARIABLES (already passed by system):\n\n"
             "* CHANNEL_DESCRIPTION\n"
             "* TOPIC\n"
             "* AUDIENCE\n"
             "* DURATION_APPROX\n\n"
-            "Use them naturally in writing.\n\n"
+            "Use them naturally in writing, but do NOT expose them as separate JSON keys.\n\n"
             f"CHANNEL_DESCRIPTION: {niche}\n"
             f"TOPIC: {topic}\n"
             f"AUDIENCE: {angle}\n"
@@ -386,38 +344,8 @@ class ScriptService:
             '  "tags": ["tag1", "tag2"],\n'
             '  "tension_type_used": "curiosity_gap"\n'
             "}\n"
-            f"The total duration across hook + scenes + outro should be about {target_duration_minutes * 60} seconds.\n"
+            f"The total duration across hook + scenes + outro should be approximately {target_duration_minutes * 60} seconds, but this is soft guidance; focus on natural flow, not exact timing.\n"
             "Return only JSON.\n"
-        )
-
-    def _ten_minute_finance_enabled(self) -> bool:
-        return str(current_app.config.get("CHANNEL_STYLE", "")).lower() == "ten_minute_finance"
-
-    def _build_ten_minute_finance_prompt(self, topic: str, angle: str) -> str:
-        return (
-            "You are writing a script for \"10 Minute Finance\".\n\n"
-            "TONE RULES:\n"
-            "- Write like a smart friend roasting bad financial decisions with love.\n"
-            "- Use specific rupee amounts and percentages for claims.\n"
-            "- Use real Indian finance context where relevant.\n"
-            "- No jargon without plain-English explanation.\n\n"
-            "SCRIPT STRUCTURE:\n"
-            "- Hook: 5-7 seconds, unresolved tension.\n"
-            "- Body: 8-12 scenes, one idea per scene.\n"
-            "- Outro: 15-20 seconds with forward hook.\n"
-            "- Total narration: about 1400-1600 words.\n\n"
-            "OUTPUT FORMAT:\n"
-            "Return valid JSON only.\n"
-            "{\n"
-            '  "hook": {"narration": "string", "duration": 6, "tension_type": "shocking_statistic|curiosity_gap|contrarian_claim"},\n'
-            '  "scenes": [{"scene_index": 1, "kind": "body", "narration": "string", "duration": 60}],\n'
-            '  "outro": {"narration": "string", "duration": 18},\n'
-            '  "suggested_titles": ["title1", "title2", "title3"],\n'
-            '  "suggested_description": "string",\n'
-            '  "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"]\n'
-            "}\n\n"
-            f"Topic: {topic}\n"
-            f"Angle: {angle}\n"
         )
 
     def _groq_script(self, topic: str, angle: str, prompt: str, api_key: str) -> dict[str, Any]:
@@ -435,7 +363,7 @@ class ScriptService:
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.7,
-            "max_tokens": 5200 if self._ten_minute_finance_enabled() else 1800,
+            "max_tokens": 1800,
             "response_format": {"type": "json_object"},
         }
         try:
@@ -460,33 +388,6 @@ class ScriptService:
 
         text = response_json["choices"][0]["message"]["content"]
         self.logger.log("script_generation", "running", f"Raw Groq response before parsing: {text}")
-        return self._extract_json_payload(text)
-
-    def _claude_script(self, topic: str, angle: str, prompt: str, api_key: str) -> dict[str, Any]:
-        body = {
-            "model": current_app.config["CLAUDE_MODEL"],
-            "max_tokens": 1400,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-        req = request.Request(
-            "https://api.anthropic.com/v1/messages",
-            data=json.dumps(body).encode("utf-8"),
-            headers={
-                "content-type": "application/json",
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-            },
-            method="POST",
-        )
-        ssl_context = ssl.create_default_context(cafile=certifi.where())
-        try:
-            with request.urlopen(req, timeout=45, context=ssl_context) as response:
-                response_json = json.loads(response.read().decode("utf-8"))
-        except error.HTTPError as exc:
-            error_body = exc.read().decode("utf-8", errors="ignore")
-            raise ValueError(f"Anthropic API error {exc.code}: {error_body}") from exc
-        text = "".join(block.get("text", "") for block in response_json.get("content", []) if block.get("type") == "text")
-        self.logger.log("script_generation", "running", f"Raw Claude response before parsing: {text}")
         return self._extract_json_payload(text)
 
     def _extract_json_payload(self, raw_text: str) -> dict[str, Any]:
@@ -525,14 +426,14 @@ class ScriptService:
         normalized = {
             "hook": {
                 "narration": self._refined_narration(
-                    str(hook.get("narration") or hook.get("text") or f"The hidden truth about {topic.lower()}")
+                    str(hook.get("narration") or hook.get("text") or self._fallback_hook(topic))
                 ),
                 "duration": self._coerce_duration(hook.get("duration", hook.get("estimated_duration_sec")), 6),
             },
             "scenes": [],
             "outro": {
                 "narration": self._refined_narration(
-                    str(outro.get("narration") or outro.get("text") or f"Fix {angle.lower()} before it costs you another year.")
+                    str(outro.get("narration") or outro.get("text") or self._fallback_outro())
                 ),
                 "duration": self._coerce_duration(outro.get("duration", outro.get("estimated_duration_sec")), 18),
             },
@@ -544,14 +445,14 @@ class ScriptService:
                 continue
             normalized["scenes"].append(
                 {
-                    "kind": scene.get("kind", "body"),
-                    "scene_index": int(scene.get("scene_index") or index),
+                    "kind": "body",
+                    "scene_index": index,
                     "narration": self._refined_narration(
                         str(
                             scene.get("narration")
                             or scene.get("narration_text")
                             or scene.get("content")
-                            or f"Scene {index} expands the main idea around {topic.lower()}."
+                            or self._fallback_scene(index, topic)
                         )
                     ),
                     "duration": self._coerce_duration(scene.get("duration", scene.get("estimated_duration_sec")), 35),
@@ -561,10 +462,7 @@ class ScriptService:
         if not normalized["scenes"]:
             normalized["scenes"] = self._demo_script(topic, angle)["scenes"]
 
-        planning_payload = self._group_payload_for_story_plan(normalized)
-        normalized["story_plan"] = self._story_plan_from_idea_groups(planning_payload)
-        normalized["story_plan"] = self._attach_section_concepts(normalized["story_plan"])
-        normalized["story_plan"] = self._attach_section_visual_plan(normalized["story_plan"])
+        normalized["story_plan"] = self.story_pipeline.build_story_plan(normalized)
         normalized["meta"]["story_engine"] = "story_intelligence_v1"
         normalized["titles"] = self._normalize_titles(payload.get("suggested_titles") or payload.get("titles"), topic, angle)
         normalized["description"] = str(
@@ -608,586 +506,18 @@ class ScriptService:
         refined = refine_narration(narration)
         return " ".join(refined) if refined else str(narration or "").strip()
 
-    def group_sentences_into_sections(self, sentences: list[str]) -> list[str]:
-        cleaned = [self._normalize_text(sentence) for sentence in sentences if self._normalize_text(sentence)]
-        if not cleaned:
-            return []
+    def _fallback_hook(self, topic: str) -> str:
+        topic_text = str(topic or "money").strip().lower()
+        return f"The hidden truth about {topic_text}."
 
-        groups: list[list[str]] = []
-        index = 0
+    def _fallback_scene(self, index: int, topic: str) -> str:
+        topic_text = str(topic or "").strip().lower()
+        if topic_text:
+            return f"Scene {index} explains one clear idea about {topic_text}."
+        return f"Scene {index} explains one clear finance idea."
 
-        while index < len(cleaned):
-            current = [cleaned[index]]
-            index += 1
-
-            if index < len(cleaned):
-                current.append(cleaned[index])
-                index += 1
-
-            if index < len(cleaned):
-                next_sentence = cleaned[index]
-                if (
-                    len(current) < 3
-                    and self._section_word_count(current) < 8
-                    and not self._sentence_starts_new_section(next_sentence)
-                    and self._shares_topic_with_current(current, next_sentence)
-                    and self._section_word_count(current + [next_sentence]) <= 20
-                ):
-                    current.append(next_sentence)
-                    index += 1
-
-            groups.append(current)
-
-        groups = self._merge_short_sections(groups)
-        return [" ".join(group) for group in groups if group]
-
-    def _group_payload_for_story_plan(self, payload: dict[str, Any]) -> dict[str, Any]:
-        hook = dict(payload.get("hook") or {})
-        grouped_scenes: list[dict[str, Any]] = []
-        for scene in payload.get("scenes") or []:
-            raw_sentences = self._split_story_sentences(str(scene.get("narration") or ""))
-            body_sentences = [sentence for sentence in raw_sentences if self._keep_story_sentence(sentence)]
-            if len(body_sentences) < 2:
-                body_sentences = [sentence for sentence in raw_sentences if self._keep_story_sentence(sentence, allow_short=True)]
-
-            scene_groups = self._idea_grouped_scenes(body_sentences)
-            if not scene_groups:
-                combined_text = self._normalize_text(" ".join(body_sentences))
-                scene_groups = (
-                    [
-                        {
-                            "narration": combined_text,
-                            "idea_group_id": f"idea_{len(grouped_scenes):02d}",
-                            "dominant_entity": "money",
-                            "idea_type": "emphasis",
-                            "has_numbers": bool(re.search(r"₹|%|\d+", combined_text)),
-                            "has_comparison": bool(
-                                re.search(r"\bvs\b|\bversus\b|\bbut\b|\bhowever\b|\binstead\b", combined_text, re.IGNORECASE)
-                            ),
-                            "has_causation": bool(
-                                re.search(
-                                    r"\bbecause\b|\bso\b|\btherefore\b|\bleads to\b|\bresults in\b",
-                                    combined_text,
-                                    re.IGNORECASE,
-                                )
-                            ),
-                        }
-                    ]
-                    if combined_text
-                    else []
-                )
-            for scene_group in scene_groups:
-                scene_group["idea_group_id"] = f"idea_{len(grouped_scenes):02d}"
-                grouped_scenes.append(scene_group)
-
-        return {
-            "hook": hook,
-            "scenes": grouped_scenes,
-            "outro": {"narration": ""},
-        }
-
-    def _idea_grouped_scenes(self, body_sentences: list[str]) -> list[dict[str, Any]]:
-        narration_text = " ".join(sentence.strip() for sentence in body_sentences if sentence.strip())
-        if not narration_text.strip():
-            return []
-
-        idea_groups = self.idea_grouper.group(narration_text)
-        if not idea_groups:
-            return []
-
-        grouped_scenes: list[dict[str, Any]] = []
-        for group in idea_groups:
-            combined_text = self._normalize_text(group.combined_text)
-            if not combined_text:
-                continue
-            grouped_scenes.append(
-                {
-                    "narration": combined_text,
-                    "idea_group_id": group.group_id,
-                    "dominant_entity": group.dominant_entity,
-                    "idea_type": group.idea_type,
-                    "has_numbers": group.has_numbers,
-                    "has_comparison": group.has_comparison,
-                    "has_causation": group.has_causation,
-                }
-            )
-        return grouped_scenes
-
-    def _story_plan_from_idea_groups(self, payload: dict[str, Any]) -> dict[str, Any]:
-        hook_payload = payload.get("hook") or {}
-        hook_text = str(hook_payload.get("narration") or "").strip()
-        sections: list[dict[str, Any]] = []
-
-        for scene in payload.get("scenes") or []:
-            if not isinstance(scene, dict):
-                continue
-            text = self._normalize_text(str(scene.get("narration") or scene.get("narration_text") or ""))
-            if not text:
-                continue
-            section_type = self.story_intelligence._classify_sentence(text)
-            sections.append(
-                {
-                    "type": section_type,
-                    "text": text,
-                    "weight": self.story_intelligence._weight_for(section_type),
-                    "idea_group_id": scene.get("idea_group_id"),
-                    "dominant_entity": scene.get("dominant_entity") or "money",
-                    "idea_type": scene.get("idea_type") or "emphasis",
-                    "has_numbers": bool(scene.get("has_numbers")),
-                    "has_comparison": bool(scene.get("has_comparison")),
-                    "has_causation": bool(scene.get("has_causation")),
-                }
-            )
-
-        if len(sections) < 2 and hook_text:
-            hook_section_type = self.story_intelligence._classify_sentence(hook_text)
-            sections.insert(
-                0,
-                {
-                    "type": hook_section_type,
-                    "text": self._normalize_text(hook_text),
-                    "weight": self.story_intelligence._weight_for(hook_section_type),
-                    "idea_group_id": "idea_hook",
-                    "dominant_entity": "money",
-                    "idea_type": "emphasis",
-                    "has_numbers": bool(re.search(r"₹|%|\d+", hook_text)),
-                    "has_comparison": bool(re.search(r"\bvs\b|\bversus\b|\bbut\b|\bhowever\b|\binstead\b", hook_text, re.IGNORECASE)),
-                    "has_causation": bool(
-                        re.search(
-                            r"\bbecause\b|\bso\b|\btherefore\b|\bleads to\b|\bresults in\b",
-                            hook_text,
-                            re.IGNORECASE,
-                        )
-                    ),
-                },
-            )
-
-        sections = self.story_intelligence._ensure_section_progression(sections)
-        sections = self.story_intelligence._stable_sort_sections_by_stage(sections)
-        hook = self.story_intelligence._clean_hook_text(hook_text)
-        hook = self.story_intelligence._ensure_distinct_hook(hook, sections)
-        self.story_intelligence._validate_minimum_sections(sections)
-        self.story_intelligence._validate_section_flow(sections)
-
-        hook_type = self.story_intelligence._classify_hook_type(hook)
-        return {
-            "hook": hook,
-            "hook_type": hook_type,
-            "arc_type": self.story_intelligence._classify_arc_type(sections, hook_type),
-            "agenda": [],
-            "sections": sections,
-        }
-
-    def _attach_section_concepts(self, story_plan: dict[str, Any]) -> dict[str, Any]:
-        sections = story_plan.get("sections") or []
-        for section in sections:
-            concepts: list[dict[str, str]] = []
-            seen: set[tuple[str, str]] = set()
-            finance_concept = self.finance_concept_extractor.extract(
-                {
-                    "combined_text": str(section.get("text") or ""),
-                    "dominant_entity": str(section.get("dominant_entity") or "money"),
-                    "idea_type": str(section.get("idea_type") or "emphasis"),
-                }
-            )
-            section["finance_concept"] = {
-                "concept_name": finance_concept.concept_name,
-                "concept_type": finance_concept.concept_type,
-                "primary_entity": finance_concept.primary_entity,
-                "action": finance_concept.action,
-                "start_value": finance_concept.start_value,
-                "end_value": finance_concept.end_value,
-                "percentage": finance_concept.percentage,
-                "time_period": finance_concept.time_period,
-                "agent": finance_concept.agent,
-                "victim": finance_concept.victim,
-                "confidence": finance_concept.confidence,
-            }
-            concept = finance_concept.concept_name if finance_concept.concept_name != "Unknown" else None
-            concept_type = finance_concept.concept_type
-            if concept:
-                key = (str(concept), str(concept_type))
-                if key not in seen:
-                    seen.add(key)
-                    concepts.append({"concept": str(concept), "type": str(concept_type)})
-            concepts.sort(
-                key=lambda item: (
-                    CONCEPT_PRIORITY.get(item.get("type", ""), 0),
-                    len(str(item.get("concept") or "").split()),
-                ),
-                reverse=True,
-            )
-            section["concepts"] = concepts
-        story_plan["agenda"] = self._agenda_from_top_concepts(sections)
-        return story_plan
-
-    def _attach_section_visual_plan(self, story_plan: dict[str, Any]) -> dict[str, Any]:
-        sections = story_plan.get("sections") or []
-        for section in sections:
-            text = str(section.get("text") or "")
-            visual_plan: list[dict[str, Any]] = []
-            for concept in section.get("concepts") or []:
-                candidate = {
-                    "concept": dict(concept),
-                    "visual": map_concept_to_visual(concept),
-                    "beats": generate_beats(
-                        {**concept, "weight_level": section.get("weight", {}).get("level", "medium")},
-                        text,
-                    ),
-                }
-                safe_item = self._safe_visual_item(candidate)
-                if safe_item:
-                    visual_plan.append(safe_item)
-            numeric_plan = self._numeric_visual_plan(text)
-            if self._is_valid_visual_item(numeric_plan):
-                section["visual_plan"] = [numeric_plan]
-                continue
-            if visual_plan:
-                section["visual_plan"] = visual_plan
-                continue
-            section["visual_plan"] = []
-        return story_plan
-
-    def _split_story_sentences(self, text: str) -> list[str]:
-        parts = re.split(r"(?<=[.!?])\s+", str(text or "").strip())
-        return [part.strip() for part in parts if part.strip()]
-
-    def _sentence_starts_new_section(self, sentence: str) -> bool:
-        lowered = sentence.lower().strip()
-        if any(lowered.startswith(token) for token in ("but", "however", "so", "now", "because", "this means")):
-            return True
-        return len(sentence.split()) > 15
-
-    def _keep_story_sentence(self, sentence: str, allow_short: bool = False) -> bool:
-        lowered = sentence.lower().strip()
-        if len(sentence.split()) < 6 and not allow_short:
-            finance_short_tokens = (
-                "debt",
-                "credit",
-                "interest",
-                "salary",
-                "income",
-                "expense",
-                "expenses",
-                "spending",
-                "savings",
-                "investment",
-                "inflation",
-                "budget",
-                "fund",
-                "payment",
-                "trap",
-                "risk",
-                "wealth",
-                "tax",
-            )
-            if not re.search(r"₹|%|\d+", sentence) and not any(token in lowered for token in finance_short_tokens):
-                return False
-        if any(phrase in lowered for phrase in ("for instance", "let's", "we've all", "you know")):
-            return False
-        return True
-
-    def _normalize_text(self, text: str) -> str:
-        return " ".join(str(text or "").strip().split())
-
-    def _shares_topic_with_current(self, current: list[str], next_sentence: str) -> bool:
-        if not next_sentence:
-            return False
-        current_terms = self._topic_terms(" ".join(current))
-        next_terms = self._topic_terms(next_sentence)
-        return bool(current_terms.intersection(next_terms))
-
-    def _topic_terms(self, text: str) -> set[str]:
-        keywords = {
-            "debt",
-            "credit",
-            "payment",
-            "minimum",
-            "interest",
-            "inflation",
-            "savings",
-            "investment",
-            "returns",
-            "budget",
-            "budgeting",
-            "income",
-            "fund",
-            "loan",
-            "emi",
-            "sip",
-            "trap",
-            "risk",
-        }
-        return {word for word in re.findall(r"[a-z]+", text.lower()) if word in keywords}
-
-    def _section_word_count(self, section: list[str]) -> int:
-        return len(" ".join(section).split())
-
-    def _merge_short_sections(self, groups: list[list[str]]) -> list[list[str]]:
-        merged: list[list[str]] = []
-        index = 0
-        while index < len(groups):
-            current = list(groups[index])
-            next_group = groups[index + 1] if index + 1 < len(groups) else None
-            if (
-                self._section_word_count(current) < 8
-                and next_group is not None
-                and self._can_merge_short_sections(current, next_group)
-            ):
-                current.extend(groups[index + 1])
-                index += 1
-            merged.append(current)
-            index += 1
-        return merged
-
-    def _can_merge_short_sections(self, current: list[str], next_group: list[str]) -> bool:
-        current_text = " ".join(current)
-        next_text = " ".join(next_group)
-        current_terms = self._topic_terms(current_text)
-        next_terms = self._topic_terms(next_text)
-        if current_terms and next_terms:
-            return True
-        return bool(current_terms.intersection(next_terms))
-
-    def _agenda_from_top_concepts(self, sections: list[dict[str, Any]]) -> list[str]:
-        ranked: list[tuple[float, int, str]] = []
-        for section in sections:
-            score = float((section.get("weight") or {}).get("score") or 0.0)
-            strongest = (section.get("concepts") or [None])[0]
-            if strongest:
-                concept_text = str(strongest.get("concept") or "").strip()
-                if concept_text:
-                    concept_type = str(strongest.get("type") or "")
-                    ranked.append((score, CONCEPT_PRIORITY.get(concept_type, 0), concept_text))
-                    continue
-            visual_plan = section.get("visual_plan") or []
-            if visual_plan:
-                visual_concept = str((visual_plan[0].get("concept") or {}).get("concept") or "").strip()
-                visual_type = str((visual_plan[0].get("concept") or {}).get("type") or "")
-                if visual_concept:
-                    ranked.append((score, CONCEPT_PRIORITY.get(visual_type, 0), visual_concept))
-        ranked.sort(key=lambda item: (item[1], item[0], len(item[2].split())), reverse=True)
-        agenda: list[str] = []
-        seen: set[str] = set()
-        for _, _, concept_text in ranked:
-            key = concept_text.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            agenda.append(concept_text)
-            if len(agenda) == 3:
-                break
-        return agenda
-
-    def _numeric_visual_plan(self, text: str) -> dict[str, Any] | None:
-        numeric_phrases = self._numeric_phrases(text)
-        if not self._numeric_visual_allowed(text, numeric_phrases):
-            return None
-        if len(numeric_phrases) >= 2:
-            strongest = numeric_phrases[-1]
-            return {
-                "concept": {"concept": strongest, "type": "numeric"},
-                "visual": {
-                    "pattern": "NumericComparison",
-                    "data": {"values": numeric_phrases[:3]},
-                },
-                "beats": {
-                    "beats": self._numeric_beats(numeric_phrases[:3], strongest),
-                },
-            }
-        strongest = numeric_phrases[0]
-        return {
-            "concept": {"concept": strongest, "type": "numeric"},
-            "visual": {
-                "pattern": "NumericComparison",
-                "data": {"values": [strongest]},
-            },
-            "beats": {
-                "beats": [{"component": "StatCard", "text": strongest}],
-            },
-        }
-
-    def _unique_beat_values(self, values: list[str], strongest: str) -> list[str]:
-        unique: list[str] = []
-        seen: set[str] = set()
-        for value in values:
-            if not value.strip():
-                continue
-            key = value.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            unique.append(value)
-        if strongest.strip() and strongest.lower() not in seen:
-            unique.append(strongest)
-        return unique[:3]
-
-    def _numeric_phrases(self, text: str) -> list[str]:
-        if not re.search(r"(₹|Rs\.?\s*|\d|%)", text, flags=re.IGNORECASE):
-            return []
-        pattern = r"(?:₹\s*|Rs\.?\s*)?\d[\d,]*(?:\.\d+)?\s*(?:%|years?|months?|lakhs?)?"
-        matches = list(re.finditer(pattern, text, flags=re.IGNORECASE))
-        phrases: list[str] = []
-        for match in matches:
-            token = " ".join(match.group(0).strip().split())
-            if not token or not re.search(r"\d", token):
-                continue
-            if not self._is_financial_number(text, token, match.start(), match.end()):
-                continue
-            label = self._numeric_label(text, match.start(), match.end())
-            phrase = f"{token} {label}".strip() if label else token
-            phrases.append(" ".join(phrase.split()))
-        return self._unique_beat_values(phrases, phrases[-1] if phrases else "")
-
-    def _is_financial_number(self, text: str, token: str, start: int, end: int) -> bool:
-        if "₹" in token or "%" in token or token.lower().startswith("rs"):
-            return True
-        trailing = text[end : min(len(text), end + 2)].lower()
-        if trailing.startswith("s"):
-            return False
-        before_words = re.findall(r"[a-z]+", text[max(0, start - 24) : start].lower())
-        after_words = re.findall(r"[a-z]+", text[end : min(len(text), end + 24)].lower())
-        if any(word in {"day", "days", "age", "aged", "year", "years"} for word in before_words[-2:]):
-            return False
-        if any(word in {"day", "days"} for word in after_words[:2]):
-            return False
-        if any(word in FINANCIAL_NUMBER_KEYWORDS for word in after_words[:4]):
-            return True
-        if any(word in FINANCIAL_NUMBER_KEYWORDS for word in before_words[-2:]):
-            return True
-        return False
-
-    def _numeric_label(self, text: str, start: int, end: int) -> str:
-        before_words = re.findall(r"[a-z]+", text[max(0, start - 40) : start].lower())
-        after_words = re.findall(r"[a-z]+", text[end : min(len(text), end + 40)].lower())
-        keywords = {
-            "interest": "interest",
-            "bill": "bill",
-            "balance": "balance",
-            "debt": "debt",
-            "payment": "payment",
-            "salary": "salary",
-            "return": "return",
-            "returns": "returns",
-            "cost": "cost",
-            "emi": "emi",
-            "principal": "principal",
-            "minimum": "payment",
-            "due": "payment",
-            "leak": "leak",
-            "lost": "lost",
-            "wasted": "wasted",
-            "waste": "wasted",
-        }
-        for word in after_words[:5]:
-            if word in keywords:
-                return keywords[word]
-        for word in reversed(before_words[-5:]):
-            if word in keywords:
-                return keywords[word]
-        impact = self._numeric_impact_label(text)
-        if impact:
-            return impact
-        return ""
-
-    def _numeric_impact_label(self, text: str) -> str:
-        lowered = text.lower()
-        if "interest" in lowered:
-            return "interest"
-        if any(token in lowered for token in ("leak", "leaks")):
-            return "leak"
-        if any(token in lowered for token in ("lost", "lose", "loss")):
-            return "lost"
-        if any(token in lowered for token in ("wasted", "waste")):
-            return "wasted"
-        if "cost" in lowered:
-            return "cost"
-        return ""
-
-    def _numeric_beats(self, numeric_phrases: list[str], strongest: str) -> list[dict[str, str]]:
-        values = self._unique_beat_values(numeric_phrases, strongest)
-        if len(values) >= 3:
-            return [
-                {"component": "StatCard", "text": values[0]},
-                {"component": "CalculationStrip", "text": values[1]},
-                {"component": "StatCard", "text": values[2]},
-            ]
-        if len(values) == 2:
-            return [
-                {"component": "StatCard", "text": values[0]},
-                {"component": "CalculationStrip", "text": values[1]},
-            ]
-        return [{"component": "StatCard", "text": values[0]}] if values else [{"component": "StatCard", "text": strongest}]
-
-    def _numeric_visual_allowed(self, text: str, numeric_phrases: list[str]) -> bool:
-        if not numeric_phrases:
-            return False
-        lowered = text.lower()
-        has_comparison = any(word in lowered for word in (" more ", " less ", " vs ", " versus "))
-        has_transformation = any(word in lowered for word in (" increase", " increases", " reduce", " reduces", " grow", " grows "))
-        if len(numeric_phrases) >= 2:
-            return True
-        return has_comparison or has_transformation
-
-    def _is_valid_visual_item(self, item: dict[str, Any] | None) -> bool:
-        if not item:
-            return False
-        visual = item.get("visual") or {}
-        pattern = str(visual.get("pattern") or "").strip()
-        data = visual.get("data") or {}
-        if not pattern:
-            return False
-        if not isinstance(data, dict) or not data:
-            return False
-        if "title" in data and not str(data.get("title", "")).strip():
-            return False
-        if "values" in data and not [value for value in data.get("values") or [] if str(value).strip()]:
-            return False
-        beats = (item.get("beats") or {}).get("beats") or []
-        if not beats:
-            return False
-        if any(not str(beat.get("text", "")).strip() for beat in beats):
-            return False
-        concept_text = str((item.get("concept") or {}).get("concept", "")).strip()
-        if not concept_text:
-            return False
-        return True
-
-    def _safe_visual_item(self, item: dict[str, Any]) -> dict[str, Any] | None:
-        if self._is_valid_visual_item(item):
-            return item
-        return None
-
-    def _fallback_visual_item(self, section_text: str) -> dict[str, Any]:
-        fallback_text = self._fallback_text(section_text)
-        return {
-            "concept": {"concept": fallback_text, "type": "fallback"},
-            "visual": {
-                "pattern": "ConceptCard",
-                "data": {"title": fallback_text.upper()},
-            },
-            "beats": {
-                "beats": [{"component": "ConceptCard", "text": fallback_text}],
-            },
-        }
-
-    def _fallback_text(self, section_text: str) -> str:
-        lowered = section_text.lower()
-        if "fix the system" in lowered or ("automate" in lowered and "spend" in lowered):
-            return "Automate before you spend"
-        if "minimum payment" in lowered or "minimum payments" in lowered:
-            return "Minimum payments stretch debt"
-        if "salary" in lowered and any(token in lowered for token in ("vanish", "vanishes", "disappear", "disappears")):
-            return "Salary disappears early"
-        if "debt" in lowered and any(token in lowered for token in ("trap", "trapped", "stuck")):
-            return "Debt becomes sticky"
-        if "interest" in lowered and any(token in lowered for token in ("grow", "grows", "rises", "rising")):
-            return "Interest keeps rising"
-        if "savings" in lowered and any(token in lowered for token in ("zero", "0", "gone")):
-            return "Savings fall to zero"
-        words = [word for word in re.findall(r"[A-Za-z0-9₹%]+", section_text) if word]
-        text = " ".join(words[:3]).strip()
-        return text or "Key Idea"
+    def _fallback_outro(self) -> str:
+        return "Recap the key takeaways and choose one clear next step."
 
     def _demo_script(self, topic: str, angle: str) -> dict[str, Any]:
         return {
