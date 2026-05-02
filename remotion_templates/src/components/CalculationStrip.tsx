@@ -2,6 +2,7 @@ import React from 'react';
 import {AbsoluteFill, interpolate, spring, useVideoConfig} from 'remotion';
 import {BODY_FONT_FAMILY, DISPLAY_FONT_FAMILY, FONT_FACES} from '../fonts';
 import {BeatComponentProps} from './types';
+import {COLORS, SPACING, SPRINGS, TYPE_SCALE, getBeatData} from './visualUtils';
 
 const splitLabelAndValue = (text: string): {label: string; value: string} => {
 	const parts = text.trim().split(/\s+/);
@@ -26,15 +27,18 @@ export const CalculationStrip: React.FC<BeatComponentProps> = ({
 	frameWithinBeat,
 }) => {
 	const {fps} = useVideoConfig();
-	const stepRows = Array.isArray(beat.steps)
-		? beat.steps
+	const typedData = getBeatData<{steps?: unknown[]}>(beat);
+	const rawSteps = Array.isArray(typedData?.steps) ? typedData.steps : beat.steps;
+	const stepRows = Array.isArray(rawSteps)
+		? rawSteps
 				.map((step) => {
-					const label = typeof step.label === 'string' ? step.label : '';
+					const item = step as Record<string, unknown>;
+					const label = typeof item.label === 'string' ? item.label : '';
 					const value =
-						typeof step.value === 'string' || typeof step.value === 'number'
-							? String(step.value)
+						typeof item.value === 'string' || typeof item.value === 'number'
+							? String(item.value)
 							: '';
-					const operation = typeof step.operation === 'string' ? step.operation : '';
+					const operation = typeof item.operation === 'string' ? item.operation : '';
 					return `${label} ${operation} ${value}`.replace(/\s+/g, ' ').trim();
 				})
 				.filter(Boolean)
@@ -50,20 +54,21 @@ export const CalculationStrip: React.FC<BeatComponentProps> = ({
 	return (
 		<AbsoluteFill
 			style={{
-				backgroundColor: '#0A0A14',
-				padding: '120px 140px',
-				color: 'white',
+				backgroundColor: COLORS.bg_deep,
+				padding: `${SPACING.safe}px 140px`,
+				color: COLORS.text_primary,
 				justifyContent: 'center',
-				gap: 24,
+				gap: SPACING.md,
 			}}
 		>
 			<style>{FONT_FACES}</style>
 			{visibleRows.map((row, index) => {
 				const localFrame = Math.max(0, frameWithinBeat - index * 6);
+				const isFinal = index === visibleRows.length - 1;
 				const reveal = spring({
 					frame: Math.min(localFrame, 12),
 					fps,
-					config: {damping: 15, stiffness: 190},
+					config: isFinal ? SPRINGS.impact : SPRINGS.entry,
 					durationInFrames: 12,
 				});
 				const opacity = interpolate(localFrame, [0, 12], [0, 1], {
@@ -75,7 +80,6 @@ export const CalculationStrip: React.FC<BeatComponentProps> = ({
 					extrapolateRight: 'clamp',
 				});
 				const {label, value} = splitLabelAndValue(row);
-				const isFinal = index === visibleRows.length - 1;
 				return (
 					<div
 						key={`${row}-${index}`}
@@ -83,13 +87,13 @@ export const CalculationStrip: React.FC<BeatComponentProps> = ({
 							display: 'grid',
 							gridTemplateColumns: '1fr auto 1fr',
 							alignItems: 'center',
-							columnGap: 24,
+							columnGap: SPACING.md,
 							padding: '22px 28px',
-							borderRadius: 24,
-							background: isFinal ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.05)',
+							borderRadius: 8,
+							background: isFinal ? COLORS.panelStrong : COLORS.panel,
 							border: isFinal
 								? '2px solid rgba(255,255,255,0.45)'
-								: '1px solid rgba(255,255,255,0.12)',
+								: `1px solid ${COLORS.stroke}`,
 							opacity,
 							transform: `scale(${scale})`,
 						}}
@@ -97,8 +101,8 @@ export const CalculationStrip: React.FC<BeatComponentProps> = ({
 						<div
 							style={{
 								fontFamily: BODY_FONT_FAMILY,
-								fontSize: 34,
-								fontWeight: 700,
+								fontSize: TYPE_SCALE.label.size,
+								fontWeight: TYPE_SCALE.label.weight,
 								textTransform: 'capitalize',
 							}}
 						>
@@ -107,8 +111,8 @@ export const CalculationStrip: React.FC<BeatComponentProps> = ({
 						<div
 							style={{
 								fontFamily: BODY_FONT_FAMILY,
-								fontSize: 28,
-								color: 'rgba(255,255,255,0.6)',
+								fontSize: TYPE_SCALE.subtext.size,
+								color: COLORS.text_secondary,
 							}}
 						>
 							|
@@ -116,7 +120,8 @@ export const CalculationStrip: React.FC<BeatComponentProps> = ({
 						<div
 							style={{
 								fontFamily: DISPLAY_FONT_FAMILY,
-								fontSize: isFinal ? 82 : 70,
+								fontSize: isFinal ? TYPE_SCALE.major_value.size : 70,
+								fontWeight: TYPE_SCALE.major_value.weight,
 								lineHeight: 0.95,
 								textAlign: 'right',
 							}}

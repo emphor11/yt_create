@@ -5,6 +5,7 @@ from pathlib import Path
 from youtube_ai_system import create_app
 from youtube_ai_system.db import close_db
 from youtube_ai_system.services.scene_builder import build_scenes
+from youtube_ai_system.services.scene_builder import COMPONENT_DURATION_WEIGHTS, PATTERN_PRIORITY
 
 
 class SceneBuilderTestCase(unittest.TestCase):
@@ -63,6 +64,12 @@ class SceneBuilderTestCase(unittest.TestCase):
         self.assertEqual(scene["beats"][0]["start_time"], 0.0)
         self.assertEqual(scene["beats"][-1]["emphasis"], "hero")
         self.assertEqual(scene["beats"][-1]["end_time"], scene["duration"])
+
+    def test_pattern_priority_has_no_downgraded_chart_duplicates_and_weights_exist(self) -> None:
+        self.assertEqual(PATTERN_PRIORITY["GrowthChart"], 6)
+        self.assertEqual(PATTERN_PRIORITY["SplitComparison"], 6)
+        self.assertEqual(COMPONENT_DURATION_WEIGHTS["FlowDiagram"], 1.6)
+        self.assertEqual(COMPONENT_DURATION_WEIGHTS["BalanceBar"], 1.5)
 
     def test_build_scenes_falls_back_to_single_concept_card_when_beats_missing(self) -> None:
         result = build_scenes(
@@ -337,9 +344,9 @@ class SceneBuilderTestCase(unittest.TestCase):
         beats = result["scenes"][0]["beats"]
         self.assertEqual(beats[0]["source_text"], "Salary hits account.")
         self.assertEqual(beats[1]["sentence_index"], 1)
-        self.assertAlmostEqual(beats[0]["end_time"], 3.0, places=1)
-        self.assertAlmostEqual(beats[1]["start_time"], 3.0, places=1)
-        self.assertEqual(beats[1]["end_time"], 12.0)
+        self.assertAlmostEqual(beats[0]["end_time"], 3.1, places=1)
+        self.assertAlmostEqual(beats[1]["start_time"], 3.1, places=1)
+        self.assertEqual(beats[1]["end_time"], 12.4)
 
     def test_too_many_beats_merges_last_two_for_minimum_duration(self) -> None:
         result = build_scenes(
@@ -368,6 +375,162 @@ class SceneBuilderTestCase(unittest.TestCase):
         self.assertEqual(len(scene["beats"]), 3)
         for beat in scene["beats"]:
             self.assertGreaterEqual(beat["end_time"] - beat["start_time"], 1.2)
+
+    def test_scene_builder_preserves_directed_scene_fields_and_beat_data(self) -> None:
+        result = build_scenes(
+            [
+                {
+                    "text": "My ₹50,000 salary disappears every month. EMI takes ₹18,000 and only ₹3,000 is left.",
+                    "audio_file": str((Path(self.temp_dir.name) / "storage" / "audio" / "dummy.wav").resolve()),
+                    "audio_duration": 6.0,
+                    "concept_type": "salary_drain",
+                    "direction": {"emotional_arc": {"opening": "comfort", "closing": "anxiety"}},
+                    "theme": {"background": "#0A0A14"},
+                    "visual_plan": [
+                        {
+                            "concept": {"concept": "Salary Drain", "type": "salary_drain"},
+                            "visual": {
+                                "pattern": "MoneyFlowDiagram",
+                                "data": {
+                                    "source": {"label": "Salary", "value": "₹50,000", "amount": 50000},
+                                    "flows": [{"label": "EMI", "value": "₹18,000", "amount": 18000, "color": "red", "order": 1}],
+                                    "remainder": {"value": "₹3,000", "amount": 3000, "is_dangerous": True},
+                                },
+                            },
+                            "beats": {
+                                "beats": [
+                                    {"component": "StatCard", "text": "₹50,000", "data": {"label": "Salary"}},
+                                    {
+                                        "component": "MoneyFlowDiagram",
+                                        "text": "Where salary goes",
+                                        "data": {
+                                            "source": {"label": "Salary", "value": "₹50,000", "amount": 50000},
+                                            "flows": [{"label": "EMI", "value": "₹18,000", "amount": 18000, "color": "red", "order": 1}],
+                                            "remainder": {"value": "₹3,000", "amount": 3000, "is_dangerous": True},
+                                        },
+                                    },
+                                ]
+                            },
+                        }
+                    ],
+                }
+            ]
+        )
+        scene = result["scenes"][0]
+        self.assertEqual(scene["concept_type"], "salary_drain")
+        self.assertEqual(scene["direction"]["emotional_arc"]["closing"], "anxiety")
+        self.assertEqual(scene["theme"]["background"], "#0A0A14")
+        self.assertEqual(scene["beats"][1]["data"]["remainder"]["amount"], 3000)
+        self.assertEqual(scene["beats"][-1]["end_time"], scene["duration"])
+
+    def test_scene_builder_preserves_directed_data_through_cleaning_and_timing(self) -> None:
+        flow_data = {
+            "source": {"label": "Salary", "value": "₹50,000", "amount": 50000},
+            "flows": [{"label": "EMI", "value": "₹18,000", "amount": 18000, "color": "red", "order": 1}],
+            "remainder": {"value": "₹3,000", "amount": 3000, "is_dangerous": True},
+        }
+        result = build_scenes(
+            [
+                {
+                    "text": "My ₹50,000 salary disappears every month. EMI takes ₹18,000 and only ₹3,000 is left.",
+                    "audio_file": str((Path(self.temp_dir.name) / "storage" / "audio" / "dummy.wav").resolve()),
+                    "audio_duration": 6.0,
+                    "direction": {"emotional_arc": {"opening": "comfort", "closing": "anxiety"}},
+                    "visual_plan": [
+                        {
+                            "concept": {"concept": "Salary Drain", "type": "salary_drain"},
+                            "visual": {"pattern": "MoneyFlowDiagram", "data": flow_data},
+                            "beats": {
+                                "beats": [
+                                    {"component": "StatCard", "text": "₹50,000", "data": {"primary_value": "₹50,000"}},
+                                    {"component": "MoneyFlowDiagram", "text": "Where salary goes", "data": flow_data},
+                                    {"component": "HighlightText", "text": "₹3,000 left", "data": {"primary_value": "₹3,000"}},
+                                ]
+                            },
+                        }
+                    ],
+                }
+            ]
+        )
+
+        flow_beat = next(beat for beat in result["scenes"][0]["beats"] if beat["component"] == "MoneyFlowDiagram")
+        self.assertEqual(flow_beat["data"]["source"]["amount"], 50000)
+        self.assertEqual(flow_beat["data"]["flows"][0]["label"], "EMI")
+
+    def test_calculation_strip_contract_preserves_steps_when_inferred_from_beats(self) -> None:
+        result = build_scenes(
+            [
+                {
+                    "text": "A loan calculation shows the monthly pressure clearly.",
+                    "audio_file": str((Path(self.temp_dir.name) / "storage" / "audio" / "dummy.wav").resolve()),
+                    "audio_duration": 6.0,
+                    "visual_plan": [
+                        {
+                            "beats": {
+                                "beats": [
+                                    {"component": "StatCard", "text": "₹1,00,000"},
+                                    {
+                                        "component": "CalculationStrip",
+                                        "text": "Interest cost",
+                                        "data": {
+                                            "steps": [
+                                                {"label": "Loan", "value": "₹1,00,000"},
+                                                {"label": "Rate", "value": "14%", "operation": "+"},
+                                            ]
+                                        },
+                                    },
+                                ]
+                            }
+                        }
+                    ],
+                }
+            ]
+        )
+
+        scene = result["scenes"][0]
+        self.assertEqual(scene["pattern"], "CalculationStrip")
+        self.assertEqual(scene["data"]["steps"][0]["label"], "Loan")
+
+    def test_fallback_text_does_not_recurse_on_punctuation_only_text(self) -> None:
+        result = build_scenes(
+            [
+                {
+                    "text": "!!!",
+                    "audio_file": str((Path(self.temp_dir.name) / "storage" / "audio" / "dummy.wav").resolve()),
+                    "audio_duration": 3.0,
+                    "visual_plan": [],
+                }
+            ]
+        )
+
+        self.assertEqual(result["scenes"][0]["concept"], "Core message")
+
+    def test_directed_scene_duration_gets_tail_hold(self) -> None:
+        result = build_scenes(
+            [
+                {
+                    "text": "My ₹50,000 salary disappears every month. EMI takes ₹18,000 and only ₹3,000 is left.",
+                    "audio_file": str((Path(self.temp_dir.name) / "storage" / "audio" / "dummy.wav").resolve()),
+                    "audio_duration": 6.0,
+                    "visual_plan": [
+                        {
+                            "concept": {"concept": "Salary Drain", "type": "salary_drain"},
+                            "visual": {
+                                "pattern": "MoneyFlowDiagram",
+                                "data": {
+                                    "source": {"label": "Salary", "value": "₹50,000", "amount": 50000},
+                                    "flows": [{"label": "EMI", "value": "₹18,000", "amount": 18000, "color": "red", "order": 1}],
+                                    "remainder": {"value": "₹3,000", "amount": 3000, "is_dangerous": True},
+                                },
+                            },
+                            "beats": {"beats": [{"component": "MoneyFlowDiagram", "text": "Where salary goes"}]},
+                        }
+                    ],
+                }
+            ]
+        )
+
+        self.assertEqual(result["scenes"][0]["duration"], 6.8)
 
 
 if __name__ == "__main__":

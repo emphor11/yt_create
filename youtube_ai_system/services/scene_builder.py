@@ -10,6 +10,7 @@ from .scene_mapper import map_pattern_to_component
 from .voice_service import VoiceService
 
 MIN_BEAT_DURATION = 1.2
+DIRECTED_MIN_BEAT_DURATION = 1.5
 COMPONENT_DURATION_WEIGHTS = {
     "StatCard": 1.0,
     "HighlightText": 0.9,
@@ -18,6 +19,8 @@ COMPONENT_DURATION_WEIGHTS = {
     "RiskCard": 1.1,
     "RiskCardScene": 1.1,
     "FlowBar": 1.4,
+    "FlowDiagram": 1.6,
+    "BalanceBar": 1.5,
     "CalculationStrip": 1.6,
     "SplitComparison": 1.3,
     "SplitComparisonScene": 1.3,
@@ -25,11 +28,19 @@ COMPONENT_DURATION_WEIGHTS = {
     "GrowthChartScene": 1.5,
     "StepFlow": 1.4,
     "StepFlowScene": 1.4,
+    "MoneyFlowDiagram": 1.8,
+    "DebtSpiralVisualizer": 1.8,
+    "SIPGrowthEngine": 1.9,
 }
 PATTERN_PRIORITY = {
+    "MoneyFlowDiagram": 7,
+    "DebtSpiralVisualizer": 7,
+    "SIPGrowthEngine": 7,
+    "GrowthChart": 6,
+    "SplitComparison": 6,
+    "FlowDiagram": 6,
+    "BalanceBar": 6,
     "NumericComparison": 5,
-    "GrowthChart": 4,
-    "SplitComparison": 4,
     "RiskCard": 3,
     "StepFlow": 2,
     "ConceptCard": 1,
@@ -69,8 +80,11 @@ class SceneBuilder:
                 {
                     "scene_id": f"scene_{index}",
                     "concept": concept,
+                    "concept_type": str(section.get("concept_type") or concept or "").strip(),
                     "pattern": pattern,
                     "data": data,
+                    "direction": section.get("direction"),
+                    "theme": section.get("theme") or {},
                     "beats": timed_beats,
                     "duration": round(audio_duration, 2),
                     "total_duration": round(audio_duration, 2),
@@ -104,13 +118,14 @@ class SceneBuilder:
         audio_duration: float,
         section: dict[str, Any],
     ) -> list[dict[str, Any]]:
-        beats = self._merge_for_min_duration(beats, audio_duration)
+        min_duration = DIRECTED_MIN_BEAT_DURATION if section.get("direction") else MIN_BEAT_DURATION
+        beats = self._merge_for_min_duration(beats, audio_duration, min_duration)
         if not beats:
             return []
         aligned_spans = self._sentence_aligned_spans(beats, audio_duration, section)
         if aligned_spans is not None:
             return self._timeline_from_spans(beats, aligned_spans)
-        durations = self._component_weighted_durations(beats, audio_duration)
+        durations = self._component_weighted_durations(beats, audio_duration, min_duration)
 
         timeline: list[dict[str, Any]] = []
         cursor = 0.0
@@ -126,7 +141,7 @@ class SceneBuilder:
                 "end_time": round(end_time, 2),
                 "emphasis": self._beat_emphasis(index, len(beats)),
             }
-            for key in ("subtext", "steps", "props", "source_text", "sentence_index"):
+            for key in ("subtext", "steps", "props", "data", "source_text", "sentence_index"):
                 if key in beat:
                     timed_beat[key] = beat[key]
             timeline.append(timed_beat)
@@ -148,7 +163,7 @@ class SceneBuilder:
                 "end_time": round(end_time, 2),
                 "emphasis": self._beat_emphasis(index, len(beats)),
             }
-            for key in ("subtext", "steps", "props", "source_text", "sentence_index"):
+            for key in ("subtext", "steps", "props", "data", "source_text", "sentence_index"):
                 if key in beat:
                     timed_beat[key] = beat[key]
             timeline.append(timed_beat)
@@ -221,8 +236,18 @@ class SceneBuilder:
             return "StepFlow", {"steps": [concept]}, concept
         if component == "GrowthChart":
             return "GrowthChart", {"end": concept, "curve": "up"}, concept
-        if component in {"CalculationStrip", "StatCard"}:
-            values = [str(beat.get("text") or "").strip() for beat in beats if str(beat.get("text") or "").strip()]
+        values = [str(beat.get("text") or "").strip() for beat in beats if str(beat.get("text") or "").strip()]
+        if component == "CalculationStrip":
+            flat_steps: list[Any] = []
+            for beat in beats:
+                data = beat.get("data") if isinstance(beat.get("data"), dict) else {}
+                steps = data.get("steps") or beat.get("steps") or []
+                if isinstance(steps, list):
+                    flat_steps.extend(steps)
+            if flat_steps:
+                return "CalculationStrip", {"steps": flat_steps}, concept
+            return "CalculationStrip", {"values": values}, concept
+        if component == "StatCard":
             return "NumericComparison", {"values": values}, concept
         return "ConceptCard", {"title": concept.upper()}, concept
 
@@ -304,7 +329,7 @@ class SceneBuilder:
                 "component": str(beat.get("component") or "").strip() or "ConceptCard",
                 "text": text,
             }
-            for extra_key in ("subtext", "steps", "props", "source_text", "sentence_index"):
+            for extra_key in ("subtext", "steps", "props", "data", "source_text", "sentence_index"):
                 if extra_key in beat:
                     cleaned_beat[extra_key] = beat[extra_key]
             cleaned.append(cleaned_beat)
@@ -373,12 +398,12 @@ class SceneBuilder:
                 local_cursor = end
         return spans
 
-    def _component_weighted_durations(self, beats: list[dict[str, Any]], audio_duration: float) -> list[float]:
+    def _component_weighted_durations(self, beats: list[dict[str, Any]], audio_duration: float, min_duration: float = MIN_BEAT_DURATION) -> list[float]:
         if not beats:
             return []
         if audio_duration <= 0:
-            return [MIN_BEAT_DURATION for _ in beats]
-        if audio_duration <= MIN_BEAT_DURATION * len(beats):
+            return [min_duration for _ in beats]
+        if audio_duration <= min_duration * len(beats):
             equal_duration = audio_duration / len(beats)
             return [equal_duration for _ in beats]
 
@@ -398,7 +423,7 @@ class SceneBuilder:
             below_minimum = [
                 index
                 for index in remaining_indices
-                if (weights[index] / total_weight) * remaining_duration < MIN_BEAT_DURATION
+                if (weights[index] / total_weight) * remaining_duration < min_duration
             ]
             if not below_minimum:
                 for index in remaining_indices:
@@ -406,8 +431,8 @@ class SceneBuilder:
                 break
 
             for index in below_minimum:
-                durations[index] = MIN_BEAT_DURATION
-                remaining_duration -= MIN_BEAT_DURATION
+                durations[index] = min_duration
+                remaining_duration -= min_duration
                 remaining_indices.remove(index)
 
             if remaining_duration <= 0 and remaining_indices:
@@ -459,11 +484,13 @@ class SceneBuilder:
         if not words:
             return "Core message"
         phrase = " ".join(words[: min(len(words), 3)]).strip(" ,.-")
-        return self._clean_beat_text(phrase, section_text)
+        if not re.search(r"[A-Za-z0-9₹]", phrase):
+            return "Core message"
+        return phrase or "Core message"
 
-    def _merge_for_min_duration(self, beats: list[dict[str, Any]], audio_duration: float) -> list[dict[str, Any]]:
+    def _merge_for_min_duration(self, beats: list[dict[str, Any]], audio_duration: float, min_duration: float = MIN_BEAT_DURATION) -> list[dict[str, Any]]:
         merged = [dict(beat) for beat in beats]
-        while len(merged) > 1 and audio_duration > 0 and (audio_duration / len(merged)) < MIN_BEAT_DURATION:
+        while len(merged) > 1 and audio_duration > 0 and (audio_duration / len(merged)) < min_duration:
             last = merged.pop()
             merged[-1]["text"] = self._clean_beat_text(f"{merged[-1]['text']} {last['text']}", merged[-1]["text"])
             merged[-1]["component"] = last["component"] or merged[-1]["component"]
@@ -500,7 +527,13 @@ class SceneBuilder:
         return self._clean_beat_text(phrase, text)
 
     def _scene_duration(self, audio_duration: float, section: dict[str, Any]) -> float:
-        return audio_duration
+        visual_plan = section.get("visual_plan") or []
+        pattern = ""
+        if visual_plan:
+            visual = visual_plan[0].get("visual") or {}
+            pattern = str(visual.get("pattern") or "").strip()
+        tail = 0.8 if pattern in {"MoneyFlowDiagram", "DebtSpiralVisualizer", "SIPGrowthEngine"} else 0.4
+        return round(max(float(audio_duration or 0), 0.0) + tail, 2)
 
     def _clean_beat_text(self, text: str, section_text: str) -> str:
         cleaned = re.sub(r"\s+", " ", text).strip(" ,.-")

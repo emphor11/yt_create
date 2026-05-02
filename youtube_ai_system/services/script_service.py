@@ -298,6 +298,9 @@ class ScriptService:
             "HOOK:\n\n"
             "* First 2–5 sentences\n"
             "* Start with strong curiosity or tension\n"
+            "* Must pass this hook contract: under 25 words, and include either a question mark/\"why\", or a ₹ amount with a negative finance word like gone/leak/drain/debt/cost, or a percentage/big number with a people group\n"
+            "* Prefer hooks like: \"Why does your ₹50,000 salary feel gone by day 20?\"\n"
+            "* Avoid validator-weak hooks like: \"You work hard but still struggle to save.\"\n"
             "* No greetings, no \"hey guys\", no \"welcome back\"\n"
             "* Make the viewer feel like they are already in the problem (salary, EMIs, lack of savings, debt, inflation, investing confusion)\n\n"
             "BODY:\n\n"
@@ -425,8 +428,12 @@ class ScriptService:
 
         normalized = {
             "hook": {
-                "narration": self._refined_narration(
-                    str(hook.get("narration") or hook.get("text") or self._fallback_hook(topic))
+                "narration": self._refine_hook_narration(
+                    self._refined_narration(
+                        str(hook.get("narration") or hook.get("text") or self._fallback_hook(topic))
+                    ),
+                    topic,
+                    angle,
                 ),
                 "duration": self._coerce_duration(hook.get("duration", hook.get("estimated_duration_sec")), 6),
             },
@@ -505,6 +512,28 @@ class ScriptService:
     def _refined_narration(self, narration: str) -> str:
         refined = refine_narration(narration)
         return " ".join(refined) if refined else str(narration or "").strip()
+
+    def _refine_hook_narration(self, narration: str, topic: str, angle: str) -> str:
+        hook_text = " ".join(str(narration or "").split()).strip()
+        if not self.validate_hook({"narration": hook_text}):
+            return hook_text
+
+        context = f"{hook_text} {topic} {angle}".lower()
+        rupee_match = re.search(r"(?:₹\s*|Rs\.?\s*)\d[\d,]*(?:\.\d+)?", hook_text, re.IGNORECASE)
+        amount = rupee_match.group(0).replace("Rs.", "₹").replace("Rs", "₹") if rupee_match else ""
+
+        if "salary" in context or "paycheck" in context or "income" in context:
+            subject = f"your {amount} salary" if amount else "your salary"
+            return f"Why does {subject} feel gone by day 20?"
+        if "debt" in context or "credit card" in context or "loan" in context or "emi" in context:
+            return "Why does one debt payment keep your money leaking every month?"
+        if "inflation" in context or "fd" in context or "fixed deposit" in context:
+            return "Why does safe money still lose buying power every year?"
+        if "emergency" in context or "savings" in context or "save" in context:
+            return "Why do most savings vanish when one emergency hits?"
+        if "invest" in context or "fomo" in context or "risk" in context or "return" in context:
+            return "Why do smart investors still lose money chasing returns?"
+        return "Why does your money disappear even when you are doing everything right?"
 
     def _fallback_hook(self, topic: str) -> str:
         topic_text = str(topic or "money").strip().lower()

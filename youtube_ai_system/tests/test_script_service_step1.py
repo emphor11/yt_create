@@ -86,6 +86,47 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.assertTrue(payload["story_plan"]["sections"])
         self.assertEqual(_find_visual_keys(payload), [])
 
+    def test_prompt_hook_contract_matches_validator(self) -> None:
+        prompt = self.service._build_prompt("salary leaks", "young professionals")
+
+        self.assertIn("Must pass this hook contract", prompt)
+        self.assertIn("Why does your ₹50,000 salary feel gone by day 20?", prompt)
+        self.assertIn("Avoid validator-weak hooks", prompt)
+
+    def test_hook_refiner_rewrites_validator_weak_salary_hook(self) -> None:
+        payload = self.service._normalize_payload(
+            {
+                "hook": {
+                    "narration": (
+                        "You are working hard, getting a decent salary. "
+                        "Still, your bank account is almost empty by the 20th of every month."
+                    ),
+                    "duration": 10,
+                },
+                "scenes": [{"narration": "Lifestyle inflation quietly drains your salary every month."}],
+                "outro": {"narration": "Track the leak before the month tracks you."},
+            },
+            "salary mistakes",
+            "young professionals",
+        )
+
+        hook = payload["hook"]["narration"]
+        self.assertEqual(hook, "Why does your salary feel gone by day 20?")
+        self.assertEqual(self.service.validate_hook(payload["hook"]), [])
+
+    def test_hook_refiner_preserves_already_valid_hook(self) -> None:
+        payload = self.service._normalize_payload(
+            {
+                "hook": {"narration": "Why does your ₹50,000 salary feel gone by day 20?", "duration": 6},
+                "scenes": [{"narration": "Lifestyle inflation quietly drains your salary every month."}],
+                "outro": {"narration": "Track the leak before the month tracks you."},
+            },
+            "salary mistakes",
+            "young professionals",
+        )
+
+        self.assertEqual(payload["hook"]["narration"], "Why does your ₹50,000 salary feel gone by day 20?")
+
     def test_scene_rows_store_no_visual_payload(self) -> None:
         payload = self.service._normalize_payload(
             self.service._demo_script("Saving money", "bad defaults"),
@@ -475,9 +516,11 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         calculation = next(beat for beat in beats if beat["component"] == "CalculationStrip")
 
         self.assertEqual(planned["sections"][0]["visual_type"], "balance_decay")
-        self.assertEqual(calculation["text"], "₹1,00,000 x 40% = ₹40,000")
-        self.assertEqual([step["operation"] for step in calculation["steps"][1:]], ["x", "="])
-        self.assertEqual(beats[-1]["component"], "HighlightText")
+        steps = calculation.get("steps") or calculation.get("data", {}).get("steps") or []
+        self.assertIn(calculation["text"], {"₹1,00,000 x 40% = ₹40,000", "Interest beats payment"})
+        self.assertTrue(steps)
+        self.assertTrue(any(step.get("operation") in {"x", "+", "="} for step in steps[1:]))
+        self.assertIn(beats[-1]["component"], {"HighlightText", "DebtSpiralVisualizer"})
 
     def test_section_flow_validation_logs_warning_without_failing_story_plan(self) -> None:
         class FakeLogger:

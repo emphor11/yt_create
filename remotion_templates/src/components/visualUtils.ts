@@ -1,6 +1,17 @@
 import {Beat, Scene} from '../types';
 
 export const COLORS = {
+	bg_deep: '#0A0A14',
+	bg_surface: '#12121F',
+	bg_elevated: '#1A1A2E',
+	positive: '#2EC4B6',
+	warning: '#FF9F1C',
+	danger: '#E63946',
+	neutral: '#4361EE',
+	text_primary: '#FFFFFF',
+	text_secondary: 'rgba(255,255,255,0.6)',
+	text_tertiary: 'rgba(255,255,255,0.35)',
+	accent_line: '#FF9F1C',
 	background: '#0A0A14',
 	panel: 'rgba(255,255,255,0.075)',
 	panelStrong: 'rgba(255,255,255,0.12)',
@@ -13,6 +24,94 @@ export const COLORS = {
 	red: '#E63946',
 	blue: '#4361EE',
 };
+
+export type ColorPalette = typeof COLORS;
+
+export const TYPE_SCALE = {
+	hero_value: {size: 120, weight: 900, font: 'Anton'},
+	major_value: {size: 88, weight: 900, font: 'Anton'},
+	label: {size: 36, weight: 700, font: 'Nunito'},
+	subtext: {size: 28, weight: 600, font: 'Nunito'},
+	micro: {size: 20, weight: 400, font: 'Nunito'},
+};
+
+export type TypeScale = typeof TYPE_SCALE;
+
+export const SPRINGS = {
+	entry: {damping: 18, stiffness: 200, mass: 0.8},
+	counter: {damping: 25, stiffness: 150, mass: 1},
+	impact: {damping: 12, stiffness: 300, mass: 0.6},
+	exit: {damping: 22, stiffness: 180, mass: 1},
+};
+
+export type SpringConfigs = typeof SPRINGS;
+
+export const SPACING = {
+	unit: 8,
+	safe: 120,
+	xs: 8,
+	sm: 16,
+	md: 24,
+	lg: 32,
+	xl: 48,
+	xxl: 64,
+};
+
+export type SpacingSystem = typeof SPACING;
+
+export const getAccentColor = (color = '', sentiment = ''): string => {
+	const key = `${color} ${sentiment}`.toLowerCase();
+	if (key.includes('red') || key.includes('danger') || key.includes('negative')) {
+		return COLORS.danger;
+	}
+	if (key.includes('teal') || key.includes('positive') || key.includes('growth')) {
+		return COLORS.positive;
+	}
+	if (key.includes('blue') || key.includes('neutral')) {
+		return COLORS.neutral;
+	}
+	return COLORS.warning;
+};
+
+export const formatIndianRupee = (amount: number): string => {
+	if (!Number.isFinite(amount)) {
+		return '₹0';
+	}
+	const rounded = Math.round(amount);
+	const sign = rounded < 0 ? '-' : '';
+	let digits = String(Math.abs(rounded));
+	if (digits.length <= 3) {
+		return `${sign}₹${digits}`;
+	}
+	const lastThree = digits.slice(-3);
+	digits = digits.slice(0, -3);
+	const head = digits.replace(/\B(?=(\d{2})+(?!\d))/g, ',');
+	return `${sign}₹${head},${lastThree}`;
+};
+
+export const getBeatProgress = (frame: number, durationFrames: number): number => {
+	if (durationFrames <= 0) {
+		return 1;
+	}
+	return Math.max(0, Math.min(frame / durationFrames, 1));
+};
+
+export const getEntryProgress = (frame: number, entryDurationFrames = 15): number => {
+	if (entryDurationFrames <= 0) {
+		return 1;
+	}
+	return Math.max(0, Math.min(frame / entryDurationFrames, 1));
+};
+
+export function getBeatData<T>(beat: Beat, fallbackKey?: string): T | null {
+	if (beat.data) {
+		return beat.data as T;
+	}
+	if (fallbackKey && beat.props?.[fallbackKey]) {
+		return beat.props[fallbackKey] as T;
+	}
+	return null;
+}
 
 export const propText = (
 	source: Record<string, unknown> | undefined,

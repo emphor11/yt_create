@@ -2,6 +2,7 @@ import React from 'react';
 import {AbsoluteFill, interpolate, spring, useVideoConfig} from 'remotion';
 import {DISPLAY_FONT_FAMILY, BODY_FONT_FAMILY, FONT_FACES} from '../fonts';
 import {BeatComponentProps} from './types';
+import {COLORS, SPACING, SPRINGS, TYPE_SCALE, propText} from './visualUtils';
 
 export const StatCard: React.FC<BeatComponentProps> = ({
 	beat,
@@ -13,7 +14,7 @@ export const StatCard: React.FC<BeatComponentProps> = ({
 	const reveal = spring({
 		frame: animationFrame,
 		fps,
-		config: {damping: 14, stiffness: 180},
+		config: beat.emphasis === 'hero' ? SPRINGS.impact : SPRINGS.entry,
 		durationInFrames: 12,
 	});
 	const opacity = interpolate(animationFrame, [0, 12], [0, 1], {
@@ -25,48 +26,65 @@ export const StatCard: React.FC<BeatComponentProps> = ({
 		extrapolateRight: 'clamp',
 	});
 	const isHero = beat.emphasis === 'hero';
+	const primaryValue = propText(beat.data, 'primary_value', beat.text);
+	const label = propText(beat.data, 'label', beat.subtext || (isHero ? 'Key impact' : 'Core idea'));
+	const accent = propText(beat.data, 'color', '').toLowerCase();
+	const accentColor = accent === 'red' ? COLORS.danger : accent === 'teal' ? COLORS.positive : accent === 'orange' ? COLORS.warning : COLORS.accent_line;
 
 	return (
 		<AbsoluteFill
 			style={{
-				backgroundColor: '#0A0A14',
+				backgroundColor: COLORS.bg_deep,
 				alignItems: 'center',
 				justifyContent: 'center',
-				padding: 96,
-				color: 'white',
+				padding: SPACING.safe,
+				color: COLORS.text_primary,
 			}}
 		>
 			<style>{FONT_FACES}</style>
+			<div
+				style={{
+					position: 'absolute',
+					left: 0,
+					top: 0,
+					bottom: 0,
+					width: 8,
+					background: accentColor,
+					opacity: accent ? 1 : 0.75,
+				}}
+			/>
 			<div
 				style={{
 					opacity,
 					transform: `scale(${scale})`,
 					textAlign: 'center',
 					width: '100%',
+					maxWidth: 1200,
 				}}
 			>
 				<div
 					style={{
 						fontFamily: DISPLAY_FONT_FAMILY,
-						fontSize: isHero ? 154 : 132,
+						fontSize: isHero ? TYPE_SCALE.hero_value.size + 34 : TYPE_SCALE.hero_value.size + 12,
+						fontWeight: TYPE_SCALE.hero_value.weight,
 						letterSpacing: 0,
 						lineHeight: 0.92,
 						textTransform: 'uppercase',
 					}}
 				>
-					{beat.text}
+					{primaryValue}
 				</div>
 				{durationFrames > 45 ? (
 					<div
 						style={{
-							marginTop: 28,
+							marginTop: SPACING.lg,
 							fontFamily: BODY_FONT_FAMILY,
-							fontSize: 36,
-							fontWeight: 700,
-							color: 'rgba(255,255,255,0.72)',
+							fontSize: TYPE_SCALE.label.size,
+							fontWeight: TYPE_SCALE.label.weight,
+							color: COLORS.text_secondary,
 						}}
 					>
-						{beat.subtext || (isHero ? 'Key impact' : 'Core idea')}
+						{label}
 					</div>
 				) : null}
 			</div>

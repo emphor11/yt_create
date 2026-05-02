@@ -2,7 +2,7 @@ import React from 'react';
 import {AbsoluteFill, interpolate, spring, useVideoConfig} from 'remotion';
 import {BODY_FONT_FAMILY, DISPLAY_FONT_FAMILY, FONT_FACES} from '../fonts';
 import {BeatComponentProps} from './types';
-import {COLORS, propText, sceneText, splitComparisonText} from './visualUtils';
+import {COLORS, getBeatData, propText, sceneText, splitComparisonText} from './visualUtils';
 
 export const SplitComparison: React.FC<BeatComponentProps> = ({beat, scene, frameWithinBeat}) => {
 	const {fps} = useVideoConfig();
@@ -13,8 +13,9 @@ export const SplitComparison: React.FC<BeatComponentProps> = ({beat, scene, fram
 		durationInFrames: 16,
 	});
 	const fallback = splitComparisonText(beat.text);
-	const dataLeft = beat.props?.left ?? scene?.data?.left;
-	const dataRight = beat.props?.right ?? scene?.data?.right;
+	const typedData = getBeatData<{left?: unknown; right?: unknown}>(beat);
+	const dataLeft = typedData?.left ?? beat.props?.left ?? scene?.data?.left;
+	const dataRight = typedData?.right ?? beat.props?.right ?? scene?.data?.right;
 	const left =
 		typeof dataLeft === 'object' && dataLeft
 			? propText(dataLeft as Record<string, unknown>, 'label', fallback.left)

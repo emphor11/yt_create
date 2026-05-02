@@ -2,12 +2,21 @@ from __future__ import annotations
 
 
 SCENE_COMPONENT_BY_PATTERN = {
+    "StatCard": "StatCard",
+    "HighlightText": "ConceptCard",
     "ConceptCard": "ConceptCardScene",
     "SplitComparison": "SplitComparisonScene",
     "StepFlow": "StepFlowScene",
     "GrowthChart": "GrowthChartScene",
     "RiskCard": "RiskCardScene",
     "NumericComparison": "CalculationStrip",
+    "CalculationStrip": "CalculationStrip",
+    "FlowDiagram": "FlowDiagram",
+    "FlowBar": "FlowDiagram",
+    "BalanceBar": "BalanceBar",
+    "MoneyFlowDiagram": "MoneyFlowDiagram",
+    "DebtSpiralVisualizer": "DebtSpiralVisualizer",
+    "SIPGrowthEngine": "SIPGrowthEngine",
 }
 
 

@@ -8,6 +8,7 @@ from .idea_grouper import IdeaGrouper
 from .run_log import RunLogger
 from .story_intelligence_engine import StoryIntelligenceEngine
 from .visual_logic_engine import map_concept_to_visual
+from .visual_director import VisualDirector, visual_director_input_from_section
 
 CONCEPT_PRIORITY = {
     "numeric": 5,
@@ -46,11 +47,13 @@ class StoryPipeline:
         story_intelligence: StoryIntelligenceEngine | None = None,
         idea_grouper: IdeaGrouper | None = None,
         finance_concept_extractor: FinanceConceptExtractor | None = None,
+        visual_director: VisualDirector | None = None,
         logger: RunLogger | None = None,
     ) -> None:
         self.story_intelligence = story_intelligence or StoryIntelligenceEngine()
         self.idea_grouper = idea_grouper or IdeaGrouper()
         self.finance_concept_extractor = finance_concept_extractor or FinanceConceptExtractor()
+        self.visual_director = visual_director or VisualDirector()
         self.logger = logger or RunLogger()
 
     def build_story_plan(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -285,17 +288,71 @@ class StoryPipeline:
 
     def attach_section_visual_plan(self, story_plan: dict[str, Any]) -> dict[str, Any]:
         sections = story_plan.get("sections") or []
-        for section in sections:
+        preceding_concept_type: str | None = None
+        total_sections = max(len(sections), 1)
+        for index, section in enumerate(sections):
             if "narrative_arc" not in section:
                 section["narrative_arc"] = self._narrative_arc_for_section(section)
-            candidate = {
-                "concept": self._primary_visual_concept(section),
-                "visual": self._visual_from_narrative_arc(section),
-                "beats": {"beats": self._sentence_aligned_beats(section)},
-            }
-            safe_item = self.safe_visual_item(candidate)
-            section["visual_plan"] = [safe_item] if safe_item else []
+            section_position = self._section_position(index, total_sections)
+            director_input = visual_director_input_from_section(section, section_position, preceding_concept_type)
+            directed_plan = None
+            try:
+                directed_plan = self.visual_director.direct(director_input)
+            except Exception as exc:
+                self._log_visual_director("failed", str(exc))
+
+            if directed_plan and directed_plan.is_valid() and not directed_plan.fallback_reason:
+                section["visual_plan"] = [directed_plan.to_visual_plan_item()]
+                section["direction"] = directed_plan.direction.to_dict()
+                section["theme"] = dict(directed_plan.theme)
+                section["concept_type"] = directed_plan.concept_type
+                if directed_plan.fallback_reason:
+                    self._log_visual_director("fallback", directed_plan.fallback_reason)
+            else:
+                if directed_plan and directed_plan.fallback_reason:
+                    self._log_visual_director("fallback", directed_plan.fallback_reason)
+                old_plan = self._old_visual_plan(section)
+                if old_plan:
+                    section["visual_plan"] = [old_plan]
+                else:
+                    fallback_text = self._short_visual_text(str(section.get("text") or "Core idea"))
+                    section["visual_plan"] = [
+                        {
+                            "concept": {"concept": fallback_text, "type": "definition"},
+                            "visual": {"pattern": "StatCard", "data": {"title": fallback_text.upper()}},
+                            "beats": {"beats": [{"component": "StatCard", "text": fallback_text}]},
+                        }
+                    ]
+                section["direction"] = None
+                section["theme"] = {}
+                section["concept_type"] = str(section.get("idea_type") or "emphasis")
+            preceding_concept_type = directed_plan.concept_type if directed_plan else director_input.concept_type
         return story_plan
+
+    def _log_visual_director(self, status: str, message: str) -> None:
+        try:
+            self.logger.log("visual_director", status, message)
+        except Exception:
+            pass
+
+    def _old_visual_plan(self, section: dict[str, Any]) -> dict[str, Any] | None:
+        candidate = {
+            "concept": self._primary_visual_concept(section),
+            "visual": self._visual_from_narrative_arc(section),
+            "beats": {"beats": self._sentence_aligned_beats(section)},
+        }
+        return self.safe_visual_item(candidate)
+
+    def _section_position(self, index: int, total_sections: int) -> str:
+        if index == 0:
+            return "hook"
+        if index <= max(1, total_sections // 3):
+            return "early"
+        if index >= total_sections - 1:
+            return "outro"
+        if index >= max(1, int(total_sections * 0.7)):
+            return "late"
+        return "middle"
 
     def safe_visual_item(self, item: dict[str, Any]) -> dict[str, Any] | None:
         if self._is_valid_visual_item(item):

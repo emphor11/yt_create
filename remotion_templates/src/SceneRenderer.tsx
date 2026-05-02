@@ -3,9 +3,12 @@ import {useCurrentFrame, useVideoConfig} from 'remotion';
 import {BalanceBar} from './components/BalanceBar';
 import {CalculationStrip} from './components/CalculationStrip';
 import {ConceptCard} from './components/ConceptCard';
+import {DebtSpiralVisualizer} from './components/DebtSpiralVisualizer';
 import {FlowDiagram} from './components/FlowDiagram';
 import {GrowthChart} from './components/GrowthChart';
+import {MoneyFlowDiagram} from './components/MoneyFlowDiagram';
 import {RiskCard} from './components/RiskCard';
+import {SIPGrowthEngine} from './components/SIPGrowthEngine';
 import {SplitComparison} from './components/SplitComparison';
 import {StatCard} from './components/StatCard';
 import {StepFlow} from './components/StepFlow';
@@ -29,6 +32,9 @@ const COMPONENT_MAP = {
 	RiskCard,
 	RiskCardScene: RiskCard,
 	BalanceBar,
+	MoneyFlowDiagram,
+	DebtSpiralVisualizer,
+	SIPGrowthEngine,
 } as const;
 
 type Props = {
