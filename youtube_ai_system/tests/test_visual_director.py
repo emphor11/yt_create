@@ -105,7 +105,36 @@ class VisualDirectorTestCase(unittest.TestCase):
 
         self.assertTrue(result.is_valid())
         self.assertNotEqual(result.pattern, "DebtSpiralVisualizer")
-        self.assertEqual(result.fallback_reason, "insufficient data for DebtSpiralVisualizer")
+        self.assertEqual(result.pattern, "FlowDiagram")
+        self.assertIsNone(result.fallback_reason)
+        self.assertIn("Interest starts", [node["label"] for node in result.data["nodes"]])
+
+    def test_director_does_not_invent_money_flow_numbers_for_generic_lifestyle(self) -> None:
+        result = self.director.direct(build_input("You earn well. You spend well. Saving is a myth. Lifestyle inflation is real.", "lifestyle_inflation"))
+
+        self.assertEqual(result.pattern, "FlowDiagram")
+        self.assertNotIn("₹", str(result.data))
+        self.assertEqual(result.data["nodes"][-1]["label"], "Savings stay stuck")
+
+    def test_generic_inflation_visual_stays_qualitative_without_numbers(self) -> None:
+        result = self.director.direct(build_input("Inflation is a slow poison. It eats into your savings. Without you even noticing.", "inflation_erosion"))
+
+        self.assertEqual(result.pattern, "GrowthChart")
+        self.assertNotIn("₹", str(result.data))
+        self.assertEqual(result.data["start"], "Savings")
+
+    def test_directed_beats_carry_sentence_metadata_for_sync(self) -> None:
+        result = self.director.direct(
+            build_input(
+                "My ₹50,000 salary disappears every month. EMI takes ₹18,000. Only ₹3,000 is left by day 10.",
+                "salary_drain",
+            )
+        )
+
+        beat_payloads = [beat.to_dict() for beat in result.beats]
+        self.assertTrue(all("source_text" in beat for beat in beat_payloads))
+        self.assertEqual(beat_payloads[0]["sentence_index"], 0)
+        self.assertEqual(beat_payloads[-1]["sentence_index"], 2)
 
     def test_story_pipeline_prefers_valid_directed_plan(self) -> None:
         section = {
@@ -144,13 +173,14 @@ class VisualDirectorTestCase(unittest.TestCase):
 
     def test_major_finance_concepts_do_not_fall_back_to_concept_card(self) -> None:
         cases = [
-            ("Lifestyle inflation is a silent killer. As salary increases, expenses rise on luxuries, not necessities.", "lifestyle_inflation", "MoneyFlowDiagram"),
+            ("Lifestyle inflation is a silent killer. As salary increases, expenses rise on luxuries, not necessities.", "lifestyle_inflation", "FlowDiagram"),
             ("Inflation quietly erodes your purchasing power over 10 years.", "inflation_erosion", "GrowthChart"),
-            ("Expense leakage from subscriptions and food apps eats your salary.", "expense_leakage", "MoneyFlowDiagram"),
-            ("Emergency fund protects you when a medical bill hits.", "emergency_fund", "MoneyFlowDiagram"),
+            ("Expense leakage from subscriptions and food apps eats your salary.", "expense_leakage", "FlowDiagram"),
+            ("Emergency fund protects you when a medical bill hits.", "emergency_fund", "FlowDiagram"),
             ("Diversification spreads your investments across asset classes.", "diversification", "SplitComparison"),
             ("Risk and return move together in investing.", "risk_return", "SplitComparison"),
             ("Tax saving under 80C can reduce your tax bill.", "tax_saving", "SplitComparison"),
+            ("FOMO investing is not investing. It is speculation. Do not put your life savings into something you don't understand.", "definition", "SplitComparison"),
         ]
 
         for narration, concept_type, expected_pattern in cases:

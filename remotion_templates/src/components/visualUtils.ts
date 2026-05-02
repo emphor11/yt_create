@@ -192,8 +192,15 @@ export const stepLabels = (beat: Beat, scene?: Scene): string[] => {
 
 export const visualNodes = (beat: Beat, scene?: Scene): VisualNode[] => {
 	const propNodes = beat.props?.nodes;
+	const beatDataNodes = beat.data?.nodes;
 	const dataNodes = scene?.data?.nodes;
-	const raw = Array.isArray(propNodes) ? propNodes : Array.isArray(dataNodes) ? dataNodes : undefined;
+	const raw = Array.isArray(beatDataNodes)
+		? beatDataNodes
+		: Array.isArray(propNodes)
+			? propNodes
+			: Array.isArray(dataNodes)
+				? dataNodes
+				: undefined;
 	if (raw && raw.length > 0) {
 		return raw
 			.map((node) => {

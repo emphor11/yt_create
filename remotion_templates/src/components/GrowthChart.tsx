@@ -7,11 +7,11 @@ import {COLORS, sceneText, sceneValues} from './visualUtils';
 export const GrowthChart: React.FC<BeatComponentProps> = ({beat, scene, frameWithinBeat}) => {
 	const {fps} = useVideoConfig();
 	const values = sceneValues(scene);
-	const start = String(beat.props?.start ?? sceneText(scene, 'start', values[0] || 'Start'));
-	const end = String(beat.props?.end ?? sceneText(scene, 'end', values[values.length - 1] || beat.text || 'Result'));
-	const rate = String(beat.props?.rate ?? sceneText(scene, 'rate', beat.subtext || ''));
-	const curve = String(beat.props?.curve ?? sceneText(scene, 'curve', '')).toLowerCase();
-	const visualType = sceneText(scene, 'visual_type', '').toLowerCase();
+	const start = String(beat.data?.start ?? beat.props?.start ?? sceneText(scene, 'start', values[0] || 'Start'));
+	const end = String(beat.data?.end ?? beat.props?.end ?? sceneText(scene, 'end', values[values.length - 1] || beat.text || 'Result'));
+	const rate = String(beat.data?.rate ?? beat.props?.rate ?? sceneText(scene, 'rate', beat.subtext || ''));
+	const curve = String(beat.data?.curve ?? beat.props?.curve ?? sceneText(scene, 'curve', '')).toLowerCase();
+	const visualType = String(beat.data?.visual_type ?? sceneText(scene, 'visual_type', '')).toLowerCase();
 	const curveDown = curve === 'down' || visualType.includes('decay') || beat.text.toLowerCase().includes('leak') || beat.text.toLowerCase().includes('fall');
 	const progress = interpolate(frameWithinBeat, [0, fps * 1.4], [0, 1], {
 		extrapolateLeft: 'clamp',

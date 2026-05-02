@@ -70,9 +70,11 @@ class SceneBuilder:
                 resolved_audio_file = str(Path(voice_result.audio_path).expanduser().resolve())
                 resolved_duration = float(voice_result.duration_sec)
 
-            audio_duration = self._scene_duration(resolved_duration, section)
+            audio_duration = round(max(resolved_duration, 0.0), 2)
+            scene_duration = self._scene_duration(audio_duration, section)
             beats = self._section_beats(section)
             timed_beats = self._timeline_from_beats(beats, audio_duration, section)
+            self._extend_last_beat_to_scene_duration(timed_beats, scene_duration)
             pattern, data, concept = self._scene_visual_contract(section)
             map_pattern_to_component(pattern)
 
@@ -86,8 +88,9 @@ class SceneBuilder:
                     "direction": section.get("direction"),
                     "theme": section.get("theme") or {},
                     "beats": timed_beats,
-                    "duration": round(audio_duration, 2),
-                    "total_duration": round(audio_duration, 2),
+                    "duration": round(scene_duration, 2),
+                    "total_duration": round(scene_duration, 2),
+                    "audio_duration": round(audio_duration, 2),
                     "audio_file": resolved_audio_file,
                 }
             )
@@ -148,6 +151,11 @@ class SceneBuilder:
             cursor = end_time
 
         return timeline
+
+    def _extend_last_beat_to_scene_duration(self, beats: list[dict[str, Any]], scene_duration: float) -> None:
+        if not beats:
+            return
+        beats[-1]["end_time"] = round(max(scene_duration, float(beats[-1].get("end_time") or 0.0)), 2)
 
     def _timeline_from_spans(
         self,

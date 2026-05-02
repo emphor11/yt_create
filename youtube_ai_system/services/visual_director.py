@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import re
 from typing import Any
 
@@ -43,6 +43,8 @@ class DirectedBeat:
     subtext: str | None = None
     data: dict[str, Any] | None = None
     props: dict[str, Any] | None = None
+    source_text: str | None = None
+    sentence_index: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -56,6 +58,10 @@ class DirectedBeat:
             payload["data"] = self.data
         if self.props is not None:
             payload["props"] = self.props
+        if self.source_text is not None:
+            payload["source_text"] = self.source_text
+        if self.sentence_index is not None:
+            payload["sentence_index"] = self.sentence_index
         return payload
 
 
@@ -127,7 +133,7 @@ class VisualDirector:
             return self._growth_mechanism_plan(director_input, concept_type)
         if concept_type in {"inflation_erosion", "inflation_loss", "real_return", "fd_vs_inflation"}:
             return self._inflation_return_plan(director_input, concept_type)
-        if concept_type in {"opportunity_cost", "comparison_timeline", "risk_return", "diversification", "tax_saving"}:
+        if concept_type in {"opportunity_cost", "comparison_timeline", "risk_return", "diversification", "tax_saving", "speculation_risk"}:
             return self._comparison_mechanism_plan(director_input, concept_type)
         return self._generic_plan(director_input, concept_type)
 
@@ -143,7 +149,7 @@ class VisualDirector:
                 data=flow_data,
                 direction=direction,
                 theme=THEME,
-                beats=[
+                beats=self._contextualize_beats([
                     DirectedBeat(
                         "StatCard",
                         flow_data["source"]["value"],
@@ -159,7 +165,7 @@ class VisualDirector:
                         "danger zone" if remainder["is_dangerous"] else "left over",
                         {"primary_value": remainder["value"], "label": "left over", "color": "red" if remainder["is_dangerous"] else "orange"},
                     ),
-                ],
+                ], director_input.narration_text),
             )
         return self._fallback_plan(
             director_input,
@@ -188,20 +194,22 @@ class VisualDirector:
                 data=debt_data,
                 direction=direction,
                 theme=THEME,
-                beats=[
+                beats=self._contextualize_beats([
                     DirectedBeat("StatCard", debt_data["principal"]["value"], "normal", "credit card balance", {"label": "credit card balance"}),
                     DirectedBeat("CalculationStrip", "Interest beats payment", "subtle", data={"steps": steps}),
                     DirectedBeat("DebtSpiralVisualizer", "Debt keeps growing", "hero", data=debt_data),
-                ],
+                ], director_input.narration_text),
             )
-        return self._fallback_plan(
-            director_input,
-            concept_type,
-            direction,
-            "StatCard",
-            "Debt Trap",
-            "insufficient data for DebtSpiralVisualizer",
-        )
+        if self._has_finance_numbers(director_input):
+            return self._fallback_plan(
+                director_input,
+                concept_type,
+                direction,
+                "StatCard",
+                "Debt Trap",
+                "insufficient data for DebtSpiralVisualizer",
+            )
+        return self._qualitative_debt_plan(director_input, concept_type, direction, "Debt Trap")
 
     def _sip_growth_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
         sip_data = self._sip_growth_data(director_input.narration_text, director_input)
@@ -214,7 +222,7 @@ class VisualDirector:
                 data=sip_data,
                 direction=direction,
                 theme=THEME,
-                beats=[
+                beats=self._contextualize_beats([
                     DirectedBeat("StatCard", sip_data["monthly_sip"]["value"], "normal", "monthly SIP", {"label": "monthly SIP"}),
                     DirectedBeat("SIPGrowthEngine", "Compounding engine", "subtle", data=sip_data),
                     DirectedBeat(
@@ -226,7 +234,7 @@ class VisualDirector:
                             "right": {"label": "Corpus", "value": self._format_rupee(sip_data["final_corpus"])},
                         },
                     ),
-                ],
+                ], director_input.narration_text),
             )
         return self._fallback_plan(
             director_input,
@@ -239,11 +247,11 @@ class VisualDirector:
 
     def _money_mechanism_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
         text = director_input.narration_text
-        flow_data = self._money_flow_data(text) or self._inferred_money_flow_data(text, concept_type)
+        flow_data = self._money_flow_data(text)
         direction = SceneDirection("neutral", "urgency" if concept_type != "emergency_fund" else "relief", director_input.section_position, "warning")
         concept_name = self._display_concept_name(concept_type)
         if not flow_data:
-            return self._fallback_plan(director_input, concept_type, direction, "StatCard", concept_name, "insufficient data for money mechanism")
+            return self._qualitative_money_plan(director_input, concept_type, direction, concept_name)
         return DirectedPlan(
             concept_type=concept_type,
             concept_name=concept_name,
@@ -251,7 +259,7 @@ class VisualDirector:
             data=flow_data,
             direction=direction,
             theme=THEME,
-            beats=[
+            beats=self._contextualize_beats([
                 DirectedBeat(
                     "StatCard",
                     flow_data["source"]["value"],
@@ -266,7 +274,7 @@ class VisualDirector:
                     "hero",
                     data={"primary_value": self._money_mechanism_punch(flow_data, concept_type), "label": concept_name, "color": "teal" if concept_type == "emergency_fund" else "orange"},
                 ),
-            ],
+            ], text),
         )
 
     def _loan_pressure_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
@@ -274,7 +282,9 @@ class VisualDirector:
         direction = SceneDirection("neutral", "urgency", director_input.section_position, "danger")
         concept_name = self._display_concept_name(concept_type)
         if not debt_data:
-            return self._fallback_plan(director_input, concept_type, direction, "StatCard", concept_name, "insufficient data for loan pressure")
+            if self._has_finance_numbers(director_input):
+                return self._fallback_plan(director_input, concept_type, direction, "StatCard", concept_name, "insufficient data for loan pressure")
+            return self._qualitative_debt_plan(director_input, concept_type, direction, concept_name)
         steps = [
             {"label": "Loan", "value": debt_data["principal"]["value"]},
             {"label": "Rate", "value": f"{debt_data['annual_interest_rate']:g}%", "operation": "+"},
@@ -287,17 +297,19 @@ class VisualDirector:
             data=debt_data,
             direction=direction,
             theme=THEME,
-            beats=[
+            beats=self._contextualize_beats([
                 DirectedBeat("StatCard", debt_data["principal"]["value"], "normal", "loan balance", {"primary_value": debt_data["principal"]["value"], "label": "loan balance", "color": "white"}),
                 DirectedBeat("CalculationStrip", "Interest cost", "subtle", data={"steps": steps}),
                 DirectedBeat("DebtSpiralVisualizer", "Interest pressure", "hero", data=debt_data),
-            ],
+            ], director_input.narration_text),
         )
 
     def _growth_mechanism_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
-        sip_data = self._sip_growth_data(director_input.narration_text, director_input) or self._inferred_sip_growth_data(director_input)
         direction = SceneDirection("confusion", "confidence", director_input.section_position, "positive")
         concept_name = self._display_concept_name(concept_type)
+        sip_data = self._sip_growth_data(director_input.narration_text, director_input)
+        if sip_data is None:
+            return self._qualitative_growth_plan(director_input, concept_type, direction, concept_name)
         return DirectedPlan(
             concept_type=concept_type,
             concept_name=concept_name,
@@ -305,11 +317,11 @@ class VisualDirector:
             data=sip_data,
             direction=direction,
             theme=THEME,
-            beats=[
+            beats=self._contextualize_beats([
                 DirectedBeat("StatCard", sip_data["monthly_sip"]["value"], "normal", "monthly investment", {"primary_value": sip_data["monthly_sip"]["value"], "label": "monthly investment", "color": "teal"}),
                 DirectedBeat("SIPGrowthEngine", "Growth over time", "subtle", data=sip_data),
                 DirectedBeat("HighlightText", f"{sip_data['awe_ratio']}x gap", "hero", data={"primary_value": f"{sip_data['awe_ratio']}x", "label": "corpus vs invested", "color": "teal"}),
-            ],
+            ], director_input.narration_text),
         )
 
     def _inflation_return_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
@@ -319,6 +331,8 @@ class VisualDirector:
         start = data["start_value"]
         end = data["real_value"]
         rate = data["rate_label"]
+        final_text = f"{end['value']} buying power" if str(end["value"]).startswith("₹") else str(end["value"])
+        final_label = "future buying power" if str(end["value"]).startswith("₹") else concept_name
         return DirectedPlan(
             concept_type=concept_type,
             concept_name=concept_name,
@@ -326,11 +340,11 @@ class VisualDirector:
             data={"start": start["value"], "end": end["value"], "rate": rate, "curve": "down", "visual_type": "value_decay"},
             direction=direction,
             theme=THEME,
-            beats=[
+            beats=self._contextualize_beats([
                 DirectedBeat("StatCard", start["value"], "normal", "today", {"primary_value": start["value"], "label": "today", "color": "white"}),
                 DirectedBeat("GrowthChart", "Purchasing power falls", "subtle", data={"start": start["value"], "end": end["value"], "rate": rate, "curve": "down"}, props={"start": start["value"], "end": end["value"], "rate": rate, "curve": "down"}),
-                DirectedBeat("HighlightText", f"{end['value']} buying power", "hero", data={"primary_value": end["value"], "label": "future buying power", "color": "red"}),
-            ],
+                DirectedBeat("HighlightText", final_text, "hero", data={"primary_value": end["value"], "label": final_label, "color": "red"}),
+            ], director_input.narration_text),
         )
 
     def _comparison_mechanism_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
@@ -344,11 +358,133 @@ class VisualDirector:
             data=data,
             direction=direction,
             theme=THEME,
-            beats=[
+            beats=self._contextualize_beats([
                 DirectedBeat("StatCard", data["left"]["label"], "normal", "path A", {"primary_value": data["left"]["label"], "label": "path A", "color": "orange"}),
                 DirectedBeat("SplitComparison", concept_name, "subtle", data=data),
                 DirectedBeat("HighlightText", data["punch"], "hero", data={"primary_value": data["punch"], "label": concept_name, "color": data.get("accent", "teal")}),
+            ], director_input.narration_text),
+        )
+
+    def _qualitative_money_plan(
+        self,
+        director_input: VisualDirectorInput,
+        concept_type: str,
+        direction: SceneDirection,
+        concept_name: str,
+    ) -> DirectedPlan:
+        if concept_type == "lifestyle_inflation":
+            title = "Income rises. Savings don't."
+            nodes = [
+                {"label": "Income rises", "subtext": "feels like progress"},
+                {"label": "Lifestyle rises", "subtext": "upgrades absorb it"},
+                {"label": "Savings stay stuck", "subtext": "the gap never grows"},
+            ]
+            punch = "The raise never reaches savings"
+        elif concept_type == "expense_leakage":
+            title = "Small leaks become pressure"
+            nodes = [
+                {"label": "Tiny spends", "subtext": "easy to ignore"},
+                {"label": "Repeated daily", "subtext": "hard to notice"},
+                {"label": "Month-end pressure", "subtext": "cash disappears"},
+            ]
+            punch = "The leak is the system"
+        elif concept_type == "emergency_fund":
+            title = "Emergency fund absorbs shock"
+            nodes = [
+                {"label": "Unexpected bill", "subtext": "life happens"},
+                {"label": "Cash buffer", "subtext": "no card swipe"},
+                {"label": "Plan survives", "subtext": "stress drops"},
+            ]
+            punch = "The buffer buys breathing room"
+        else:
+            title = "Income needs a job"
+            nodes = [
+                {"label": "Money enters", "subtext": "salary day"},
+                {"label": "Rules split it", "subtext": "before impulse"},
+                {"label": "Savings protected", "subtext": "future first"},
+            ]
+            punch = "Allocate before you spend"
+        return self._qualitative_flow_plan(director_input, concept_type, concept_name, direction, title, nodes, punch, "warning")
+
+    def _qualitative_debt_plan(
+        self,
+        director_input: VisualDirectorInput,
+        concept_type: str,
+        direction: SceneDirection,
+        concept_name: str,
+    ) -> DirectedPlan:
+        title = "Small payments stack"
+        nodes = [
+            {"label": "One EMI", "subtext": "looks harmless"},
+            {"label": "More EMIs", "subtext": "fixed every month"},
+            {"label": "Cash left shrinks", "subtext": "pressure hits fast"},
+        ]
+        punch = "Fixed payments steal flexibility"
+        if concept_type == "debt_trap":
+            title = "Debt trap closes slowly"
+            nodes = [
+                {"label": "Swipe now", "subtext": "feels free"},
+                {"label": "Interest starts", "subtext": "cost keeps moving"},
+                {"label": "Balance survives", "subtext": "payment wasn't enough"},
+            ]
+            punch = "The trap is the interest"
+        return self._qualitative_flow_plan(director_input, concept_type, concept_name, direction, title, nodes, punch, "danger")
+
+    def _qualitative_growth_plan(
+        self,
+        director_input: VisualDirectorInput,
+        concept_type: str,
+        direction: SceneDirection,
+        concept_name: str,
+    ) -> DirectedPlan:
+        title = "Time does the heavy lifting"
+        data = {"start": "Start early", "end": "Growth accelerates", "curve": "up", "visual_type": "growth"}
+        beats = self._contextualize_beats(
+            [
+                DirectedBeat("StatCard", "Start early", "normal", "first advantage", {"primary_value": "Start early", "label": "first advantage", "color": "teal"}),
+                DirectedBeat("GrowthChart", title, "subtle", data=data, props=data),
+                DirectedBeat("HighlightText", "Patience creates growth", "hero", data={"primary_value": "Patience creates growth", "label": concept_name, "color": "teal"}),
             ],
+            director_input.narration_text,
+        )
+        return DirectedPlan(
+            concept_type=concept_type,
+            concept_name=concept_name,
+            pattern="GrowthChart",
+            data=data,
+            beats=beats,
+            direction=direction,
+            theme=THEME,
+        )
+
+    def _qualitative_flow_plan(
+        self,
+        director_input: VisualDirectorInput,
+        concept_type: str,
+        concept_name: str,
+        direction: SceneDirection,
+        title: str,
+        nodes: list[dict[str, str]],
+        punch: str,
+        accent: str,
+    ) -> DirectedPlan:
+        data = {"title": title, "nodes": nodes, "accent": accent}
+        beats = self._contextualize_beats(
+            [
+                DirectedBeat("StatCard", nodes[0]["label"], "normal", nodes[0].get("subtext"), {"primary_value": nodes[0]["label"], "label": nodes[0].get("subtext", ""), "color": "white"}),
+                DirectedBeat("FlowDiagram", title, "subtle", data=data, props=data),
+                DirectedBeat("HighlightText", punch, "hero", data={"primary_value": punch, "label": concept_name, "color": "red" if accent == "danger" else "orange"}),
+            ],
+            director_input.narration_text,
+        )
+        return DirectedPlan(
+            concept_type=concept_type,
+            concept_name=concept_name,
+            pattern="FlowDiagram",
+            data=data,
+            beats=beats,
+            direction=direction,
+            theme=THEME,
         )
 
     def _generic_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
@@ -392,6 +528,39 @@ class VisualDirector:
             fallback_reason=reason,
         )
 
+    def _contextualize_beats(self, beats: list[DirectedBeat], narration_text: str) -> list[DirectedBeat]:
+        sentences = self._sentences(narration_text)
+        if not sentences:
+            return beats
+        if len(beats) == 1:
+            return [replace(beats[0], source_text=sentences[0], sentence_index=0)]
+        contextualized: list[DirectedBeat] = []
+        last_sentence_index = max(len(sentences) - 1, 0)
+        last_beat_index = max(len(beats) - 1, 1)
+        for beat_index, beat in enumerate(beats):
+            sentence_index = round((beat_index / last_beat_index) * last_sentence_index)
+            sentence_index = max(0, min(sentence_index, last_sentence_index))
+            contextualized.append(
+                replace(beat, source_text=sentences[sentence_index], sentence_index=sentence_index)
+            )
+        return contextualized
+
+    def _sentences(self, text: str) -> list[str]:
+        parts = [part.strip() for part in re.split(r"(?<=[.!?])\s+", text.strip()) if part.strip()]
+        if parts:
+            return parts
+        stripped = text.strip()
+        return [stripped] if stripped else []
+
+    def _has_finance_numbers(self, director_input: VisualDirectorInput) -> bool:
+        return bool(
+            director_input.start_value
+            or director_input.end_value
+            or director_input.percentage is not None
+            or self._money_mentions(director_input.narration_text)
+            or self._first_percentage(director_input.narration_text) is not None
+        )
+
     def _money_flow_data(self, text: str) -> dict[str, Any] | None:
         amounts = self._money_mentions(text)
         source = self._source_amount(amounts, text)
@@ -400,8 +569,7 @@ class VisualDirector:
         source_amount = float(source["amount"])
         explicit_flows = self._explicit_flows(text, source)
         percentage_flows = self._percentage_flows(text, source_amount, {flow["label"].lower() for flow in explicit_flows})
-        estimate_flows = self._estimated_flows(text, source_amount, {flow["label"].lower() for flow in explicit_flows + percentage_flows})
-        flows = explicit_flows + percentage_flows + estimate_flows
+        flows = explicit_flows + percentage_flows
         if not flows:
             return None
         flows = sorted(flows, key=lambda flow: flow["amount"], reverse=True)
@@ -522,6 +690,8 @@ class VisualDirector:
             return "opportunity_cost"
         if "risk" in text and "return" in text:
             return "risk_return"
+        if "fomo" in text or "speculation" in text or "life savings" in text or "don't understand" in text or "do not understand" in text:
+            return "speculation_risk"
         if "diversification" in text or "diversify" in text or "asset classes" in text:
             return "diversification"
         if "tax saving" in text or "tax" in text or "80c" in text:
@@ -556,6 +726,7 @@ class VisualDirector:
             "risk_return": "Risk vs Return",
             "diversification": "Diversification",
             "tax_saving": "Tax Saving",
+            "speculation_risk": "Investing vs Speculation",
         }.get(concept_type, concept_type.replace("_", " ").title())
 
     def _money_flow_title(self, concept_type: str) -> str:
@@ -649,9 +820,20 @@ class VisualDirector:
         }
 
     def _inflation_return_data(self, director_input: VisualDirectorInput) -> dict[str, Any]:
-        amount = self._parse_rupee(director_input.narration_text) or self._parse_rupee(director_input.start_value) or 100000.0
-        rate = max(director_input.percentage or self._first_percentage(director_input.narration_text) or 7.0, 1.0)
-        years = self._years_from_text(director_input.time_period or director_input.narration_text) or 10
+        explicit_amount = self._parse_rupee(director_input.narration_text) or self._parse_rupee(director_input.start_value)
+        explicit_rate = director_input.percentage if director_input.percentage is not None else self._first_percentage(director_input.narration_text)
+        explicit_years = self._years_from_text(director_input.time_period or director_input.narration_text)
+        if explicit_amount is None and explicit_rate is None and explicit_years is None:
+            return {
+                "start_value": {"value": "Savings", "amount": 0.0},
+                "real_value": {"value": "Buying power falls", "amount": 0.0},
+                "inflation_rate": None,
+                "years": None,
+                "rate_label": "",
+            }
+        amount = explicit_amount or 100000.0
+        rate = max(explicit_rate or 7.0, 1.0)
+        years = explicit_years or 10
         real_value = amount / ((1 + rate / 100.0) ** years)
         return {
             "start_value": {"value": self._format_rupee(amount), "amount": amount},
@@ -662,16 +844,22 @@ class VisualDirector:
         }
 
     def _comparison_data(self, director_input: VisualDirectorInput, concept_type: str) -> dict[str, Any]:
-        amount = self._parse_rupee(director_input.narration_text) or 5000.0
+        amount = self._parse_rupee(director_input.narration_text)
         if concept_type == "risk_return":
             return {"left": {"label": "Low Risk / Low Return", "value": "FD"}, "right": {"label": "Higher Risk / Higher Growth", "value": "Equity"}, "punch": "Risk buys upside", "accent": "teal"}
         if concept_type == "diversification":
             return {"left": {"label": "One bet", "value": "100%"}, "right": {"label": "Spread bets", "value": "safer mix"}, "punch": "Spread the risk", "accent": "teal"}
         if concept_type == "tax_saving":
-            tax_saved = amount * 0.3
-            return {"left": {"label": "Without planning", "value": self._format_rupee(amount)}, "right": {"label": "Tax saved", "value": self._format_rupee(tax_saved)}, "punch": f"{self._format_rupee(tax_saved)} saved", "accent": "teal"}
+            if amount is not None:
+                tax_saved = amount * 0.3
+                return {"left": {"label": "Without planning", "value": self._format_rupee(amount)}, "right": {"label": "Tax saved", "value": self._format_rupee(tax_saved)}, "punch": f"{self._format_rupee(tax_saved)} saved", "accent": "teal"}
+            return {"left": {"label": "No planning", "value": "tax leak"}, "right": {"label": "Tax plan", "value": "money saved"}, "punch": "Planning reduces leakage", "accent": "teal"}
+        if concept_type == "speculation_risk":
+            return {"left": {"label": "FOMO trade", "value": "emotion"}, "right": {"label": "Real investing", "value": "understanding"}, "punch": "Do not buy what you cannot explain", "accent": "orange"}
         if concept_type in {"opportunity_cost", "comparison_timeline"}:
-            return {"left": {"label": "Spend today", "value": self._format_rupee(amount)}, "right": {"label": "Invest monthly", "value": self._format_rupee(amount)}, "punch": "Small choice compounds", "accent": "orange"}
+            if amount is not None:
+                return {"left": {"label": "Spend today", "value": self._format_rupee(amount)}, "right": {"label": "Invest monthly", "value": self._format_rupee(amount)}, "punch": "Small choice compounds", "accent": "orange"}
+            return {"left": {"label": "Spend today", "value": "instant"}, "right": {"label": "Invest instead", "value": "future"}, "punch": "Small choice compounds", "accent": "orange"}
         return {"left": {"label": "Path A", "value": "today"}, "right": {"label": "Path B", "value": "future"}, "punch": "Choose the better path", "accent": "teal"}
 
     def _money_mentions(self, text: str) -> list[dict[str, Any]]:

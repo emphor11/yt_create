@@ -35,7 +35,6 @@ export const FlowDiagram: React.FC<BeatComponentProps> = ({beat, scene, frameWit
 									textAlign: 'center',
 								}}
 							>
-								<div style={{fontFamily: BODY_FONT_FAMILY, fontSize: 24, fontWeight: 900, color: COLORS.dim}}>FLOW {index + 1}</div>
 								{node.value ? (
 									<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 64, lineHeight: 0.9, marginTop: 12, color: node.color || COLORS.text}}>
 										{node.value.toUpperCase()}

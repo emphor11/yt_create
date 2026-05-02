@@ -487,7 +487,9 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         beats = planned["sections"][0]["visual_plan"][0]["beats"]["beats"]
         self.assertGreaterEqual(len(beats), 1)
         self.assertEqual(section["visual_type"], "pressure")
-        self.assertEqual(beats[0]["text"], "Debt Trap")
+        self.assertEqual(section["visual_plan"][0]["visual"]["pattern"], "FlowDiagram")
+        self.assertEqual(beats[0]["text"], "Swipe now")
+        self.assertIn("source_text", beats[0])
         self.assertTrue(all("component" in beat for beat in beats))
 
     def test_numeric_arc_uses_calculation_steps_when_values_are_related(self) -> None:

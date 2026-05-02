@@ -132,8 +132,9 @@ class SceneBuilderTestCase(unittest.TestCase):
         )
         scene = result["scenes"][0]
         first_duration = scene["beats"][0]["end_time"] - scene["beats"][0]["start_time"]
-        second_duration = scene["beats"][1]["end_time"] - scene["beats"][1]["start_time"]
-        self.assertAlmostEqual(second_duration, first_duration, places=1)
+        second_audio_duration = scene["audio_duration"] - scene["beats"][1]["start_time"]
+        self.assertAlmostEqual(second_audio_duration, first_duration, places=1)
+        self.assertEqual(scene["beats"][1]["end_time"], scene["duration"])
         self.assertEqual(scene["beats"][1]["emphasis"], "hero")
 
     def test_component_weighted_timing_gives_calculation_more_time(self) -> None:
@@ -344,8 +345,8 @@ class SceneBuilderTestCase(unittest.TestCase):
         beats = result["scenes"][0]["beats"]
         self.assertEqual(beats[0]["source_text"], "Salary hits account.")
         self.assertEqual(beats[1]["sentence_index"], 1)
-        self.assertAlmostEqual(beats[0]["end_time"], 3.1, places=1)
-        self.assertAlmostEqual(beats[1]["start_time"], 3.1, places=1)
+        self.assertAlmostEqual(beats[0]["end_time"], 3.0, places=1)
+        self.assertAlmostEqual(beats[1]["start_time"], 3.0, places=1)
         self.assertEqual(beats[1]["end_time"], 12.4)
 
     def test_too_many_beats_merges_last_two_for_minimum_duration(self) -> None:
