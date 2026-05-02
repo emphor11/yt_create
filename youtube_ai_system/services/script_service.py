@@ -133,8 +133,8 @@ class ScriptService:
 
     def validate_hook(self, hook: dict[str, Any]) -> list[str]:
         errors: list[str] = []
-        if float(hook.get("duration", hook.get("estimated_duration_sec", 0)) or 0) > 7:
-            errors.append("Hook must be 7 seconds or under.")
+        if float(hook.get("duration", hook.get("estimated_duration_sec", 0)) or 0) > 30:
+            errors.append("Hook must be 30 seconds or under.")
 
         narration = str(hook.get("narration", "")).strip()
         narration_lower = narration.lower()

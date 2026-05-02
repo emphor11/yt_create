@@ -7,6 +7,8 @@ export type Beat = {
 	subtext?: string;
 	steps?: Array<Record<string, unknown>>;
 	props?: Record<string, unknown>;
+	source_text?: string;
+	sentence_index?: number;
 };
 
 export type Scene = {

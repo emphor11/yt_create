@@ -107,6 +107,9 @@ class SceneBuilder:
         beats = self._merge_for_min_duration(beats, audio_duration)
         if not beats:
             return []
+        aligned_spans = self._sentence_aligned_spans(beats, audio_duration, section)
+        if aligned_spans is not None:
+            return self._timeline_from_spans(beats, aligned_spans)
         durations = self._component_weighted_durations(beats, audio_duration)
 
         timeline: list[dict[str, Any]] = []
@@ -123,12 +126,32 @@ class SceneBuilder:
                 "end_time": round(end_time, 2),
                 "emphasis": self._beat_emphasis(index, len(beats)),
             }
-            for key in ("subtext", "steps", "props"):
+            for key in ("subtext", "steps", "props", "source_text", "sentence_index"):
                 if key in beat:
                     timed_beat[key] = beat[key]
             timeline.append(timed_beat)
             cursor = end_time
 
+        return timeline
+
+    def _timeline_from_spans(
+        self,
+        beats: list[dict[str, Any]],
+        spans: list[tuple[float, float]],
+    ) -> list[dict[str, Any]]:
+        timeline: list[dict[str, Any]] = []
+        for index, (beat, (start_time, end_time)) in enumerate(zip(beats, spans)):
+            timed_beat = {
+                "component": beat["component"],
+                "text": beat["text"],
+                "start_time": round(start_time, 2),
+                "end_time": round(end_time, 2),
+                "emphasis": self._beat_emphasis(index, len(beats)),
+            }
+            for key in ("subtext", "steps", "props", "source_text", "sentence_index"):
+                if key in beat:
+                    timed_beat[key] = beat[key]
+            timeline.append(timed_beat)
         return timeline
 
     def _audio_root(self) -> Path:
@@ -281,11 +304,74 @@ class SceneBuilder:
                 "component": str(beat.get("component") or "").strip() or "ConceptCard",
                 "text": text,
             }
-            for extra_key in ("subtext", "steps", "props"):
+            for extra_key in ("subtext", "steps", "props", "source_text", "sentence_index"):
                 if extra_key in beat:
                     cleaned_beat[extra_key] = beat[extra_key]
             cleaned.append(cleaned_beat)
         return cleaned
+
+    def _sentence_aligned_spans(
+        self,
+        beats: list[dict[str, Any]],
+        audio_duration: float,
+        section: dict[str, Any],
+    ) -> list[tuple[float, float]] | None:
+        if audio_duration <= 0:
+            return None
+        if not beats or any("sentence_index" not in beat or not str(beat.get("source_text") or "").strip() for beat in beats):
+            return None
+
+        sentence_text_by_index: dict[int, str] = {}
+        for beat in beats:
+            try:
+                sentence_index = int(beat.get("sentence_index"))
+            except (TypeError, ValueError):
+                return None
+            sentence_text_by_index.setdefault(sentence_index, str(beat.get("source_text") or "").strip())
+
+        ordered_sentence_indices = sorted(sentence_text_by_index)
+        word_counts = {
+            index: max(len(sentence_text_by_index[index].split()), 1)
+            for index in ordered_sentence_indices
+        }
+        total_words = sum(word_counts.values())
+        if total_words <= 0:
+            return None
+
+        sentence_ranges: dict[int, tuple[float, float]] = {}
+        cursor = 0.0
+        for position, sentence_index in enumerate(ordered_sentence_indices):
+            duration = (word_counts[sentence_index] / total_words) * audio_duration
+            start = cursor
+            end = cursor + duration
+            if position == len(ordered_sentence_indices) - 1:
+                end = audio_duration
+            sentence_ranges[sentence_index] = (start, end)
+            cursor = end
+
+        beat_indices_by_sentence: dict[int, list[int]] = {}
+        for beat_index, beat in enumerate(beats):
+            beat_indices_by_sentence.setdefault(int(beat.get("sentence_index")), []).append(beat_index)
+
+        spans: list[tuple[float, float]] = [(0.0, 0.0) for _ in beats]
+        for sentence_index, beat_indices in beat_indices_by_sentence.items():
+            sentence_start, sentence_end = sentence_ranges[sentence_index]
+            sentence_duration = max(sentence_end - sentence_start, 0.0)
+            weights = [
+                COMPONENT_DURATION_WEIGHTS.get(str(beats[index].get("component") or "ConceptCard"), 1.0)
+                for index in beat_indices
+            ]
+            total_weight = sum(weights) or float(len(beat_indices))
+            local_cursor = sentence_start
+            for position, (beat_index, weight) in enumerate(zip(beat_indices, weights)):
+                duration = sentence_duration * (weight / total_weight)
+                start = local_cursor
+                end = local_cursor + duration
+                if position == len(beat_indices) - 1:
+                    end = sentence_end
+                spans[beat_index] = (start, end)
+                local_cursor = end
+        return spans
 
     def _component_weighted_durations(self, beats: list[dict[str, Any]], audio_duration: float) -> list[float]:
         if not beats:

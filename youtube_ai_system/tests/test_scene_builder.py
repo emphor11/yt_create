@@ -302,6 +302,45 @@ class SceneBuilderTestCase(unittest.TestCase):
         self.assertEqual(first_beats, second_beats)
         self.assertEqual(first_beats[-1]["end_time"], first["scenes"][0]["duration"])
 
+    def test_sentence_aligned_beats_follow_sentence_word_timing(self) -> None:
+        result = build_scenes(
+            [
+                {
+                    "text": "Salary hits account. EMI and rent take most of the monthly income.",
+                    "audio_file": str((Path(self.temp_dir.name) / "storage" / "audio" / "dummy.wav").resolve()),
+                    "audio_duration": 12.0,
+                    "weight": {"level": "medium", "score": 0.5},
+                    "visual_plan": [
+                        {
+                            "beats": {
+                                "beats": [
+                                    {
+                                        "component": "StatCard",
+                                        "text": "Salary",
+                                        "source_text": "Salary hits account.",
+                                        "sentence_index": 0,
+                                    },
+                                    {
+                                        "component": "BalanceBar",
+                                        "text": "EMI pressure",
+                                        "source_text": "EMI and rent take most of the monthly income.",
+                                        "sentence_index": 1,
+                                    },
+                                ]
+                            }
+                        }
+                    ],
+                }
+            ]
+        )
+
+        beats = result["scenes"][0]["beats"]
+        self.assertEqual(beats[0]["source_text"], "Salary hits account.")
+        self.assertEqual(beats[1]["sentence_index"], 1)
+        self.assertAlmostEqual(beats[0]["end_time"], 3.0, places=1)
+        self.assertAlmostEqual(beats[1]["start_time"], 3.0, places=1)
+        self.assertEqual(beats[1]["end_time"], 12.0)
+
     def test_too_many_beats_merges_last_two_for_minimum_duration(self) -> None:
         result = build_scenes(
             [
