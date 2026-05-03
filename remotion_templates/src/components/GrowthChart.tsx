@@ -20,14 +20,37 @@ export const GrowthChart: React.FC<BeatComponentProps> = ({beat, scene, frameWit
 	const accent = curveDown ? COLORS.red : COLORS.teal;
 	const lineWidth = 760 * progress;
 	const endY = curveDown ? 420 : 210;
+	const ghostBars = curveDown ? [0.92, 0.72, 0.52] : [0.32, 0.58, 0.92];
 
 	return (
-		<AbsoluteFill style={{backgroundColor: COLORS.background, color: COLORS.text, padding: 110, justifyContent: 'center'}}>
+		<AbsoluteFill style={{backgroundColor: COLORS.background, color: COLORS.text, padding: 110, justifyContent: 'center', overflow: 'hidden'}}>
 			<style>{FONT_FACES}</style>
-			<div style={{display: 'grid', gridTemplateColumns: '360px 1fr 360px', gap: 56, alignItems: 'center'}}>
+			<div
+				style={{
+					position: 'absolute',
+					inset: -120,
+					background: `radial-gradient(circle at ${curveDown ? 70 : 35}% ${curveDown ? 36 : 62}%, ${accent}24, transparent 28%), linear-gradient(120deg, #080811, #101521 58%, #07070d)`,
+				}}
+			/>
+			<div style={{display: 'grid', gridTemplateColumns: '360px minmax(620px, 1fr) 360px', gap: 56, alignItems: 'center', width: '100%', position: 'relative', zIndex: 1}}>
 				<ValueBlock label="START" value={start} accent={COLORS.blue} />
 				<div style={{height: 460, position: 'relative'}}>
 					<div style={{position: 'absolute', left: 0, right: 0, bottom: 80, height: 2, background: COLORS.stroke}} />
+					{ghostBars.map((height, index) => (
+						<div
+							key={index}
+							style={{
+								position: 'absolute',
+								left: 76 + index * 170,
+								bottom: 84,
+								width: 52,
+								height: 260 * height * progress,
+								background: `linear-gradient(180deg, ${accent}55, ${accent}11)`,
+								border: `1px solid ${accent}55`,
+								opacity: 0.5,
+							}}
+						/>
+					))}
 					<div
 						style={{
 							position: 'absolute',
@@ -39,6 +62,7 @@ export const GrowthChart: React.FC<BeatComponentProps> = ({beat, scene, frameWit
 							transform: `rotate(${curveDown ? 13 : -13}deg)`,
 							transformOrigin: 'left center',
 							boxShadow: `0 0 40px ${accent}`,
+							borderRadius: 99,
 						}}
 					/>
 					<div

@@ -32,6 +32,33 @@ class FinanceConceptExtractorTestCase(unittest.TestCase):
         self.assertEqual(result.concept_type, "risk")
         self.assertEqual(result.start_value, "₹50,000")
 
+    def test_maps_emi_pressure_before_generic_debt(self) -> None:
+        result = self.extractor.extract(
+            {
+                "combined_text": (
+                    "One EMI feels harmless. Then a phone EMI joins it. Then a bike EMI joins it. "
+                    "Suddenly ₹18,000 leaves before the month begins."
+                ),
+                "dominant_entity": "emi",
+                "idea_type": "risk",
+            }
+        )
+
+        self.assertEqual(result.concept_name, "EMI Pressure")
+        self.assertEqual(result.concept_type, "risk")
+
+    def test_maps_sip_growth_before_generic_compounding(self) -> None:
+        result = self.extractor.extract(
+            {
+                "combined_text": "A ₹5,000 SIP compounds at 12% for 20 years and creates a larger corpus.",
+                "dominant_entity": "investment",
+                "idea_type": "growth",
+            }
+        )
+
+        self.assertEqual(result.concept_name, "SIP Growth")
+        self.assertEqual(result.concept_type, "growth")
+
     def test_maps_expense_leakage(self) -> None:
         result = self.extractor.extract(
             {

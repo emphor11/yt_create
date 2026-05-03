@@ -21,6 +21,29 @@ class FinanceConcept:
 
 
 CONCEPT_TAXONOMY: dict[str, dict[str, Any]] = {
+    "emi_pressure": {
+        "signals": [
+            r"\bemi\b.*\b(stack|pressure|joins?|leaves?|starts?|takes?|fixed|month|monthly)\b",
+            r"\b(phone|bike|car|personal)\s+emi\b",
+            r"\bmultiple\s+emis?\b",
+            r"\bfixed payments?\b",
+            r"\binstalments?\b.*\b(stack|month|salary|cash)\b",
+        ],
+        "type": "risk",
+        "visual_pattern": "emi_stack_pressure",
+    },
+    "sip_growth": {
+        "signals": [
+            r"\bsip\b",
+            r"monthly investment.*compound",
+            r"monthly investment.*returns?",
+            r"invest.*per month.*returns?",
+            r"small investments?.*corpus",
+            r"corpus.*grows?",
+        ],
+        "type": "growth",
+        "visual_pattern": "sip_compound_growth",
+    },
     "lifestyle_inflation": {
         "signals": [
             r"lifestyle inflation",
@@ -301,6 +324,8 @@ class FinanceConceptExtractor:
 
     def _display_name(self, concept_key: str) -> str:
         display_map = {
+            "emi_pressure": "EMI Pressure",
+            "sip_growth": "SIP Growth",
             "lifestyle_inflation": "Lifestyle Inflation",
             "debt_trap": "Debt Trap",
             "inflation_erosion": "Inflation Loss",
@@ -331,6 +356,10 @@ class FinanceConceptExtractor:
         comparison_name = self._extract_comparison_name(text)
         if comparison_name:
             return comparison_name
+        if "emi" in lowered or "instalment" in lowered or "installment" in lowered:
+            return "EMI Pressure"
+        if "sip" in lowered or ("monthly investment" in lowered and ("compound" in lowered or "return" in lowered)):
+            return "SIP Growth"
         if "credit card" in lowered or "interest" in lowered or "minimum payment" in lowered:
             return "Debt Trap"
         if "raise" in lowered or "lifestyle" in lowered or "upgrade" in lowered:

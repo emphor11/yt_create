@@ -56,6 +56,10 @@ const DATA_HEAVY_COMPONENTS = new Set([
 	'CalculationStrip',
 	'GrowthChart',
 	'GrowthChartScene',
+	'FlowDiagram',
+	'FlowBar',
+	'SplitComparison',
+	'SplitComparisonScene',
 ]);
 
 const OVERLAY_FRIENDLY_COMPONENTS = new Set([
@@ -63,10 +67,6 @@ const OVERLAY_FRIENDLY_COMPONENTS = new Set([
 	'ConceptCard',
 	'ConceptCardScene',
 	'HighlightText',
-	'FlowDiagram',
-	'FlowBar',
-	'SplitComparison',
-	'SplitComparisonScene',
 ]);
 
 const shouldShowStoryOverlay = (beat: Beat, beatIndex: number, totalBeats: number): boolean => {
