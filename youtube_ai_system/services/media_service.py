@@ -252,6 +252,13 @@ class MediaService:
             "audio_duration": float(audio_duration),
             "finance_concept": intelligence.get("finance_concept") or {},
             "narrative_arc": intelligence.get("narrative_arc") or {},
+            "visual_story": intelligence.get("visual_story") or {},
+            "story_state": intelligence.get("story_state") or {},
+            "direction": intelligence.get("direction"),
+            "visual_mode": intelligence.get("visual_mode"),
+            "cinematic_intent": intelligence.get("cinematic_intent") or {},
+            "concept_type": str(intelligence.get("concept_type") or ""),
+            "theme": intelligence.get("theme") or {},
             "state": intelligence.get("state") or {},
             "visual_type": str(intelligence.get("visual_type") or ""),
             "dominant_entity": str(intelligence.get("dominant_entity") or "money"),
@@ -288,6 +295,7 @@ class MediaService:
         story_plan = {"hook": "", "agenda": [], "sections": [section]}
         story_plan = self.story_pipeline.attach_section_concepts(story_plan)
         story_plan = self.story_pipeline.attach_section_narrative_arc(story_plan)
+        story_plan = self.story_pipeline.attach_visual_story(story_plan)
         story_plan = self.story_pipeline.attach_section_visual_plan(story_plan)
         return dict((story_plan.get("sections") or [{}])[0])
 

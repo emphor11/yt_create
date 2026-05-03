@@ -49,6 +49,8 @@ class MediaServiceSceneRenderTestCase(unittest.TestCase):
         self.assertEqual(section["narrative_arc"]["visual_type"], "balance_decay")
         self.assertEqual(section["state"]["money_out"], "40%")
         self.assertEqual(section["visual_plan"][0]["visual"]["pattern"], "RiskCard")
+        self.assertTrue(section["visual_story"])
+        self.assertTrue(section["story_state"])
 
     def test_derived_visual_plan_uses_full_story_pipeline_fallback(self) -> None:
         section = self.service._section_intelligence_from_narration(
@@ -61,6 +63,8 @@ class MediaServiceSceneRenderTestCase(unittest.TestCase):
         self.assertEqual(section["finance_concept"]["concept_name"], "Salary Depletion")
         self.assertTrue(section["narrative_arc"])
         self.assertTrue(section["visual_plan"])
+        self.assertTrue(section["visual_story"])
+        self.assertTrue(section["story_state"])
         self.assertEqual(section["visual_type"], "money_flow")
 
     def test_format_number_uses_indian_finance_style(self) -> None:
