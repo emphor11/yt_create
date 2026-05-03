@@ -1428,7 +1428,7 @@ def visual_director_input_from_section(
     visual_scene = dict(section.get("visual_scene") or {})
     mechanism = str(section.get("mechanism") or visual_scene.get("mechanism") or "").strip()
     return VisualDirectorInput(
-        concept_type=str(mechanism or finance_concept.get("concept_type") or concept.get("type") or section.get("idea_type") or "definition"),
+        concept_type=str(mechanism or section.get("concept_type") or finance_concept.get("concept_type") or concept.get("type") or section.get("idea_type") or "definition"),
         concept_name=str(finance_concept.get("concept_name") or concept.get("concept") or "Money Change"),
         primary_entity=str(finance_concept.get("primary_entity") or section.get("dominant_entity") or "money"),
         action=str(finance_concept.get("action") or ""),

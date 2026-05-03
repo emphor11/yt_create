@@ -49,14 +49,52 @@ const beatFrameRange = (beat: Beat, fps: number) => ({
 	endFrame: timeToFrame(beat.end_time, fps),
 });
 
+const DATA_HEAVY_COMPONENTS = new Set([
+	'MoneyFlowDiagram',
+	'DebtSpiralVisualizer',
+	'SIPGrowthEngine',
+	'CalculationStrip',
+	'GrowthChart',
+	'GrowthChartScene',
+]);
+
+const OVERLAY_FRIENDLY_COMPONENTS = new Set([
+	'StatCard',
+	'ConceptCard',
+	'ConceptCardScene',
+	'HighlightText',
+	'FlowDiagram',
+	'FlowBar',
+	'SplitComparison',
+	'SplitComparisonScene',
+]);
+
+const shouldShowStoryOverlay = (beat: Beat, beatIndex: number, totalBeats: number): boolean => {
+	const role = String(beat.props?.beat_role ?? beat.data?.beat_role ?? '').toLowerCase();
+	if (role === 'process' || role === 'change') {
+		return false;
+	}
+	if (role === 'introduce' || role === 'result' || role === 'punch') {
+		return true;
+	}
+	if (DATA_HEAVY_COMPONENTS.has(beat.component)) {
+		return false;
+	}
+	if (beatIndex === 0 || beatIndex === totalBeats - 1) {
+		return true;
+	}
+	return OVERLAY_FRIENDLY_COMPONENTS.has(beat.component);
+};
+
 export const SceneRenderer: React.FC<Props> = ({scene}) => {
 	const frame = useCurrentFrame();
 	const {fps} = useVideoConfig();
 
-	const activeBeat = scene.beats.find((beat) => {
+	const activeBeatIndex = scene.beats.findIndex((beat) => {
 		const range = beatFrameRange(beat, fps);
 		return range.startFrame <= frame && frame < range.endFrame;
 	});
+	const activeBeat = activeBeatIndex >= 0 ? scene.beats[activeBeatIndex] : undefined;
 
 	if (!activeBeat) {
 		return null;
@@ -75,7 +113,10 @@ export const SceneRenderer: React.FC<Props> = ({scene}) => {
 	const Component = cinematicTextBeat
 		? CinematicScene
 		: COMPONENT_MAP[activeBeat.component as keyof typeof COMPONENT_MAP] ?? StatCard;
-	const shouldOverlayStoryWorld = hasStoryState && !cinematicTextBeat;
+	const shouldOverlayStoryWorld =
+		hasStoryState &&
+		!cinematicTextBeat &&
+		shouldShowStoryOverlay(activeBeat, activeBeatIndex, scene.beats.length);
 
 	return (
 		<>

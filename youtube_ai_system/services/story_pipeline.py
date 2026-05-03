@@ -392,6 +392,10 @@ class StoryPipeline:
                 section["concept_type"] = str(section.get("idea_type") or "emphasis")
                 section.pop("visual_mode", None)
                 section.pop("cinematic_intent", None)
+            self.visual_story_engine.enrich_section_from_visual_plan(
+                section,
+                dict(story_plan.get("visual_story") or section.get("visual_story") or {}),
+            )
             sections[index] = self.visual_beat_expander.expand_section(section)
             preceding_concept_type = directed_plan.concept_type if directed_plan else director_input.concept_type
         return story_plan

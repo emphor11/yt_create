@@ -4,6 +4,29 @@ from youtube_ai_system.services.story_pipeline import StoryPipeline
 from youtube_ai_system.services.visual_story_engine import VisualStoryEngine
 
 
+def make_section(concept_type: str, text: str, visual_data: dict | None = None) -> dict:
+    section = {
+        "text": text,
+        "concept_type": concept_type,
+        "finance_concept": {
+            "concept_type": concept_type,
+            "concept_name": concept_type.replace("_", " ").title(),
+            "start_value": None,
+            "end_value": None,
+            "confidence": 0.9,
+        },
+    }
+    if visual_data is not None:
+        section["visual_plan"] = [
+            {
+                "concept": {"concept": concept_type.replace("_", " ").title(), "type": concept_type},
+                "visual": {"pattern": "GrowthChart", "data": visual_data},
+                "beats": {"beats": [{"component": "GrowthChart", "text": "Value path", "data": visual_data}]},
+            }
+        ]
+    return section
+
+
 class VisualStoryEngineTestCase(unittest.TestCase):
     def test_visual_story_engine_adds_story_world_and_section_states(self) -> None:
         story_plan = {
@@ -21,11 +44,7 @@ class VisualStoryEngineTestCase(unittest.TestCase):
 
         self.assertEqual(result["visual_story"]["protagonist"]["role"], "young_salaried_professional")
         self.assertEqual(result["visual_story"]["protagonist"]["visual_id"], "protagonist_01")
-        self.assertIn("phone_account", result["visual_story"]["recurring_objects"])
-        self.assertIn("emi_stack", result["visual_story"]["recurring_objects"])
-        self.assertIn("inflation_basket", result["visual_story"]["recurring_objects"])
-        self.assertIn("sip_jar", result["visual_story"]["recurring_objects"])
-        self.assertIn("portfolio_grid", result["visual_story"]["recurring_objects"])
+        self.assertIn("salary_balance", result["visual_story"]["recurring_objects"])
         self.assertTrue(all(section.get("story_state") for section in result["sections"]))
 
     def test_story_pipeline_threads_story_state_into_directed_visuals(self) -> None:
@@ -74,10 +93,10 @@ class VisualStoryEngineTestCase(unittest.TestCase):
         result = VisualStoryEngine().attach_visual_story(story_plan)
         roles = [section["story_state"]["scene_role"] for section in result["sections"]]
 
-        self.assertEqual(roles[0], "setup")
+        self.assertEqual(roles[0], "pressure")
         self.assertIn("pressure", roles)
         self.assertIn("mechanism", roles)
-        self.assertEqual(roles[-1], "resolution")
+        self.assertEqual(roles[-1], "solution")
 
     def test_portfolio_story_answer_uses_portfolio_object_even_when_concept_is_risk_return(self) -> None:
         story_plan = {
@@ -95,6 +114,82 @@ class VisualStoryEngineTestCase(unittest.TestCase):
             portfolio_section["story_state"]["visual_answer"],
             "one fragile bet becomes a spread portfolio",
         )
+
+    def test_single_scene_role_uses_concept_not_index(self) -> None:
+        result = VisualStoryEngine().attach_visual_story(
+            {"sections": [make_section("emi_pressure", "One EMI feels harmless. Then ₹18,000 leaves.")]}
+        )
+        state = result["sections"][0]["story_state"]
+
+        self.assertEqual(state["scene_role"], "pressure")
+        self.assertEqual(state["protagonist_state"], "stressed")
+
+    def test_single_scene_sip_is_solution_not_setup(self) -> None:
+        result = VisualStoryEngine().attach_visual_story(
+            {"sections": [make_section("sip_growth", "₹5,000 monthly SIP compounds at 12% interest.")]}
+        )
+        state = result["sections"][0]["story_state"]
+
+        self.assertEqual(state["scene_role"], "solution")
+        self.assertEqual(state["active_objects"], ["sip_jar"])
+
+    def test_compound_interest_does_not_activate_debt_pressure(self) -> None:
+        result = VisualStoryEngine().attach_visual_story(
+            {
+                "sections": [
+                    make_section(
+                        "sip_growth",
+                        "₹5,000 monthly investment compounds over time. At 12% interest, corpus grows.",
+                    )
+                ]
+            }
+        )
+        state = result["sections"][0]["story_state"]
+
+        self.assertIn("sip_jar", state["active_objects"])
+        self.assertNotIn("debt_pressure", state["active_objects"])
+        self.assertEqual(state["visual_question"], "What changes when returns start earning returns?")
+
+    def test_inflation_story_state_uses_directed_end_value_not_percentage(self) -> None:
+        section = make_section(
+            "inflation_erosion",
+            "₹1,00,000 sits idle while prices rise at 7%. After 10 years, buying power halves.",
+            {"start": "₹1,00,000", "end": "₹50,835", "rate": "7% for 10 years", "curve": "down"},
+        )
+        result = VisualStoryEngine().attach_visual_story({"sections": [section]})
+        section = result["sections"][0]
+        VisualStoryEngine().enrich_section_from_visual_plan(section, result["visual_story"])
+        state = section["story_state"]
+
+        self.assertEqual(state["state_change"]["money"]["from"], "₹1,00,000")
+        self.assertEqual(state["state_change"]["money"]["to"], "₹50,835")
+        self.assertEqual(state["visual_question"], "Why does the same balance buy less?")
+        self.assertEqual(state["visual_answer"], "₹1,00,000 today buys like ₹50,835")
+        self.assertNotIn("%", state["state_change"]["money"]["to"])
+
+    def test_emi_question_is_concept_specific(self) -> None:
+        result = VisualStoryEngine().attach_visual_story(
+            {"sections": [make_section("emi_pressure", "One EMI feels harmless. Then phone and bike EMIs stack. ₹18,000 leaves.")]}
+        )
+        state = result["sections"][0]["story_state"]
+
+        self.assertEqual(state["visual_question"], "How do small EMIs become one big leak?")
+        self.assertEqual(state["state_change"]["money"]["change_label"], "₹18,000 leaves before the month begins")
+
+    def test_recurring_objects_are_frequency_based(self) -> None:
+        result = VisualStoryEngine().attach_visual_story(
+            {
+                "sections": [
+                    make_section("salary_drain", "Salary goes to EMI."),
+                    make_section("emi_pressure", "EMI stack grows."),
+                    make_section("sip_growth", "SIP compounds."),
+                ]
+            }
+        )
+        recurring = result["visual_story"]["recurring_objects"]
+
+        self.assertIn("salary_balance", recurring)
+        self.assertNotIn("sip_jar", recurring)
 
 
 if __name__ == "__main__":
