@@ -177,6 +177,30 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         emi_section = next(section for section in payload["story_plan"]["sections"] if section.get("concept_type") == "emi_pressure")
         self.assertEqual(emi_section["visual_scene"]["mechanism"], "emi_pressure")
 
+    def test_strong_emi_scene_keeps_emi_mechanism_and_gets_more_beats(self) -> None:
+        narration = (
+            "One EMI feels harmless. Then a phone EMI joins it. Then a bike EMI joins it. "
+            "Then a personal loan starts taking its share. Suddenly ₹18,000 leaves before the month even begins. "
+            "That is how EMI pressure builds. The trap is not one huge payment. "
+            "It is five small payments behaving like one big leak."
+        )
+        payload = self.service._normalize_payload(
+            {
+                "hook": {"narration": "Why does your ₹50,000 salary feel gone by day 20?", "duration": 6},
+                "scenes": [{"narration": narration}],
+                "outro": {"narration": "Track the leak before the month tracks you."},
+            },
+            "salary mistakes",
+            "young professionals",
+        )
+
+        section = next(section for section in payload["story_plan"]["sections"] if section.get("concept_type") == "emi_pressure")
+        beats = section["visual_plan"][0]["beats"]["beats"]
+        self.assertEqual(section["visual_scene"]["mechanism"], "emi_pressure")
+        self.assertEqual(section["visual_plan"][0]["visual"]["pattern"], "FlowDiagram")
+        self.assertGreaterEqual(len(beats), 6)
+        self.assertTrue(any("₹18,000" in beat["text"] for beat in beats))
+
     def test_lifestyle_absorbs_sentence_is_preserved_in_story_grouping(self) -> None:
         grouped = self.pipeline.group_payload_for_story_plan(
             {
@@ -191,6 +215,20 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
 
         text = " ".join(scene["narration"] for scene in grouped["scenes"])
         self.assertIn("Lifestyle absorbs it.", text)
+
+    def test_generic_refiner_template_does_not_leak_internal_meta_language(self) -> None:
+        result = self.service.scene_refiner.refine_scene(
+            {},
+            "You buy a smartphone. Then a new watch. Subscription services add up.",
+            index=1,
+            topic="Why most salaried Indians stay broke",
+            angle="money leaks",
+        )
+
+        narration = result["narration"]
+        self.assertNotIn("weak version", narration.lower())
+        self.assertNotIn("this scene is about", narration.lower())
+        self.assertNotIn("real story needs", narration.lower())
 
     def test_scene_rows_store_no_visual_payload(self) -> None:
         payload = self.service._normalize_payload(

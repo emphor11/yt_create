@@ -282,7 +282,7 @@ class VisualDirector:
         direction = SceneDirection("neutral", "urgency", director_input.section_position, "danger")
         concept_name = self._display_concept_name(concept_type)
         if not debt_data:
-            if self._has_finance_numbers(director_input):
+            if concept_type != "emi_pressure" and self._has_finance_numbers(director_input):
                 return self._fallback_plan(director_input, concept_type, direction, "StatCard", concept_name, "insufficient data for loan pressure")
             return self._qualitative_debt_plan(director_input, concept_type, direction, concept_name)
         steps = [

@@ -483,7 +483,7 @@ class ScriptService:
             planning_scene = dict(normalized_scene)
             visual_scene = dict(refined_scene.get("visual_scene") or self._visual_scene_from_raw_scene(scene, narration))
             raw_visual_scene = self._visual_scene_from_raw_scene(scene, narration)
-            if visual_scene and (refined_scene.get("refined") or raw_visual_scene) and not refined_scene.get("allow_grouping"):
+            if visual_scene and not refined_scene.get("allow_grouping"):
                 planning_scene["visual_scene"] = visual_scene
             planning_scenes.append(planning_scene)
 

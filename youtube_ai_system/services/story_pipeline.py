@@ -8,6 +8,7 @@ from .idea_grouper import IdeaGrouper
 from .run_log import RunLogger
 from .story_intelligence_engine import StoryIntelligenceEngine
 from .visual_logic_engine import map_concept_to_visual
+from .visual_beat_expander import VisualBeatExpander
 from .visual_director import VisualDirector, visual_director_input_from_section
 from .visual_scene_normalizer import VisualSceneNormalizer
 
@@ -50,6 +51,7 @@ class StoryPipeline:
         finance_concept_extractor: FinanceConceptExtractor | None = None,
         visual_director: VisualDirector | None = None,
         visual_scene_normalizer: VisualSceneNormalizer | None = None,
+        visual_beat_expander: VisualBeatExpander | None = None,
         logger: RunLogger | None = None,
     ) -> None:
         self.story_intelligence = story_intelligence or StoryIntelligenceEngine()
@@ -57,6 +59,7 @@ class StoryPipeline:
         self.finance_concept_extractor = finance_concept_extractor or FinanceConceptExtractor()
         self.visual_director = visual_director or VisualDirector()
         self.visual_scene_normalizer = visual_scene_normalizer or VisualSceneNormalizer()
+        self.visual_beat_expander = visual_beat_expander or VisualBeatExpander()
         self.logger = logger or RunLogger()
 
     def build_story_plan(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -376,6 +379,7 @@ class StoryPipeline:
                 section["direction"] = None
                 section["theme"] = {}
                 section["concept_type"] = str(section.get("idea_type") or "emphasis")
+            sections[index] = self.visual_beat_expander.expand_section(section)
             preceding_concept_type = directed_plan.concept_type if directed_plan else director_input.concept_type
         return story_plan
 

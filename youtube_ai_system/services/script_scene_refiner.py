@@ -156,8 +156,8 @@ class ScriptSceneRefiner:
             return templates[mechanism]
         context = topic or angle or "money"
         return (
-            f"This scene is about {context}. The weak version says: {narration.strip()} "
-            "But the real story needs a mechanism. First, show the money decision. "
-            "Then show what changes because of it. Finally, show the consequence the viewer can feel. "
-            "That is how a finance idea becomes visual instead of becoming another generic statement."
+            f"Most people notice {context} only after the damage is visible. A small money decision feels harmless at first. "
+            "Then it repeats every week. The amount looks tiny in isolation, but the pattern becomes expensive. "
+            "By the end of the month, the viewer is not confused because of one big mistake. "
+            "The pressure comes from small choices adding up quietly."
         )
