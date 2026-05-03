@@ -2,7 +2,7 @@ import React from 'react';
 import {AbsoluteFill, interpolate, spring, useVideoConfig} from 'remotion';
 import {BODY_FONT_FAMILY, DISPLAY_FONT_FAMILY, FONT_FACES} from '../fonts';
 import {BeatComponentProps} from './types';
-import {COLORS, SPACING, TYPE_SCALE} from './visualUtils';
+import {COLORS, formatIndianRupee, SPACING, TYPE_SCALE} from './visualUtils';
 
 type Intent = {
 	visual_mode?: string;
@@ -14,8 +14,47 @@ type Intent = {
 	texture?: string;
 };
 
+type StoryState = {
+	scene_role?: string;
+	protagonist_state?: string;
+	active_objects?: string[];
+	state_change?: {
+		money?: {from?: string; to?: string; change_label?: string};
+		emotion?: {from?: string; to?: string};
+		risk?: {from?: string; to?: string};
+	};
+	callback_from?: string | null;
+	callback_to?: string | null;
+	visual_question?: string;
+	visual_answer?: string;
+};
+
+type VisualStory = {
+	goal?: {
+		label?: string;
+		target_amount?: string;
+		desired_outcome?: string;
+	};
+	protagonist?: {
+		role?: string;
+		visual_id?: string;
+		emotional_state?: string;
+	};
+};
+
 const intentFromScene = (scene: BeatComponentProps['scene']): Intent =>
 	(scene?.cinematic_intent ?? {}) as Intent;
+
+const storyStateFromScene = (scene: BeatComponentProps['scene']): StoryState =>
+	(scene?.story_state ?? {}) as StoryState;
+
+const visualStoryFromScene = (scene: BeatComponentProps['scene']): VisualStory =>
+	(scene?.visual_story ?? {}) as VisualStory;
+
+const activeObjects = (storyState: StoryState): string[] =>
+	Array.isArray(storyState.active_objects)
+		? storyState.active_objects.map((item) => String(item))
+		: [];
 
 const accentForIntent = (intent: Intent): string => {
 	const joined = `${intent.motion_treatment ?? ''} ${intent.metaphor ?? ''}`.toLowerCase();
@@ -28,6 +67,64 @@ const accentForIntent = (intent: Intent): string => {
 	return COLORS.warning;
 };
 
+const accentForStory = (intent: Intent, storyState: StoryState): string => {
+	const joined = `${storyState.protagonist_state ?? ''} ${storyState.scene_role ?? ''} ${storyState.state_change?.risk?.to ?? ''} ${activeObjects(storyState).join(' ')}`.toLowerCase();
+	if (joined.includes('stressed') || joined.includes('pressure') || joined.includes('debt') || joined.includes('emi')) {
+		return COLORS.danger;
+	}
+	if (joined.includes('disciplined') || joined.includes('confident') || joined.includes('sip') || joined.includes('portfolio') || joined.includes('buffer')) {
+		return COLORS.positive;
+	}
+	if (joined.includes('aware') || joined.includes('mechanism')) {
+		return COLORS.neutral;
+	}
+	return accentForIntent(intent);
+};
+
+const humanizeToken = (value: string): string =>
+	value
+		.replace(/_/g, ' ')
+		.replace(/\b\w/g, (char) => char.toUpperCase())
+		.trim();
+
+const weakObjectText: Record<string, string> = {
+	'phone account': 'Money state changes',
+	'salary balance': 'Balance starts moving',
+	'emi stack': 'Fixed payments stack',
+	'debt pressure': 'Pressure becomes visible',
+	'inflation basket': 'Buying power shrinks',
+	'sip jar': 'System starts growing',
+	'portfolio grid': 'Risk gets spread',
+	'emergency buffer': 'One shock gets absorbed',
+};
+
+const cleanTitle = (text: string): string => {
+	const normalized = text.replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+	return weakObjectText[normalized.toLowerCase()] ?? normalized;
+};
+
+const storyTitle = (beat: BeatComponentProps['beat'], intent: Intent, storyState: StoryState): string => {
+	const answer = String(storyState.visual_answer ?? '').trim();
+	const overlay = String(intent.overlay_text ?? '').trim();
+	const raw = String(beat.text ?? '').trim();
+	if (beat.emphasis === 'hero') {
+		return cleanTitle(answer || overlay || raw || 'Money state changes');
+	}
+	return cleanTitle(raw || answer || overlay || storyState.state_change?.money?.change_label || 'Money state changes');
+};
+
+const storySubtitle = (beat: BeatComponentProps['beat'], intent: Intent, storyState: StoryState, story: VisualStory): string => {
+	const change = storyState.state_change?.money?.change_label;
+	const question = storyState.visual_question;
+	const role = storyState.scene_role ? humanizeToken(storyState.scene_role) : '';
+	const goal = story.goal?.label;
+	const metaphor = intent.metaphor;
+	if (beat.emphasis === 'hero') {
+		return String(change || question || goal || metaphor || '').trim();
+	}
+	return String(question || change || role || metaphor || '').trim();
+};
+
 export const CinematicScene: React.FC<BeatComponentProps> = ({
 	beat,
 	scene,
@@ -36,8 +133,10 @@ export const CinematicScene: React.FC<BeatComponentProps> = ({
 }) => {
 	const {fps} = useVideoConfig();
 	const intent = intentFromScene(scene);
+	const storyState = storyStateFromScene(scene);
+	const story = visualStoryFromScene(scene);
 	const treatment = String(intent.motion_treatment ?? 'slow_push');
-	const accent = accentForIntent(intent);
+	const accent = accentForStory(intent, storyState);
 	const reveal = spring({
 		frame: Math.min(frameWithinBeat, 18),
 		fps,
@@ -48,18 +147,14 @@ export const CinematicScene: React.FC<BeatComponentProps> = ({
 		extrapolateLeft: 'clamp',
 		extrapolateRight: 'clamp',
 	});
-	const title = String(
-		beat.emphasis === 'hero' ? intent.overlay_text || beat.text : beat.text || intent.overlay_text || ''
-	).toUpperCase();
-	const subtitle = String(
-		beat.emphasis === 'hero' ? intent.metaphor || '' : intent.metaphor || ''
-	).toUpperCase();
+	const title = storyTitle(beat, intent, storyState).toUpperCase();
+	const subtitle = storySubtitle(beat, intent, storyState, story).toUpperCase();
 
 	return (
 		<AbsoluteFill style={{backgroundColor: COLORS.bg_deep, color: COLORS.text_primary, overflow: 'hidden'}}>
 			<style>{FONT_FACES}</style>
 			<CinematicBackground progress={progress} accent={accent} treatment={treatment} />
-			<CinematicObject progress={progress} accent={accent} treatment={treatment} intent={intent} />
+			<CinematicObject progress={progress} accent={accent} treatment={treatment} intent={intent} storyState={storyState} story={story} />
 			<div
 				style={{
 					position: 'absolute',
@@ -133,14 +228,45 @@ const CinematicBackground: React.FC<{progress: number; accent: string; treatment
 	);
 };
 
-const CinematicObject: React.FC<{progress: number; accent: string; treatment: string; intent: Intent}> = ({
+const CinematicObject: React.FC<{
+	progress: number;
+	accent: string;
+	treatment: string;
+	intent: Intent;
+	storyState: StoryState;
+	story: VisualStory;
+}> = ({
 	progress,
 	accent,
 	treatment,
 	intent,
+	storyState,
+	story,
 }) => {
+	const objects = activeObjects(storyState);
+	if (objects.includes('emi_stack')) {
+		return <NotificationStack progress={progress} accent={accent} labels={notificationLabels(storyState, 'emi_stack')} />;
+	}
+	if (objects.includes('emergency_buffer')) {
+		return <EmergencyBuffer progress={progress} accent={accent} storyState={storyState} />;
+	}
+	if (objects.includes('sip_jar')) {
+		return <SIPJar progress={progress} accent={accent} storyState={storyState} />;
+	}
+	if (objects.includes('portfolio_grid')) {
+		return <PortfolioGrid progress={progress} accent={accent} />;
+	}
+	if (objects.includes('inflation_basket')) {
+		return <ValueErosion progress={progress} accent={accent} />;
+	}
+	if (objects.includes('debt_pressure')) {
+		return <DebtPressure progress={progress} accent={accent} storyState={storyState} />;
+	}
+	if (objects.includes('phone_account') || objects.includes('salary_balance')) {
+		return <AccountPanel progress={progress} accent={accent} storyState={storyState} story={story} />;
+	}
 	if (treatment === 'notification_stack') {
-		return <NotificationStack progress={progress} accent={accent} />;
+		return <NotificationStack progress={progress} accent={accent} labels={notificationLabels(storyState, 'salary')} />;
 	}
 	if (treatment === 'value_erosion') {
 		return <ValueErosion progress={progress} accent={accent} />;
@@ -149,6 +275,19 @@ const CinematicObject: React.FC<{progress: number; accent: string; treatment: st
 		return <PortfolioGrid progress={progress} accent={accent} />;
 	}
 	return <PhoneSilhouette progress={progress} accent={accent} />;
+};
+
+const notificationLabels = (storyState: StoryState, mode: 'emi_stack' | 'salary'): string[] => {
+	if (mode === 'emi_stack') {
+		return ['SALARY CREDIT', 'EMI AUTO-DEBIT', 'RENT PAID', 'CASH LEFT SHRINKS'];
+	}
+	const money = storyState.state_change?.money;
+	return [
+		money?.from ? `${money.from} CREDITED` : 'SALARY CREDIT',
+		'EXPENSES START',
+		money?.change_label ? money.change_label.toUpperCase() : 'BALANCE CHANGES',
+		money?.to ? `${money.to} LEFT` : 'DAY 20 CHECK',
+	];
 };
 
 const PhoneSilhouette: React.FC<{progress: number; accent: string}> = ({progress, accent}) => (
@@ -185,9 +324,9 @@ const PhoneSilhouette: React.FC<{progress: number; accent: string}> = ({progress
 	</div>
 );
 
-const NotificationStack: React.FC<{progress: number; accent: string}> = ({progress, accent}) => (
+const NotificationStack: React.FC<{progress: number; accent: string; labels: string[]}> = ({progress, accent, labels}) => (
 	<div style={{position: 'absolute', right: 160, top: 170, width: 620}}>
-		{['SALARY CREDIT', 'EMI AUTO-DEBIT', 'RENT PAID', 'BALANCE LOW'].map((label, index) => {
+		{labels.map((label, index) => {
 			const local = Math.max(0, Math.min((progress * 5 - index) / 1.2, 1));
 			return (
 				<div
@@ -211,6 +350,238 @@ const NotificationStack: React.FC<{progress: number; accent: string}> = ({progre
 				</div>
 			);
 		})}
+	</div>
+);
+
+const AccountPanel: React.FC<{progress: number; accent: string; storyState: StoryState; story: VisualStory}> = ({
+	progress,
+	accent,
+	storyState,
+	story,
+}) => {
+	const money = storyState.state_change?.money ?? {};
+	const from = money.from || story.goal?.target_amount || '₹50,000';
+	const to = money.to || 'DAY 20';
+	const change = money.change_label || 'salary balance changes';
+	return (
+		<div
+			style={{
+				position: 'absolute',
+				right: 150,
+				top: 125,
+				width: 640,
+				height: 520,
+				borderRadius: 36,
+				border: `2px solid ${accent}88`,
+				background: 'linear-gradient(145deg, rgba(255,255,255,0.11), rgba(255,255,255,0.035))',
+				boxShadow: `0 0 90px ${accent}25`,
+				transform: `translateY(${progress * -26}px) rotate(-2deg)`,
+				padding: 42,
+				fontFamily: BODY_FONT_FAMILY,
+			}}
+		>
+			<div style={{color: COLORS.text_secondary, fontSize: 24, fontWeight: 900, letterSpacing: 0}}>PHONE ACCOUNT</div>
+			<div style={{marginTop: 34, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 88, lineHeight: 0.9}}>{from}</div>
+			<div style={{marginTop: 24, height: 16, borderRadius: 99, background: COLORS.stroke, overflow: 'hidden'}}>
+				<div
+					style={{
+						width: `${Math.max(14, 100 - progress * 72)}%`,
+						height: '100%',
+						background: accent,
+						boxShadow: `0 0 36px ${accent}`,
+					}}
+				/>
+			</div>
+			<div
+				style={{
+					marginTop: 36,
+					display: 'flex',
+					justifyContent: 'space-between',
+					alignItems: 'flex-end',
+					gap: 24,
+				}}
+			>
+				<div style={{fontSize: 28, fontWeight: 900, color: COLORS.text_secondary, maxWidth: 360}}>
+					{change.toUpperCase()}
+				</div>
+				<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 56, color: accent}}>{to}</div>
+			</div>
+		</div>
+	);
+};
+
+const DebtPressure: React.FC<{progress: number; accent: string; storyState: StoryState}> = ({
+	progress,
+	accent,
+	storyState,
+}) => {
+	const label = storyState.state_change?.risk?.to || storyState.state_change?.money?.change_label || 'pressure builds';
+	return (
+		<div style={{position: 'absolute', right: 160, top: 150, width: 580, height: 500}}>
+			{[0, 1, 2].map((index) => (
+				<div
+					key={index}
+					style={{
+						position: 'absolute',
+						inset: 58 - index * 28 + progress * 24,
+						borderRadius: 38,
+						border: `3px solid ${accent}${index === 0 ? 'aa' : '55'}`,
+						opacity: Math.max(0.2, 1 - index * 0.2),
+					}}
+				/>
+			))}
+			<div
+				style={{
+					position: 'absolute',
+					left: 82,
+					right: 82,
+					top: 145,
+					height: 220,
+					borderRadius: 28,
+					background: 'rgba(230,57,70,0.14)',
+					border: `2px solid ${accent}`,
+					padding: 32,
+					fontFamily: BODY_FONT_FAMILY,
+					fontSize: 32,
+					fontWeight: 900,
+					textTransform: 'uppercase',
+				}}
+			>
+				<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 68}}>DEBT</div>
+				<div style={{color: COLORS.text_secondary}}>{label}</div>
+			</div>
+		</div>
+	);
+};
+
+const SIPJar: React.FC<{progress: number; accent: string; storyState: StoryState}> = ({
+	progress,
+	accent,
+	storyState,
+}) => {
+	const money = storyState.state_change?.money;
+	return (
+		<div style={{position: 'absolute', right: 170, top: 130, width: 560, height: 560}}>
+			<div
+				style={{
+					position: 'absolute',
+					left: 142,
+					right: 142,
+					bottom: 30,
+					height: 390,
+					borderRadius: '34px 34px 70px 70px',
+					border: `4px solid ${accent}`,
+					overflow: 'hidden',
+					background: 'rgba(255,255,255,0.045)',
+					boxShadow: `0 0 76px ${accent}28`,
+				}}
+			>
+				<div
+					style={{
+						position: 'absolute',
+						left: 0,
+						right: 0,
+						bottom: 0,
+						height: `${22 + progress * 68}%`,
+						background: `linear-gradient(0deg, ${accent}dd, ${accent}55)`,
+					}}
+				/>
+			</div>
+			{Array.from({length: 9}).map((_, index) => {
+				const local = Math.max(0, Math.min(progress * 9 - index, 1));
+				return (
+					<div
+						key={index}
+						style={{
+							position: 'absolute',
+							left: 135 + (index % 3) * 84,
+							top: 32 + Math.floor(index / 3) * 48 + local * 270,
+							width: 58,
+							height: 58,
+							borderRadius: 99,
+							background: `${accent}${local > 0.4 ? 'dd' : '66'}`,
+							opacity: local,
+							boxShadow: `0 0 32px ${accent}55`,
+						}}
+					/>
+				);
+			})}
+			<div style={{position: 'absolute', left: 0, bottom: 0, fontFamily: BODY_FONT_FAMILY, fontSize: 28, fontWeight: 900}}>
+				{(money?.from || '₹5,000').toUpperCase()} MONTHLY
+				<div style={{color: accent, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 58}}>
+					{(money?.to || formatIndianRupee(5000000)).toUpperCase()}
+				</div>
+			</div>
+		</div>
+	);
+};
+
+const EmergencyBuffer: React.FC<{progress: number; accent: string; storyState: StoryState}> = ({
+	progress,
+	accent,
+	storyState,
+}) => (
+	<div style={{position: 'absolute', right: 140, top: 130, width: 620, height: 520}}>
+		<div
+			style={{
+				position: 'absolute',
+				left: 40,
+				top: 120,
+				width: 250,
+				height: 300,
+				borderRadius: 28,
+				border: `2px solid ${COLORS.danger}`,
+				background: 'rgba(230,57,70,0.11)',
+				transform: `translateX(${progress * 70}px) rotate(-8deg)`,
+				fontFamily: BODY_FONT_FAMILY,
+				fontSize: 30,
+				fontWeight: 900,
+				display: 'flex',
+				alignItems: 'center',
+				justifyContent: 'center',
+				textAlign: 'center',
+				padding: 28,
+			}}
+		>
+			UNEXPECTED BILL
+		</div>
+		<div
+			style={{
+				position: 'absolute',
+				right: 70,
+				top: 70,
+				width: 280,
+				height: 360,
+				borderRadius: '140px 140px 54px 54px',
+				border: `5px solid ${accent}`,
+				background: 'rgba(46,196,182,0.12)',
+				boxShadow: `0 0 90px ${accent}33`,
+				transform: `scale(${0.92 + progress * 0.08})`,
+				fontFamily: DISPLAY_FONT_FAMILY,
+				fontSize: 62,
+				display: 'flex',
+				alignItems: 'center',
+				justifyContent: 'center',
+				textAlign: 'center',
+			}}
+		>
+			BUFFER
+		</div>
+		<div
+			style={{
+				position: 'absolute',
+				left: 70,
+				right: 40,
+				bottom: 16,
+				fontFamily: BODY_FONT_FAMILY,
+				fontSize: 28,
+				fontWeight: 900,
+				color: COLORS.text_secondary,
+				textTransform: 'uppercase',
+			}}
+		>
+			{storyState.state_change?.risk?.to || 'shock becomes planned'}
+		</div>
 	</div>
 );
 
