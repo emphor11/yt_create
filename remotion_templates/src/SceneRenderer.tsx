@@ -13,6 +13,7 @@ import {SIPGrowthEngine} from './components/SIPGrowthEngine';
 import {SplitComparison} from './components/SplitComparison';
 import {StatCard} from './components/StatCard';
 import {StepFlow} from './components/StepFlow';
+import {StoryWorldOverlay} from './components/StoryWorldOverlay';
 import {Beat, Scene} from './types';
 import {timeToFrame} from './utils/timing';
 
@@ -66,19 +67,32 @@ export const SceneRenderer: React.FC<Props> = ({scene}) => {
 	const durationFrames = endFrame - startFrame;
 	const hasCinematicIntent =
 		scene.cinematic_intent && Object.keys(scene.cinematic_intent).length > 0;
+	const hasStoryState =
+		scene.story_state && Object.keys(scene.story_state).length > 0;
 	const cinematicTextBeat =
-		hasCinematicIntent &&
+		(hasCinematicIntent || hasStoryState) &&
 		['StatCard', 'ConceptCard', 'ConceptCardScene', 'HighlightText'].includes(activeBeat.component);
 	const Component = cinematicTextBeat
 		? CinematicScene
 		: COMPONENT_MAP[activeBeat.component as keyof typeof COMPONENT_MAP] ?? StatCard;
+	const shouldOverlayStoryWorld = hasStoryState && !cinematicTextBeat;
 
 	return (
-		<Component
-			beat={activeBeat}
-			scene={scene}
-			frameWithinBeat={frameWithinBeat}
-			durationFrames={durationFrames}
-		/>
+		<>
+			<Component
+				beat={activeBeat}
+				scene={scene}
+				frameWithinBeat={frameWithinBeat}
+				durationFrames={durationFrames}
+			/>
+			{shouldOverlayStoryWorld ? (
+				<StoryWorldOverlay
+					beat={activeBeat}
+					scene={scene}
+					frameWithinBeat={frameWithinBeat}
+					durationFrames={durationFrames}
+				/>
+			) : null}
+		</>
 	);
 };
