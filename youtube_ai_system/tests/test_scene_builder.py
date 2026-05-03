@@ -386,6 +386,16 @@ class SceneBuilderTestCase(unittest.TestCase):
                     "audio_duration": 6.0,
                     "concept_type": "salary_drain",
                     "direction": {"emotional_arc": {"opening": "comfort", "closing": "anxiety"}},
+                    "visual_mode": "layered_hybrid",
+                    "cinematic_intent": {
+                        "visual_mode": "layered_hybrid",
+                        "human_action": "person checking salary credit on phone",
+                        "metaphor": "salary drains into fixed expenses before the month starts",
+                        "overlay_text": "₹3,000 left",
+                        "motion_treatment": "notification_stack",
+                        "asset_query": "cinematic phone banking closeup",
+                        "texture": "dark_documentary",
+                    },
                     "theme": {"background": "#0A0A14"},
                     "visual_plan": [
                         {
@@ -420,6 +430,8 @@ class SceneBuilderTestCase(unittest.TestCase):
         scene = result["scenes"][0]
         self.assertEqual(scene["concept_type"], "salary_drain")
         self.assertEqual(scene["direction"]["emotional_arc"]["closing"], "anxiety")
+        self.assertEqual(scene["visual_mode"], "layered_hybrid")
+        self.assertEqual(scene["cinematic_intent"]["asset_query"], "cinematic phone banking closeup")
         self.assertEqual(scene["theme"]["background"], "#0A0A14")
         self.assertEqual(scene["beats"][1]["data"]["remainder"]["amount"], 3000)
         self.assertEqual(scene["beats"][-1]["end_time"], scene["duration"])

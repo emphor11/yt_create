@@ -359,6 +359,8 @@ class StoryPipeline:
                 section["direction"] = directed_plan.direction.to_dict()
                 section["theme"] = dict(directed_plan.theme)
                 section["concept_type"] = directed_plan.concept_type
+                section["visual_mode"] = directed_plan.visual_mode
+                section["cinematic_intent"] = dict(directed_plan.cinematic_intent)
                 if directed_plan.fallback_reason:
                     self._log_visual_director("fallback", directed_plan.fallback_reason)
             else:
@@ -379,6 +381,8 @@ class StoryPipeline:
                 section["direction"] = None
                 section["theme"] = {}
                 section["concept_type"] = str(section.get("idea_type") or "emphasis")
+                section.pop("visual_mode", None)
+                section.pop("cinematic_intent", None)
             sections[index] = self.visual_beat_expander.expand_section(section)
             preceding_concept_type = directed_plan.concept_type if directed_plan else director_input.concept_type
         return story_plan

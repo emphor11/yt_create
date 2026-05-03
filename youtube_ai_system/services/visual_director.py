@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
 import re
 from typing import Any
 
@@ -81,6 +81,28 @@ class SceneDirection:
 
 
 @dataclass(frozen=True)
+class CinematicIntent:
+    visual_mode: str
+    human_action: str
+    metaphor: str
+    overlay_text: str
+    motion_treatment: str
+    asset_query: str
+    texture: str = "dark_documentary"
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "visual_mode": self.visual_mode,
+            "human_action": self.human_action,
+            "metaphor": self.metaphor,
+            "overlay_text": self.overlay_text,
+            "motion_treatment": self.motion_treatment,
+            "asset_query": self.asset_query,
+            "texture": self.texture,
+        }
+
+
+@dataclass(frozen=True)
 class DirectedPlan:
     concept_type: str
     concept_name: str
@@ -90,6 +112,8 @@ class DirectedPlan:
     direction: SceneDirection
     theme: dict[str, str]
     fallback_reason: str | None = None
+    visual_mode: str = "finance_mechanism"
+    cinematic_intent: dict[str, str] = field(default_factory=dict)
 
     def is_valid(self) -> bool:
         return len(self.beats) >= 2 and all(beat.component and beat.text for beat in self.beats)
@@ -97,7 +121,12 @@ class DirectedPlan:
     def to_visual_plan_item(self) -> dict[str, Any]:
         return {
             "concept": {"concept": self.concept_name, "type": self.concept_type},
-            "visual": {"pattern": self.pattern, "data": self.data},
+            "visual": {
+                "pattern": self.pattern,
+                "data": self.data,
+                "visual_mode": self.visual_mode,
+                "cinematic_intent": self.cinematic_intent,
+            },
             "beats": {"beats": [beat.to_dict() for beat in self.beats]},
         }
 
@@ -117,25 +146,189 @@ class VisualDirector:
         "subscriptions": 0.04,
     }
 
+    CINEMATIC_RECIPES = {
+        "salary_drain": {
+            "visual_mode": "layered_hybrid",
+            "human_action": "person checking salary credit on phone",
+            "metaphor": "salary drains into fixed expenses before the month starts",
+            "motion_treatment": "notification_stack",
+            "asset_query": "cinematic phone banking closeup",
+            "texture": "dark_documentary",
+        },
+        "lifestyle_inflation": {
+            "visual_mode": "layered_hybrid",
+            "human_action": "young professional upgrading lifestyle after salary hike",
+            "metaphor": "income rises while expenses rise with it and savings stay flat",
+            "motion_treatment": "slow_push",
+            "asset_query": "cinematic lifestyle shopping city",
+            "texture": "dark_documentary",
+        },
+        "expense_leakage": {
+            "visual_mode": "layered_hybrid",
+            "human_action": "person scrolling payment apps and subscriptions",
+            "metaphor": "small leaks repeat until the month-end balance breaks",
+            "motion_treatment": "notification_stack",
+            "asset_query": "cinematic phone payment closeup",
+            "texture": "dark_documentary",
+        },
+        "emi_pressure": {
+            "visual_mode": "layered_hybrid",
+            "human_action": "person checking bank balance after auto debit",
+            "metaphor": "multiple EMI notifications stack into one monthly leak",
+            "motion_treatment": "notification_stack",
+            "asset_query": "person checking phone stressed office",
+            "texture": "dark_documentary",
+        },
+        "debt_trap": {
+            "visual_mode": "layered_hybrid",
+            "human_action": "person looking at credit card bill late at night",
+            "metaphor": "minimum payment cannot outrun monthly interest",
+            "motion_treatment": "dolly_zoom",
+            "asset_query": "credit card payment closeup cinematic",
+            "texture": "dark_documentary",
+        },
+        "inflation_erosion": {
+            "visual_mode": "layered_hybrid",
+            "human_action": "person comparing grocery bill at checkout",
+            "metaphor": "same money buys a shrinking basket over time",
+            "motion_treatment": "value_erosion",
+            "asset_query": "grocery checkout closeup cinematic",
+            "texture": "dark_documentary",
+        },
+        "sip_growth": {
+            "visual_mode": "layered_hybrid",
+            "human_action": "young professional reviewing investment dashboard",
+            "metaphor": "small monthly contributions compound into a larger corpus",
+            "motion_treatment": "slow_push",
+            "asset_query": "young professional laptop evening",
+            "texture": "clean_corporate",
+        },
+        "compounding": {
+            "visual_mode": "object_metaphor",
+            "human_action": "person watching long-term investment progress",
+            "metaphor": "small units stack slowly before growth accelerates",
+            "motion_treatment": "slow_push",
+            "asset_query": "investment planning laptop closeup",
+            "texture": "clean_corporate",
+        },
+        "risk_return": {
+            "visual_mode": "layered_hybrid",
+            "human_action": "professional walking through modern office district",
+            "metaphor": "calm returns sit beside volatile upside",
+            "motion_treatment": "match_cut",
+            "asset_query": "city office walking slow motion",
+            "texture": "clean_corporate",
+        },
+        "diversification": {
+            "visual_mode": "layered_hybrid",
+            "human_action": "person organizing investment plan on desk",
+            "metaphor": "one fragile bet becomes a spread portfolio",
+            "motion_treatment": "soft_dissolve",
+            "asset_query": "modern desk investment planning",
+            "texture": "clean_corporate",
+        },
+        "speculation_risk": {
+            "visual_mode": "human_broll",
+            "human_action": "person reacting to market price drop on phone",
+            "metaphor": "hype turns into panic when price falls",
+            "motion_treatment": "dolly_zoom",
+            "asset_query": "stock market phone stress cinematic",
+            "texture": "dark_documentary",
+        },
+        "emergency_fund": {
+            "visual_mode": "layered_hybrid",
+            "human_action": "person calmly handling unexpected bill",
+            "metaphor": "cash buffer absorbs the shock before debt starts",
+            "motion_treatment": "soft_dissolve",
+            "asset_query": "person paying bill calm home",
+            "texture": "clean_corporate",
+        },
+    }
+
     def direct(self, director_input: VisualDirectorInput) -> DirectedPlan:
         concept_type = self._normalized_concept_type(director_input)
         if concept_type == "salary_drain":
-            return self._salary_drain_plan(director_input, concept_type)
+            return self._with_cinematic_intent(self._salary_drain_plan(director_input, concept_type))
         if concept_type in {"lifestyle_inflation", "expense_leakage", "budgeting", "savings_rate", "emergency_fund", "rent_burden"}:
-            return self._money_mechanism_plan(director_input, concept_type)
+            return self._with_cinematic_intent(self._money_mechanism_plan(director_input, concept_type))
         if concept_type == "debt_trap":
-            return self._debt_trap_plan(director_input, concept_type)
+            return self._with_cinematic_intent(self._debt_trap_plan(director_input, concept_type))
         if concept_type in {"emi_pressure", "emi_stack", "loan_cost"}:
-            return self._loan_pressure_plan(director_input, concept_type)
+            return self._with_cinematic_intent(self._loan_pressure_plan(director_input, concept_type))
         if concept_type == "sip_growth":
-            return self._sip_growth_plan(director_input, concept_type)
+            return self._with_cinematic_intent(self._sip_growth_plan(director_input, concept_type))
         if concept_type in {"compounding", "net_worth_growth"}:
-            return self._growth_mechanism_plan(director_input, concept_type)
+            return self._with_cinematic_intent(self._growth_mechanism_plan(director_input, concept_type))
         if concept_type in {"inflation_erosion", "inflation_loss", "real_return", "fd_vs_inflation"}:
-            return self._inflation_return_plan(director_input, concept_type)
+            return self._with_cinematic_intent(self._inflation_return_plan(director_input, concept_type))
         if concept_type in {"opportunity_cost", "comparison_timeline", "risk_return", "diversification", "tax_saving", "tax_drain", "speculation_risk", "fomo_risk"}:
-            return self._comparison_mechanism_plan(director_input, concept_type)
-        return self._generic_plan(director_input, concept_type)
+            return self._with_cinematic_intent(self._comparison_mechanism_plan(director_input, concept_type))
+        return self._with_cinematic_intent(self._generic_plan(director_input, concept_type))
+
+    def _with_cinematic_intent(self, plan: DirectedPlan) -> DirectedPlan:
+        if plan.cinematic_intent:
+            return plan
+        intent = self._cinematic_intent(plan.concept_type, plan.concept_name, plan.data)
+        return replace(plan, visual_mode=intent.visual_mode, cinematic_intent=intent.to_dict())
+
+    def _cinematic_intent(self, concept_type: str, concept_name: str, data: dict[str, Any]) -> CinematicIntent:
+        recipe_key = {
+            "emi_stack": "emi_pressure",
+            "loan_cost": "emi_pressure",
+            "inflation_loss": "inflation_erosion",
+            "real_return": "inflation_erosion",
+            "fd_vs_inflation": "inflation_erosion",
+            "fomo_risk": "speculation_risk",
+            "tax_drain": "salary_drain",
+            "tax_saving": "risk_return",
+            "rent_burden": "salary_drain",
+            "net_worth_growth": "compounding",
+        }.get(concept_type, concept_type)
+        recipe = dict(self.CINEMATIC_RECIPES.get(recipe_key) or {})
+        if not recipe:
+            recipe = {
+                "visual_mode": "finance_mechanism",
+                "human_action": "minimal human context behind the finance idea",
+                "metaphor": f"{concept_name} becomes visible through a clean finance overlay",
+                "motion_treatment": "slow_push",
+                "asset_query": "cinematic finance office closeup",
+                "texture": "clean_corporate",
+            }
+        overlay_text = self._cinematic_overlay_text(concept_type, concept_name, data)
+        return CinematicIntent(
+            visual_mode=str(recipe["visual_mode"]),
+            human_action=str(recipe["human_action"]),
+            metaphor=str(recipe["metaphor"]),
+            overlay_text=overlay_text,
+            motion_treatment=str(recipe["motion_treatment"]),
+            asset_query=str(recipe["asset_query"]),
+            texture=str(recipe.get("texture") or "dark_documentary"),
+        )
+
+    def _cinematic_overlay_text(self, concept_type: str, concept_name: str, data: dict[str, Any]) -> str:
+        if concept_type in {"salary_drain", "rent_burden", "tax_drain"} and data.get("remainder"):
+            remainder = data["remainder"]
+            return f"{remainder.get('value')} left".strip()
+        if concept_type in {"emi_pressure", "emi_stack"}:
+            return "Small EMIs become one leak"
+        if concept_type == "debt_trap":
+            if data.get("minimum_payment") and data.get("monthly_interest"):
+                return "Interest beats the payment"
+            return "Debt keeps growing"
+        if concept_type in {"inflation_erosion", "inflation_loss", "real_return", "fd_vs_inflation"}:
+            end = data.get("end") or (data.get("real_value") or {}).get("value")
+            return f"{end} buying power".strip() if end else "Same money. Less power."
+        if concept_type == "sip_growth" and data.get("final_corpus"):
+            return f"{data.get('awe_ratio')}x corpus gap"
+        if concept_type in {"lifestyle_inflation", "expense_leakage"}:
+            return "The leak is the system"
+        if concept_type == "risk_return":
+            return "Risk buys upside"
+        if concept_type == "diversification":
+            return "Spread the risk"
+        if concept_type == "speculation_risk":
+            return "Hype is not a plan"
+        return concept_name
 
     def _salary_drain_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
         flow_data = self._money_flow_data(director_input.narration_text)

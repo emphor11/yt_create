@@ -168,7 +168,11 @@ class VisualDirectorTestCase(unittest.TestCase):
 
         self.assertEqual(directed_section["concept_type"], "salary_drain")
         self.assertEqual(directed_section["direction"]["emotional_arc"]["closing"], "anxiety")
+        self.assertEqual(directed_section["visual_mode"], "layered_hybrid")
+        self.assertEqual(directed_section["cinematic_intent"]["asset_query"], "cinematic phone banking closeup")
         self.assertEqual(visual["pattern"], "MoneyFlowDiagram")
+        self.assertEqual(visual["visual_mode"], "layered_hybrid")
+        self.assertEqual(visual["cinematic_intent"]["motion_treatment"], "notification_stack")
         self.assertEqual(visual["data"]["remainder"]["amount"], 3000)
 
     def test_major_finance_concepts_do_not_fall_back_to_concept_card(self) -> None:
@@ -189,6 +193,65 @@ class VisualDirectorTestCase(unittest.TestCase):
                 self.assertEqual(result.pattern, expected_pattern)
                 self.assertIsNone(result.fallback_reason)
                 self.assertNotIn(result.pattern, {"ConceptCard", "StatCard"})
+
+    def test_major_finance_concepts_receive_cinematic_intent(self) -> None:
+        cases = [
+            (
+                "One EMI feels harmless. Suddenly ₹18,000 leaves before the month even begins.",
+                "emi_pressure",
+                "layered_hybrid",
+                "person checking phone stressed office",
+                "notification_stack",
+            ),
+            (
+                "If ₹1,00,000 sits idle while prices rise at 7%, buying power keeps shrinking.",
+                "inflation_erosion",
+                "layered_hybrid",
+                "grocery checkout closeup cinematic",
+                "value_erosion",
+            ),
+            (
+                "Invest ₹5,000 per month in SIP at 12% returns for 20 years.",
+                "sip_growth",
+                "layered_hybrid",
+                "young professional laptop evening",
+                "slow_push",
+            ),
+            (
+                "Credit card balance ₹1,00,000 at 40% interest. Minimum payment ₹3,000.",
+                "debt_trap",
+                "layered_hybrid",
+                "credit card payment closeup cinematic",
+                "dolly_zoom",
+            ),
+        ]
+
+        for narration, concept_type, expected_mode, expected_query, expected_motion in cases:
+            with self.subTest(concept_type=concept_type):
+                result = self.director.direct(build_input(narration, concept_type))
+                intent = result.cinematic_intent
+                self.assertEqual(result.visual_mode, expected_mode)
+                self.assertEqual(intent["visual_mode"], expected_mode)
+                self.assertEqual(intent["asset_query"], expected_query)
+                self.assertEqual(intent["motion_treatment"], expected_motion)
+                self.assertTrue(intent["human_action"])
+                self.assertTrue(intent["metaphor"])
+                self.assertTrue(intent["overlay_text"])
+
+    def test_cinematic_asset_queries_avoid_generic_finance_stock_terms(self) -> None:
+        cases = [
+            ("Lifestyle inflation makes expenses rise with income.", "lifestyle_inflation"),
+            ("Diversification spreads your investments across asset classes.", "diversification"),
+            ("FOMO investing is speculation, not a plan.", "speculation_risk"),
+        ]
+
+        for narration, concept_type in cases:
+            with self.subTest(concept_type=concept_type):
+                result = self.director.direct(build_input(narration, concept_type))
+                query = result.cinematic_intent["asset_query"].lower()
+                self.assertNotIn("finance stock", query)
+                self.assertNotIn("money stress", query)
+                self.assertNotIn("stock photo", query)
 
     def test_story_pipeline_uses_old_plan_when_director_returns_generic_fallback(self) -> None:
         section = {

@@ -86,6 +86,8 @@ class SceneBuilder:
                     "pattern": pattern,
                     "data": data,
                     "direction": section.get("direction"),
+                    "visual_mode": section.get("visual_mode") or self._visual_field(section, "visual_mode"),
+                    "cinematic_intent": section.get("cinematic_intent") or self._visual_field(section, "cinematic_intent") or {},
                     "theme": section.get("theme") or {},
                     "beats": timed_beats,
                     "duration": round(scene_duration, 2),
@@ -96,6 +98,13 @@ class SceneBuilder:
             )
 
         return {"scenes": scenes}
+
+    def _visual_field(self, section: dict[str, Any], key: str) -> Any:
+        visual_plan = section.get("visual_plan") or []
+        if not visual_plan:
+            return None
+        visual = visual_plan[0].get("visual") or {}
+        return visual.get(key)
 
     def _section_beats(self, section: dict[str, Any]) -> list[dict[str, Any]]:
         visual_plan = section.get("visual_plan") or []
