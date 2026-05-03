@@ -9,6 +9,7 @@ from .run_log import RunLogger
 from .story_intelligence_engine import StoryIntelligenceEngine
 from .visual_logic_engine import map_concept_to_visual
 from .visual_director import VisualDirector, visual_director_input_from_section
+from .visual_scene_normalizer import VisualSceneNormalizer
 
 CONCEPT_PRIORITY = {
     "numeric": 5,
@@ -48,17 +49,20 @@ class StoryPipeline:
         idea_grouper: IdeaGrouper | None = None,
         finance_concept_extractor: FinanceConceptExtractor | None = None,
         visual_director: VisualDirector | None = None,
+        visual_scene_normalizer: VisualSceneNormalizer | None = None,
         logger: RunLogger | None = None,
     ) -> None:
         self.story_intelligence = story_intelligence or StoryIntelligenceEngine()
         self.idea_grouper = idea_grouper or IdeaGrouper()
         self.finance_concept_extractor = finance_concept_extractor or FinanceConceptExtractor()
         self.visual_director = visual_director or VisualDirector()
+        self.visual_scene_normalizer = visual_scene_normalizer or VisualSceneNormalizer()
         self.logger = logger or RunLogger()
 
     def build_story_plan(self, payload: dict[str, Any]) -> dict[str, Any]:
         planning_payload = self.group_payload_for_story_plan(payload)
         story_plan = self.story_plan_from_idea_groups(planning_payload)
+        story_plan = self.attach_visual_scene_contract(story_plan)
         story_plan = self.attach_section_concepts(story_plan)
         story_plan = self.attach_section_narrative_arc(story_plan)
         story_plan = self.attach_section_visual_plan(story_plan)
@@ -101,6 +105,31 @@ class StoryPipeline:
         hook = dict(payload.get("hook") or {})
         grouped_scenes: list[dict[str, Any]] = []
         for scene in payload.get("scenes") or []:
+            visual_scene_source = self._visual_scene_source(scene)
+            if visual_scene_source:
+                combined_text = self._normalize_text(str(scene.get("narration") or ""))
+                if combined_text:
+                    grouped_scenes.append(
+                        {
+                            "narration": combined_text,
+                            "idea_group_id": f"idea_{len(grouped_scenes):02d}",
+                            "dominant_entity": "money",
+                            "idea_type": str(visual_scene_source.get("mechanism") or scene.get("idea_type") or "emphasis"),
+                            "has_numbers": bool(re.search(r"₹|%|\d+", combined_text)),
+                            "has_comparison": bool(
+                                re.search(r"\bvs\b|\bversus\b|\bbut\b|\bhowever\b|\binstead\b", combined_text, re.IGNORECASE)
+                            ),
+                            "has_causation": bool(
+                                re.search(
+                                    r"\bbecause\b|\bso\b|\btherefore\b|\bleads to\b|\bresults in\b",
+                                    combined_text,
+                                    re.IGNORECASE,
+                                )
+                            ),
+                            "visual_scene": visual_scene_source,
+                        }
+                    )
+                continue
             raw_sentences = self._split_story_sentences(str(scene.get("narration") or ""))
             body_sentences = [sentence for sentence in raw_sentences if self._keep_story_sentence(sentence)]
             if len(body_sentences) < 2:
@@ -169,6 +198,18 @@ class StoryPipeline:
             )
         return grouped_scenes
 
+    def _visual_scene_source(self, scene: dict[str, Any]) -> dict[str, Any]:
+        visual_scene = scene.get("visual_scene")
+        if isinstance(visual_scene, dict):
+            return dict(visual_scene)
+        source: dict[str, Any] = {}
+        for key in ("visual_intent", "visual_beats", "numbers", "emotion", "mechanism"):
+            if key in scene:
+                source[key] = scene[key]
+        if source:
+            source.setdefault("narration", scene.get("narration") or scene.get("text") or "")
+        return source
+
     def story_plan_from_idea_groups(self, payload: dict[str, Any]) -> dict[str, Any]:
         hook_payload = payload.get("hook") or {}
         hook_text = str(hook_payload.get("narration") or "").strip()
@@ -192,6 +233,7 @@ class StoryPipeline:
                     "has_numbers": bool(scene.get("has_numbers")),
                     "has_comparison": bool(scene.get("has_comparison")),
                     "has_causation": bool(scene.get("has_causation")),
+                    "visual_scene": scene.get("visual_scene") if isinstance(scene.get("visual_scene"), dict) else None,
                 }
             )
 
@@ -233,6 +275,14 @@ class StoryPipeline:
             "agenda": [],
             "sections": sections,
         }
+
+    def attach_visual_scene_contract(self, story_plan: dict[str, Any]) -> dict[str, Any]:
+        sections = story_plan.get("sections") or []
+        story_plan["sections"] = [
+            self.visual_scene_normalizer.inject_into_section(section, index)
+            for index, section in enumerate(sections)
+        ]
+        return story_plan
 
     def attach_section_concepts(self, story_plan: dict[str, Any]) -> dict[str, Any]:
         sections = story_plan.get("sections") or []
@@ -991,6 +1041,11 @@ class StoryPipeline:
                 "credit",
                 "interest",
                 "salary",
+                "lifestyle",
+                "upgrade",
+                "upgrades",
+                "buy",
+                "broke",
                 "income",
                 "expense",
                 "expenses",

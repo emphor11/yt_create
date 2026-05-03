@@ -11,7 +11,9 @@ import requests
 from ..models.repository import ProjectRepository, utcnow
 from .narration_refiner import refine as refine_narration
 from .run_log import RunLogger
+from .script_scene_refiner import ScriptSceneRefiner
 from .story_pipeline import StoryPipeline
+from .visual_scene_normalizer import visual_script_prompt_contract
 
 TENSION_KEYWORDS = {
     "?",
@@ -78,6 +80,7 @@ class ScriptService:
         self.repo = ProjectRepository()
         self.logger = RunLogger()
         self.story_pipeline = StoryPipeline(logger=self.logger)
+        self.scene_refiner = ScriptSceneRefiner()
 
     def generate_script(
         self,
@@ -306,7 +309,9 @@ class ScriptService:
             "BODY:\n\n"
             "* Continuous flow of ideas with no labels, markdown, or bullet points inside narration\n"
             "* Each body scene should focus on one concept group\n"
-            "* Each concept should be explained in 1–3 sentences\n"
+            "* Each body scene must be 70–110 words across 5–8 short sentences\n"
+            "* Each scene must include a concrete example, a mechanism, and a consequence\n"
+            "* Each concept should be explained in a complete visual sequence, not compressed into 1–3 tiny sentences\n"
             "* For 8–12 minute scripts, prefer 8–12 body scenes\n"
             "* Create enough body scenes for the requested duration\n"
             "* Use relatable Indian-finance examples: salary, rent, EMI, SIP, FD, mutual funds, loans, crypto, etc.\n"
@@ -318,11 +323,11 @@ class ScriptService:
             "* End with one strong, memorable line that sticks in the viewer’s mind\n\n"
             "---\n\n"
             "CONSTRAINTS:\n\n"
-            "* Do NOT generate visuals (no \"show a bar chart here\", \"zoom in\", \"split screen\", etc.)\n"
+            "* Generate visual planning fields for body scenes, but keep narration fields spoken-only\n"
             "* Do NOT add extra fields in the JSON apart from the exact ones listed in the OUTPUT FORMAT below\n"
             "* Do NOT invent fake factual claims, guaranteed returns, or predictions (no \"guaranteed 25% returns\", no \"XYZ stock will go to 1000\")\n"
             "* You may use simple hypothetical numbers only when clearly framed as examples\n"
-            "* Duration fields are rough estimates only; do not force narration to match exact seconds\n"
+            "* Duration fields are rough estimates only, but body scenes must still contain enough narration for the target duration\n"
             "* Do NOT output section labels like \"Hook\", \"Body\", or \"Outro\" inside the narration text\n\n"
             "---\n\n"
             "INPUT VARIABLES (already passed by system):\n\n"
@@ -336,11 +341,12 @@ class ScriptService:
             f"AUDIENCE: {angle}\n"
             f"DURATION_APPROX: {target_duration_minutes} minutes\n"
             f"TONE_HINT: {tone}\n\n"
+            f"{visual_script_prompt_contract()}\n"
             "OUTPUT FORMAT:\n"
             "Return one valid JSON object only.\n"
             "{\n"
             '  "hook": {"narration": "string", "duration": 6, "tension_type": "curiosity_gap"},\n'
-            '  "scenes": [{"scene_index": 1, "kind": "body", "narration": "string", "duration": 45}],\n'
+            '  "scenes": [{"scene_index": 1, "kind": "body", "narration": "string", "duration": 45, "visual_intent": "what the viewer sees", "visual_beats": ["beat 1", "beat 2", "beat 3"], "numbers": ["only numbers spoken in narration"], "emotion": "anxiety", "mechanism": "lifestyle_inflation"}],\n'
             '  "outro": {"narration": "string", "duration": 18},\n'
             '  "suggested_titles": ["title option 1", "title option 2"],\n'
             '  "suggested_description": "string",\n'
@@ -447,29 +453,46 @@ class ScriptService:
             "meta": dict(payload.get("meta") or {}),
         }
 
+        planning_scenes: list[dict[str, Any]] = []
         for index, scene in enumerate(scenes, start=1):
             if not isinstance(scene, dict):
                 continue
-            normalized["scenes"].append(
-                {
-                    "kind": "body",
-                    "scene_index": index,
-                    "narration": self._refined_narration(
-                        str(
-                            scene.get("narration")
-                            or scene.get("narration_text")
-                            or scene.get("content")
-                            or self._fallback_scene(index, topic)
-                        )
-                    ),
-                    "duration": self._coerce_duration(scene.get("duration", scene.get("estimated_duration_sec")), 35),
-                }
+            narration = self._refined_narration(
+                str(
+                    scene.get("narration")
+                    or scene.get("narration_text")
+                    or scene.get("content")
+                    or self._fallback_scene(index, topic)
+                )
             )
+            refined_scene = self.scene_refiner.refine_scene(
+                scene,
+                narration,
+                index=index,
+                topic=topic,
+                angle=angle,
+            )
+            narration = str(refined_scene["narration"])
+            normalized_scene = {
+                "kind": "body",
+                "scene_index": index,
+                "narration": narration,
+                "duration": self._coerce_duration(scene.get("duration", scene.get("estimated_duration_sec")), 45),
+            }
+            normalized["scenes"].append(normalized_scene)
+            planning_scene = dict(normalized_scene)
+            visual_scene = dict(refined_scene.get("visual_scene") or self._visual_scene_from_raw_scene(scene, narration))
+            raw_visual_scene = self._visual_scene_from_raw_scene(scene, narration)
+            if visual_scene and (refined_scene.get("refined") or raw_visual_scene) and not refined_scene.get("allow_grouping"):
+                planning_scene["visual_scene"] = visual_scene
+            planning_scenes.append(planning_scene)
 
         if not normalized["scenes"]:
             normalized["scenes"] = self._demo_script(topic, angle)["scenes"]
 
-        normalized["story_plan"] = self.story_pipeline.build_story_plan(normalized)
+        planning_payload = dict(normalized)
+        planning_payload["scenes"] = planning_scenes or list(normalized["scenes"])
+        normalized["story_plan"] = self.story_pipeline.build_story_plan(planning_payload)
         normalized["meta"]["story_engine"] = "story_intelligence_v1"
         normalized["titles"] = self._normalize_titles(payload.get("suggested_titles") or payload.get("titles"), topic, angle)
         normalized["description"] = str(
@@ -497,6 +520,14 @@ class ScriptService:
             tags = []
         cleaned = [str(tag).strip() for tag in tags if str(tag).strip()]
         return cleaned[:8] or [topic, angle, "personal finance", "money habits"]
+
+    def _visual_scene_from_raw_scene(self, scene: dict[str, Any], narration: str) -> dict[str, Any]:
+        source = scene.get("visual_scene") if isinstance(scene.get("visual_scene"), dict) else scene
+        visual_scene: dict[str, Any] = {"narration": narration}
+        for key in ("visual_intent", "visual_beats", "numbers", "emotion", "mechanism"):
+            if key in source:
+                visual_scene[key] = source[key]
+        return visual_scene if len(visual_scene) > 1 else {}
 
     def _normalize_tension_type(self, value: Any) -> str:
         tension_type = str(value or "").strip().lower()

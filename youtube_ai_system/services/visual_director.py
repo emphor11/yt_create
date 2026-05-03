@@ -121,11 +121,11 @@ class VisualDirector:
         concept_type = self._normalized_concept_type(director_input)
         if concept_type == "salary_drain":
             return self._salary_drain_plan(director_input, concept_type)
-        if concept_type in {"lifestyle_inflation", "expense_leakage", "budgeting", "savings_rate", "emergency_fund"}:
+        if concept_type in {"lifestyle_inflation", "expense_leakage", "budgeting", "savings_rate", "emergency_fund", "rent_burden"}:
             return self._money_mechanism_plan(director_input, concept_type)
         if concept_type == "debt_trap":
             return self._debt_trap_plan(director_input, concept_type)
-        if concept_type in {"emi_pressure", "loan_cost"}:
+        if concept_type in {"emi_pressure", "emi_stack", "loan_cost"}:
             return self._loan_pressure_plan(director_input, concept_type)
         if concept_type == "sip_growth":
             return self._sip_growth_plan(director_input, concept_type)
@@ -133,7 +133,7 @@ class VisualDirector:
             return self._growth_mechanism_plan(director_input, concept_type)
         if concept_type in {"inflation_erosion", "inflation_loss", "real_return", "fd_vs_inflation"}:
             return self._inflation_return_plan(director_input, concept_type)
-        if concept_type in {"opportunity_cost", "comparison_timeline", "risk_return", "diversification", "tax_saving", "speculation_risk"}:
+        if concept_type in {"opportunity_cost", "comparison_timeline", "risk_return", "diversification", "tax_saving", "tax_drain", "speculation_risk", "fomo_risk"}:
             return self._comparison_mechanism_plan(director_input, concept_type)
         return self._generic_plan(director_input, concept_type)
 
@@ -665,6 +665,27 @@ class VisualDirector:
         }
 
     def _normalized_concept_type(self, director_input: VisualDirectorInput) -> str:
+        explicit = str(director_input.concept_type or "").strip().lower()
+        aliases = {"emi_stack": "emi_pressure", "fomo_risk": "speculation_risk", "tax_drain": "tax_saving"}
+        if explicit in aliases:
+            return aliases[explicit]
+        if explicit in {
+            "salary_drain",
+            "lifestyle_inflation",
+            "emi_pressure",
+            "debt_trap",
+            "inflation_erosion",
+            "sip_growth",
+            "compounding",
+            "risk_return",
+            "emergency_fund",
+            "speculation_risk",
+            "diversification",
+            "tax_saving",
+            "rent_burden",
+            "expense_leakage",
+        }:
+            return explicit
         text = f"{director_input.concept_type} {director_input.concept_name} {director_input.narration_text}".lower()
         if "lifestyle inflation" in text or ("salary" in text and "expenses" in text and any(token in text for token in ("rise", "increase", "doubled", "luxury", "necessities"))):
             return "lifestyle_inflation"
@@ -713,6 +734,7 @@ class VisualDirector:
             "budgeting": "Budget Allocation",
             "savings_rate": "Savings Rate",
             "emergency_fund": "Emergency Fund",
+            "rent_burden": "Rent Burden",
             "emi_pressure": "EMI Pressure",
             "loan_cost": "Loan Cost",
             "compounding": "Compounding",
@@ -766,6 +788,13 @@ class VisualDirector:
                 {"label": "Subscriptions", "amount": source_amount * 0.06},
                 {"label": "Food Apps", "amount": source_amount * 0.12},
                 {"label": "Impulse Buys", "amount": source_amount * 0.14},
+            ]
+            remainder_amount = source_amount * 0.08
+        elif concept_type == "rent_burden":
+            flows = [
+                {"label": "Rent", "amount": source_amount * 0.4},
+                {"label": "Bills", "amount": source_amount * 0.18},
+                {"label": "Food", "amount": source_amount * 0.16},
             ]
             remainder_amount = source_amount * 0.08
         else:
@@ -1150,8 +1179,10 @@ def visual_director_input_from_section(
 ) -> VisualDirectorInput:
     finance_concept = dict(section.get("finance_concept") or {})
     concept = (section.get("concepts") or [{}])[0] if section.get("concepts") else {}
+    visual_scene = dict(section.get("visual_scene") or {})
+    mechanism = str(section.get("mechanism") or visual_scene.get("mechanism") or "").strip()
     return VisualDirectorInput(
-        concept_type=str(finance_concept.get("concept_type") or concept.get("type") or section.get("idea_type") or "definition"),
+        concept_type=str(mechanism or finance_concept.get("concept_type") or concept.get("type") or section.get("idea_type") or "definition"),
         concept_name=str(finance_concept.get("concept_name") or concept.get("concept") or "Money Change"),
         primary_entity=str(finance_concept.get("primary_entity") or section.get("dominant_entity") or "money"),
         action=str(finance_concept.get("action") or ""),
@@ -1161,7 +1192,7 @@ def visual_director_input_from_section(
         time_period=finance_concept.get("time_period"),
         confidence=float(finance_concept.get("confidence") or 0.0),
         narration_text=str(section.get("text") or ""),
-        idea_type=str(section.get("idea_type") or "emphasis"),
+        idea_type=str(section.get("idea_type") or mechanism or "emphasis"),
         has_numbers=bool(section.get("has_numbers")),
         section_position=section_position,
         preceding_concept_type=preceding_concept_type,

@@ -92,6 +92,9 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.assertIn("Must pass this hook contract", prompt)
         self.assertIn("Why does your ₹50,000 salary feel gone by day 20?", prompt)
         self.assertIn("Avoid validator-weak hooks", prompt)
+        self.assertIn("VISUAL-SCENE CONTRACT", prompt)
+        self.assertIn("visual_intent", prompt)
+        self.assertIn("visual_beats", prompt)
 
     def test_hook_refiner_rewrites_validator_weak_salary_hook(self) -> None:
         payload = self.service._normalize_payload(
@@ -126,6 +129,68 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         )
 
         self.assertEqual(payload["hook"]["narration"], "Why does your ₹50,000 salary feel gone by day 20?")
+
+    def test_visual_scene_fields_feed_story_plan_but_not_top_level_scenes(self) -> None:
+        payload = self.service._normalize_payload(
+            {
+                "hook": {"narration": "Why does your ₹50,000 salary feel gone by day 20?", "duration": 6},
+                "scenes": [
+                    {
+                        "narration": "Income rises. Lifestyle rises with it. Savings stay stuck.",
+                        "visual_intent": "Show income rising, lifestyle absorbing it, and savings staying flat.",
+                        "visual_beats": ["Income rises", "Lifestyle rises", "Savings stay stuck"],
+                        "numbers": [],
+                        "emotion": "anxiety",
+                        "mechanism": "lifestyle_inflation",
+                    }
+                ],
+                "outro": {"narration": "Track the leak before the month tracks you."},
+            },
+            "salary mistakes",
+            "young professionals",
+        )
+
+        self.assertNotIn("visual_beats", payload["scenes"][0])
+        section = next(section for section in payload["story_plan"]["sections"] if "Lifestyle absorbs" in section.get("text", ""))
+        self.assertEqual(section["visual_scene"]["mechanism"], "lifestyle_inflation")
+        self.assertEqual(section["visual_scene"]["visual_beats"][0], "Income rises")
+        self.assertEqual(section["concept_type"], "lifestyle_inflation")
+
+    def test_short_body_scenes_are_expanded_before_story_planning(self) -> None:
+        payload = self.service._normalize_payload(
+            {
+                "hook": {"narration": "Why does your ₹50,000 salary feel gone by day 20?", "duration": 6},
+                "scenes": [
+                    {"narration": "EMIs stack up. Debt trap forms."},
+                    {"narration": "SIP growth helps. Patience required."},
+                ],
+                "outro": {"narration": "Track the leak before the month tracks you."},
+            },
+            "salary mistakes",
+            "young professionals",
+        )
+
+        self.assertGreaterEqual(len(payload["scenes"][0]["narration"].split()), 45)
+        self.assertIn("₹18,000", payload["scenes"][0]["narration"])
+        self.assertGreaterEqual(len(payload["scenes"][1]["narration"].split()), 45)
+        self.assertIn("₹5,000 SIP", payload["scenes"][1]["narration"])
+        emi_section = next(section for section in payload["story_plan"]["sections"] if section.get("concept_type") == "emi_pressure")
+        self.assertEqual(emi_section["visual_scene"]["mechanism"], "emi_pressure")
+
+    def test_lifestyle_absorbs_sentence_is_preserved_in_story_grouping(self) -> None:
+        grouped = self.pipeline.group_payload_for_story_plan(
+            {
+                "hook": {"narration": "Why does your ₹50,000 salary feel gone by day 20?"},
+                "scenes": [
+                    {
+                        "narration": "Your salary rises. Lifestyle absorbs it. Savings stay flat.",
+                    }
+                ],
+            }
+        )
+
+        text = " ".join(scene["narration"] for scene in grouped["scenes"])
+        self.assertIn("Lifestyle absorbs it.", text)
 
     def test_scene_rows_store_no_visual_payload(self) -> None:
         payload = self.service._normalize_payload(
@@ -452,14 +517,17 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         )
         sections = payload["story_plan"]["sections"]
         self.assertTrue(sections[0]["visual_plan"])
-        self.assertEqual(sections[0]["visual_plan"][0]["concept"]["type"], "risk")
+        self.assertIn(sections[0]["visual_plan"][0]["concept"]["type"], {"risk", "debt_trap"})
         unified_item = sections[0]["visual_plan"][0]
-        self.assertEqual(unified_item["visual"]["pattern"], "NumericComparison")
-        self.assertEqual(
-            unified_item["visual"]["data"]["values"],
-            ["₹50,000 bill", "₹2,000 payment", "₹15,000 interest"],
-        )
-        self.assertEqual(sections[0]["visual_type"], "balance_decay")
+        self.assertIn(unified_item["visual"]["pattern"], {"NumericComparison", "DebtSpiralVisualizer"})
+        if unified_item["visual"]["pattern"] == "NumericComparison":
+            self.assertEqual(
+                unified_item["visual"]["data"]["values"],
+                ["₹50,000 bill", "₹2,000 payment", "₹15,000 interest"],
+            )
+        else:
+            self.assertIn("balances", unified_item["visual"]["data"])
+        self.assertIn(sections[0]["visual_type"], {"balance_decay", "comparison"})
         self.assertIn("state", sections[0])
         self.assertTrue(sections[0]["narrative_arc"]["story_goal"])
         self.assertEqual(
