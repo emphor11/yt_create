@@ -2,6 +2,7 @@ import React from 'react';
 import {useCurrentFrame, useVideoConfig} from 'remotion';
 import {BalanceBar} from './components/BalanceBar';
 import {CalculationStrip} from './components/CalculationStrip';
+import {CinematicScene} from './components/CinematicScene';
 import {ConceptCard} from './components/ConceptCard';
 import {DebtSpiralVisualizer} from './components/DebtSpiralVisualizer';
 import {FlowDiagram} from './components/FlowDiagram';
@@ -35,6 +36,7 @@ const COMPONENT_MAP = {
 	MoneyFlowDiagram,
 	DebtSpiralVisualizer,
 	SIPGrowthEngine,
+	CinematicScene,
 } as const;
 
 type Props = {
@@ -62,8 +64,14 @@ export const SceneRenderer: React.FC<Props> = ({scene}) => {
 	const {startFrame, endFrame} = beatFrameRange(activeBeat, fps);
 	const frameWithinBeat = frame - startFrame;
 	const durationFrames = endFrame - startFrame;
-	const Component =
-		COMPONENT_MAP[activeBeat.component as keyof typeof COMPONENT_MAP] ?? StatCard;
+	const hasCinematicIntent =
+		scene.cinematic_intent && Object.keys(scene.cinematic_intent).length > 0;
+	const cinematicTextBeat =
+		hasCinematicIntent &&
+		['StatCard', 'ConceptCard', 'ConceptCardScene', 'HighlightText'].includes(activeBeat.component);
+	const Component = cinematicTextBeat
+		? CinematicScene
+		: COMPONENT_MAP[activeBeat.component as keyof typeof COMPONENT_MAP] ?? StatCard;
 
 	return (
 		<Component
