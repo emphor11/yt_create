@@ -19,6 +19,8 @@ export type Scene = {
 	concept_type?: string;
 	visual_mode?: string;
 	cinematic_intent?: Record<string, unknown>;
+	visual_story?: Record<string, unknown>;
+	story_state?: Record<string, unknown>;
 	pattern: string;
 	data?: Record<string, unknown>;
 	direction?: Record<string, unknown> | null;

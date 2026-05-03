@@ -387,6 +387,17 @@ class SceneBuilderTestCase(unittest.TestCase):
                     "concept_type": "salary_drain",
                     "direction": {"emotional_arc": {"opening": "comfort", "closing": "anxiety"}},
                     "visual_mode": "layered_hybrid",
+                    "visual_story": {
+                        "protagonist": {"role": "young_salaried_professional", "visual_id": "protagonist_01"},
+                        "recurring_objects": ["phone_account", "salary_balance"],
+                    },
+                    "story_state": {
+                        "scene_role": "pressure",
+                        "protagonist_state": "stressed",
+                        "active_objects": ["phone_account", "salary_balance"],
+                        "visual_question": "Where did the salary go?",
+                        "visual_answer": "₹50,000 becomes ₹3,000",
+                    },
                     "cinematic_intent": {
                         "visual_mode": "layered_hybrid",
                         "human_action": "person checking salary credit on phone",
@@ -432,6 +443,8 @@ class SceneBuilderTestCase(unittest.TestCase):
         self.assertEqual(scene["direction"]["emotional_arc"]["closing"], "anxiety")
         self.assertEqual(scene["visual_mode"], "layered_hybrid")
         self.assertEqual(scene["cinematic_intent"]["asset_query"], "cinematic phone banking closeup")
+        self.assertEqual(scene["visual_story"]["protagonist"]["visual_id"], "protagonist_01")
+        self.assertEqual(scene["story_state"]["visual_question"], "Where did the salary go?")
         self.assertEqual(scene["theme"]["background"], "#0A0A14")
         self.assertEqual(scene["beats"][1]["data"]["remainder"]["amount"], 3000)
         self.assertEqual(scene["beats"][-1]["end_time"], scene["duration"])

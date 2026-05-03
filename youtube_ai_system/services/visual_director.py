@@ -33,6 +33,8 @@ class VisualDirectorInput:
     has_numbers: bool
     section_position: str
     preceding_concept_type: str | None
+    visual_story: dict[str, Any] = field(default_factory=dict)
+    story_state: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -248,28 +250,79 @@ class VisualDirector:
     def direct(self, director_input: VisualDirectorInput) -> DirectedPlan:
         concept_type = self._normalized_concept_type(director_input)
         if concept_type == "salary_drain":
-            return self._with_cinematic_intent(self._salary_drain_plan(director_input, concept_type))
+            return self._with_cinematic_intent(self._salary_drain_plan(director_input, concept_type), director_input)
         if concept_type in {"lifestyle_inflation", "expense_leakage", "budgeting", "savings_rate", "emergency_fund", "rent_burden"}:
-            return self._with_cinematic_intent(self._money_mechanism_plan(director_input, concept_type))
+            return self._with_cinematic_intent(self._money_mechanism_plan(director_input, concept_type), director_input)
         if concept_type == "debt_trap":
-            return self._with_cinematic_intent(self._debt_trap_plan(director_input, concept_type))
+            return self._with_cinematic_intent(self._debt_trap_plan(director_input, concept_type), director_input)
         if concept_type in {"emi_pressure", "emi_stack", "loan_cost"}:
-            return self._with_cinematic_intent(self._loan_pressure_plan(director_input, concept_type))
+            return self._with_cinematic_intent(self._loan_pressure_plan(director_input, concept_type), director_input)
         if concept_type == "sip_growth":
-            return self._with_cinematic_intent(self._sip_growth_plan(director_input, concept_type))
+            return self._with_cinematic_intent(self._sip_growth_plan(director_input, concept_type), director_input)
         if concept_type in {"compounding", "net_worth_growth"}:
-            return self._with_cinematic_intent(self._growth_mechanism_plan(director_input, concept_type))
+            return self._with_cinematic_intent(self._growth_mechanism_plan(director_input, concept_type), director_input)
         if concept_type in {"inflation_erosion", "inflation_loss", "real_return", "fd_vs_inflation"}:
-            return self._with_cinematic_intent(self._inflation_return_plan(director_input, concept_type))
+            return self._with_cinematic_intent(self._inflation_return_plan(director_input, concept_type), director_input)
         if concept_type in {"opportunity_cost", "comparison_timeline", "risk_return", "diversification", "tax_saving", "tax_drain", "speculation_risk", "fomo_risk"}:
-            return self._with_cinematic_intent(self._comparison_mechanism_plan(director_input, concept_type))
-        return self._with_cinematic_intent(self._generic_plan(director_input, concept_type))
+            return self._with_cinematic_intent(self._comparison_mechanism_plan(director_input, concept_type), director_input)
+        return self._with_cinematic_intent(self._generic_plan(director_input, concept_type), director_input)
 
-    def _with_cinematic_intent(self, plan: DirectedPlan) -> DirectedPlan:
+    def _with_cinematic_intent(self, plan: DirectedPlan, director_input: VisualDirectorInput) -> DirectedPlan:
         if plan.cinematic_intent:
             return plan
         intent = self._cinematic_intent(plan.concept_type, plan.concept_name, plan.data)
-        return replace(plan, visual_mode=intent.visual_mode, cinematic_intent=intent.to_dict())
+        intent_payload = self._intent_with_story_state(intent.to_dict(), director_input.story_state)
+        beats = self._story_contextualized_beats(plan.beats, director_input.story_state)
+        data = dict(plan.data)
+        if director_input.story_state:
+            data["story_state"] = dict(director_input.story_state)
+        if director_input.visual_story:
+            data["visual_story"] = dict(director_input.visual_story)
+        return replace(plan, data=data, beats=beats, visual_mode=intent.visual_mode, cinematic_intent=intent_payload)
+
+    def _intent_with_story_state(self, intent: dict[str, str], story_state: dict[str, Any]) -> dict[str, str]:
+        if not story_state:
+            return intent
+        visual_answer = str(story_state.get("visual_answer") or "").strip()
+        visual_question = str(story_state.get("visual_question") or "").strip()
+        active_objects = story_state.get("active_objects") or []
+        if visual_answer:
+            intent["overlay_text"] = visual_answer
+        if active_objects:
+            intent["active_object"] = str(active_objects[0])
+        if visual_question:
+            intent["visual_question"] = visual_question
+        intent["protagonist_state"] = str(story_state.get("protagonist_state") or "")
+        intent["scene_role"] = str(story_state.get("scene_role") or "")
+        return intent
+
+    def _story_contextualized_beats(self, beats: list[DirectedBeat], story_state: dict[str, Any]) -> list[DirectedBeat]:
+        if not story_state:
+            return beats
+        state_change = story_state.get("state_change") or {}
+        money = state_change.get("money") if isinstance(state_change.get("money"), dict) else {}
+        active_objects = story_state.get("active_objects") or []
+        visual_answer = str(story_state.get("visual_answer") or "").strip()
+        callback_to = str(story_state.get("callback_to") or "").strip()
+        story_data = {
+            "story_state": dict(story_state),
+            "active_objects": list(active_objects),
+            "money": dict(money),
+        }
+        if not beats:
+            return beats
+        updated: list[DirectedBeat] = []
+        for index, beat in enumerate(beats):
+            data = dict(beat.data or {})
+            data.update(story_data)
+            text = beat.text
+            if index == 0 and money.get("from"):
+                text = str(money["from"])
+            if index == len(beats) - 1 and visual_answer:
+                text = visual_answer
+            subtext = beat.subtext or callback_to.replace("_", " ")
+            updated.append(replace(beat, text=text, subtext=subtext, data=data))
+        return updated
 
     def _cinematic_intent(self, concept_type: str, concept_name: str, data: dict[str, Any]) -> CinematicIntent:
         recipe_key = {
@@ -1389,6 +1442,8 @@ def visual_director_input_from_section(
         has_numbers=bool(section.get("has_numbers")),
         section_position=section_position,
         preceding_concept_type=preceding_concept_type,
+        visual_story=dict(section.get("visual_story") or {}),
+        story_state=dict(section.get("story_state") or {}),
     )
 
 

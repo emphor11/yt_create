@@ -11,6 +11,7 @@ from .visual_logic_engine import map_concept_to_visual
 from .visual_beat_expander import VisualBeatExpander
 from .visual_director import VisualDirector, visual_director_input_from_section
 from .visual_scene_normalizer import VisualSceneNormalizer
+from .visual_story_engine import VisualStoryEngine
 
 CONCEPT_PRIORITY = {
     "numeric": 5,
@@ -52,6 +53,7 @@ class StoryPipeline:
         visual_director: VisualDirector | None = None,
         visual_scene_normalizer: VisualSceneNormalizer | None = None,
         visual_beat_expander: VisualBeatExpander | None = None,
+        visual_story_engine: VisualStoryEngine | None = None,
         logger: RunLogger | None = None,
     ) -> None:
         self.story_intelligence = story_intelligence or StoryIntelligenceEngine()
@@ -60,6 +62,7 @@ class StoryPipeline:
         self.visual_director = visual_director or VisualDirector()
         self.visual_scene_normalizer = visual_scene_normalizer or VisualSceneNormalizer()
         self.visual_beat_expander = visual_beat_expander or VisualBeatExpander()
+        self.visual_story_engine = visual_story_engine or VisualStoryEngine()
         self.logger = logger or RunLogger()
 
     def build_story_plan(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -68,6 +71,7 @@ class StoryPipeline:
         story_plan = self.attach_visual_scene_contract(story_plan)
         story_plan = self.attach_section_concepts(story_plan)
         story_plan = self.attach_section_narrative_arc(story_plan)
+        story_plan = self.attach_visual_story(story_plan)
         story_plan = self.attach_section_visual_plan(story_plan)
         return story_plan
 
@@ -339,6 +343,9 @@ class StoryPipeline:
             section["state"] = self._state_from_narrative_arc(arc)
         return story_plan
 
+    def attach_visual_story(self, story_plan: dict[str, Any]) -> dict[str, Any]:
+        return self.visual_story_engine.attach_visual_story(story_plan)
+
     def attach_section_visual_plan(self, story_plan: dict[str, Any]) -> dict[str, Any]:
         sections = story_plan.get("sections") or []
         preceding_concept_type: str | None = None
@@ -361,6 +368,8 @@ class StoryPipeline:
                 section["concept_type"] = directed_plan.concept_type
                 section["visual_mode"] = directed_plan.visual_mode
                 section["cinematic_intent"] = dict(directed_plan.cinematic_intent)
+                section["visual_story"] = dict(story_plan.get("visual_story") or section.get("visual_story") or {})
+                section["story_state"] = dict(section.get("story_state") or {})
                 if directed_plan.fallback_reason:
                     self._log_visual_director("fallback", directed_plan.fallback_reason)
             else:

@@ -25,14 +25,26 @@ class VisualBeatExpander:
         concept = item.get("concept") or {}
         mechanism = str(section.get("concept_type") or (concept.get("type") if isinstance(concept, dict) else "") or "").strip()
         data = visual.get("data") if isinstance(visual.get("data"), dict) else {}
-        expanded = self._beats_from_sentences(
-            sentences=sentences,
+        story_state = section.get("story_state") if isinstance(section.get("story_state"), dict) else {}
+        story_beats = self._beats_from_story_state(
+            story_state=story_state,
             mechanism=mechanism,
             pattern=pattern,
             data=data,
-            target=target,
             fallback_beats=beats,
+            target=target,
         )
+        if story_beats:
+            expanded = story_beats
+        else:
+            expanded = self._beats_from_sentences(
+                sentences=sentences,
+                mechanism=mechanism,
+                pattern=pattern,
+                data=data,
+                target=target,
+                fallback_beats=beats,
+            )
         expanded = self._preserve_directed_beats(expanded, beats, pattern, mechanism)
         if len(expanded) <= len(beats):
             return section
@@ -42,6 +54,95 @@ class VisualBeatExpander:
         updated_section = dict(section)
         updated_section["visual_plan"] = [updated_item, *visual_plan[1:]]
         return updated_section
+
+    def _beats_from_story_state(
+        self,
+        *,
+        story_state: dict[str, Any],
+        mechanism: str,
+        pattern: str,
+        data: dict[str, Any],
+        fallback_beats: list[dict[str, Any]],
+        target: int,
+    ) -> list[dict[str, Any]]:
+        if not story_state:
+            return []
+        state_change = story_state.get("state_change") or {}
+        money = state_change.get("money") if isinstance(state_change.get("money"), dict) else {}
+        active_objects = [str(obj) for obj in (story_state.get("active_objects") or []) if str(obj)]
+        visual_answer = str(story_state.get("visual_answer") or "").strip()
+        visual_question = str(story_state.get("visual_question") or "").strip()
+        callback_to = str(story_state.get("callback_to") or "").replace("_", " ").strip()
+        texts = [
+            self._object_setup_text(active_objects, money),
+            str(money.get("change_label") or "").strip(),
+            visual_question,
+            self._mechanism_text(pattern, mechanism),
+            visual_answer,
+            callback_to,
+        ]
+        texts = [text for text in texts if text]
+        if len(texts) < 3:
+            return []
+        beats: list[dict[str, Any]] = []
+        for index, text in enumerate(texts[: max(3, min(target, 7))]):
+            is_first = index == 0
+            is_last = index == min(len(texts), max(3, min(target, 7))) - 1
+            component = self._story_component_for(index, is_first, is_last, pattern, mechanism)
+            beat: dict[str, Any] = {
+                "component": component,
+                "text": text,
+                "source_text": text,
+                "sentence_index": index,
+                "data": {"story_state": story_state, **data} if data else {"story_state": story_state},
+            }
+            if component in {"FlowDiagram", "FlowBar", "GrowthChart"} and data:
+                beat["props"] = data
+            beats.append(beat)
+        return self._dedupe_adjacent(beats)
+
+    def _story_component_for(self, index: int, is_first: bool, is_last: bool, pattern: str, mechanism: str) -> str:
+        if is_first:
+            return "StatCard"
+        if is_last:
+            return "HighlightText"
+        if index == 2 and pattern in {"MoneyFlowDiagram", "FlowDiagram"}:
+            return "FlowDiagram"
+        if index == 2 and pattern in {"DebtSpiralVisualizer", "CalculationStrip"}:
+            return "CalculationStrip"
+        if index == 2 and pattern in {"GrowthChart", "SIPGrowthEngine"}:
+            return "GrowthChart"
+        if index == 2 and pattern == "SplitComparison":
+            return "SplitComparison"
+        return self._component_for("", index, is_first, is_last, pattern, mechanism)
+
+    def _object_setup_text(self, active_objects: list[str], money: dict[str, Any]) -> str:
+        if "phone_account" in active_objects and money.get("from"):
+            return f"Phone account: {money['from']}"
+        if "salary_balance" in active_objects and money.get("from"):
+            return f"Salary balance: {money['from']}"
+        if "debt_pressure" in active_objects:
+            return "Debt pressure appears"
+        if "inflation_basket" in active_objects:
+            return "Basket starts shrinking"
+        if "sip_jar" in active_objects:
+            return "SIP jar starts growing"
+        if "portfolio_grid" in active_objects:
+            return "Portfolio grid appears"
+        return active_objects[0].replace("_", " ").title() if active_objects else ""
+
+    def _mechanism_text(self, pattern: str, mechanism: str) -> str:
+        if pattern == "MoneyFlowDiagram":
+            return "Money path becomes visible"
+        if pattern == "DebtSpiralVisualizer":
+            return "Interest pressure grows"
+        if pattern == "SIPGrowthEngine":
+            return "Compounding engine starts"
+        if pattern == "GrowthChart":
+            return "Value path changes"
+        if pattern == "SplitComparison":
+            return "Two paths separate"
+        return mechanism.replace("_", " ").title()
 
     def _target_beat_count(self, text: str, sentences: list[str]) -> int:
         words = len(text.split())

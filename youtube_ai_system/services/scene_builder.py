@@ -88,6 +88,8 @@ class SceneBuilder:
                     "direction": section.get("direction"),
                     "visual_mode": section.get("visual_mode") or self._visual_field(section, "visual_mode"),
                     "cinematic_intent": section.get("cinematic_intent") or self._visual_field(section, "cinematic_intent") or {},
+                    "visual_story": section.get("visual_story") or {},
+                    "story_state": section.get("story_state") or {},
                     "theme": section.get("theme") or {},
                     "beats": timed_beats,
                     "duration": round(scene_duration, 2),
