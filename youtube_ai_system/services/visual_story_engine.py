@@ -20,6 +20,7 @@ class VisualStoryEngine:
 
     CONCEPT_TO_SCENE_ROLE = {
         "salary_drain": "pressure",
+        "salary_depletion": "pressure",
         "lifestyle_inflation": "pressure",
         "expense_leakage": "pressure",
         "emi_pressure": "pressure",
@@ -38,6 +39,8 @@ class VisualStoryEngine:
         "compound_growth": "solution",
         "emergency_fund": "solution",
         "savings_rate": "solution",
+        "fomo_risk": "turning_point",
+        "speculation_risk": "turning_point",
         "decay": "pressure",
         "growth": "solution",
         "comparison": "mechanism",
@@ -48,6 +51,7 @@ class VisualStoryEngine:
 
     CONCEPT_TO_OBJECTS = {
         "salary_drain": ["phone_account", "salary_balance"],
+        "salary_depletion": ["phone_account", "salary_balance"],
         "lifestyle_inflation": ["phone_account", "salary_balance"],
         "expense_leakage": ["phone_account", "salary_balance"],
         "rent_burden": ["phone_account", "salary_balance"],
@@ -63,6 +67,8 @@ class VisualStoryEngine:
         "compound_growth": ["sip_jar"],
         "savings_rate": ["sip_jar", "salary_balance"],
         "emergency_fund": ["emergency_buffer"],
+        "fomo_risk": ["portfolio_grid"],
+        "speculation_risk": ["portfolio_grid"],
         "risk_return": ["portfolio_grid"],
         "diversification": ["portfolio_grid"],
         "opportunity_cost": ["sip_jar", "salary_balance"],
@@ -76,6 +82,7 @@ class VisualStoryEngine:
 
     CONCEPT_VISUAL_QUESTIONS = {
         "salary_drain": "Where did the salary go?",
+        "salary_depletion": "Where did the salary go?",
         "lifestyle_inflation": "Why does a raise not create savings?",
         "expense_leakage": "What invisible drain is eating the salary?",
         "emi_pressure": "How do small EMIs become one big leak?",
@@ -88,6 +95,8 @@ class VisualStoryEngine:
         "compound_growth": "What changes when returns start earning returns?",
         "savings_rate": "How much is actually getting saved each month?",
         "emergency_fund": "What absorbs the next financial shock?",
+        "fomo_risk": "What happens when emotion becomes the strategy?",
+        "speculation_risk": "What happens when emotion becomes the strategy?",
         "risk_return": "What is the risk that comes with the return?",
         "diversification": "What changes when one bet becomes a system?",
         "opportunity_cost": "What is the cost of not investing?",
@@ -239,7 +248,7 @@ class VisualStoryEngine:
             objects.append("debt_pressure")
         if "inflation" in lowered or "purchasing power" in lowered:
             objects.append("inflation_basket")
-        if "sip" in lowered or "compound" in lowered or "invest" in lowered:
+        if "sip" in lowered or "compound" in lowered or "monthly investment" in lowered:
             objects.append("sip_jar")
         if any(token in lowered for token in ("diversification", "risk_return", "portfolio", "stock", "equity", "fd", "fomo", "speculation")):
             objects.append("portfolio_grid")
@@ -262,10 +271,12 @@ class VisualStoryEngine:
     def _protagonist_state(self, concept_type: str, scene_role: str) -> str:
         if scene_role == "setup":
             return "calm"
-        if concept_type in {"salary_drain", "lifestyle_inflation", "expense_leakage"}:
+        if concept_type in {"salary_drain", "salary_depletion", "lifestyle_inflation", "expense_leakage"}:
             return "tempted"
         if concept_type in {"emi_pressure", "debt_trap"}:
             return "stressed"
+        if concept_type in {"fomo_risk", "speculation_risk"}:
+            return "aware"
         if scene_role in {"mechanism", "turning_point"}:
             return "aware"
         if scene_role == "solution":
@@ -308,7 +319,7 @@ class VisualStoryEngine:
     def _risk_change(self, concept_type: str) -> dict[str, str]:
         if concept_type in {"debt_trap", "emi_pressure"}:
             return {"from": "hidden", "to": "visible"}
-        if concept_type in {"diversification", "risk_return"}:
+        if concept_type in {"diversification", "risk_return", "fomo_risk", "speculation_risk"}:
             return {"from": "concentrated", "to": "spread"}
         if concept_type in {"sip_growth", "compounding", "emergency_fund"}:
             return {"from": "reactive", "to": "planned"}
@@ -370,7 +381,7 @@ class VisualStoryEngine:
         directed_data: dict[str, Any] | None = None,
     ) -> str:
         directed_data = directed_data or {}
-        if concept_type == "salary_drain" and money_from and money_to:
+        if concept_type in {"salary_drain", "salary_depletion"} and money_from and money_to:
             return f"{money_from} salary → {money_to} left"
         if concept_type == "inflation_erosion" and money_from and money_to:
             return f"{money_from} today → {money_to} buying power"
@@ -384,12 +395,15 @@ class VisualStoryEngine:
             return f"{money_from} -> {money_to}"
         labels = {
             "salary_drain": "salary drains",
+            "salary_depletion": "salary drains",
             "lifestyle_inflation": "savings gap stays flat",
             "emi_pressure": "fixed payments stack",
             "debt_trap": "balance resists payoff",
             "inflation_erosion": "real value falls",
             "sip_growth": "corpus grows",
             "diversification": "risk spreads",
+            "fomo_risk": "emotion drives the trade",
+            "speculation_risk": "emotion drives the trade",
         }
         return labels.get(concept_type, "state changes")
 
@@ -430,6 +444,17 @@ class VisualStoryEngine:
             return "sip_growth"
         if "emergency" in lowered or "cash buffer" in lowered or "six-month" in lowered:
             return "emergency_fund"
+        if (
+            "fomo" in lowered
+            or "speculation" in lowered
+            or "enter late" in lowered
+            or "panic" in lowered
+            or "emotion wearing" in lowered
+            or "cannot explain" in lowered
+            or "do not understand" in lowered
+            or "don't understand" in lowered
+        ):
+            return "fomo_risk"
         if "diversification" in lowered or "portfolio" in lowered or "one stock" in lowered or "one basket" in lowered:
             return "diversification"
         if "salary" in lowered and any(token in lowered for token in ("drain", "gone", "disappear", "left", "rent", "expense")):
@@ -455,7 +480,7 @@ class VisualStoryEngine:
     def _money_state_from_directed_data(self, concept_type: str, data: dict[str, Any]) -> tuple[str, str]:
         if not data:
             return "", ""
-        if concept_type == "salary_drain":
+        if concept_type in {"salary_drain", "salary_depletion"}:
             return self._as_text(self._read_nested(data, "source.value")), self._as_text(self._read_nested(data, "remainder.value"))
         if concept_type in {"sip_growth", "compounding", "compound_growth"}:
             return self._as_text(self._read_nested(data, "monthly_sip.value")), self._format_money_like(self._read_nested(data, "final_corpus"))
@@ -468,7 +493,7 @@ class VisualStoryEngine:
         return "", ""
 
     def _concept_answer(self, concept_type: str, money_from: str, money_to: str, data: dict[str, Any]) -> str:
-        if concept_type == "salary_drain" and money_from and money_to:
+        if concept_type in {"salary_drain", "salary_depletion"} and money_from and money_to:
             return f"{money_from} salary becomes {money_to} by month end"
         if concept_type == "emi_pressure" and money_from:
             return f"{money_from} leaves before the month begins"
@@ -483,6 +508,8 @@ class VisualStoryEngine:
             return "small consistent investment creates a large corpus"
         if concept_type == "emergency_fund":
             return "buffer absorbs the shock without breaking the plan"
+        if concept_type in {"fomo_risk", "speculation_risk"}:
+            return "emotion stops pretending to be a strategy"
         if concept_type in {"diversification", "risk_return"}:
             return "one fragile bet becomes a spread portfolio"
         return ""

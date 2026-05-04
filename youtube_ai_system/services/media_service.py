@@ -236,14 +236,17 @@ class MediaService:
     def _section_for_scene_render(self, scene: dict, audio_duration: float, audio_path: Path) -> dict:
         narration = str(scene.get("narration_text") or "")
         kind = str(scene.get("kind") or "body")
-        intelligence = self._section_intelligence_from_narration(narration, kind)
+        # Pass any stored visual_scene forward so the story pipeline fast-path
+        # can use Groq-generated mechanism/beats rather than rebuilding from text.
+        stored_visual_scene = self._json_dict_from_scene_field(scene.get("visual_scene_json"))
+        intelligence = self._section_intelligence_from_narration(narration, kind, visual_scene=stored_visual_scene)
         stored_finance_concept = self._json_dict_from_scene_field(scene.get("finance_concept_json"))
         if stored_finance_concept:
             intelligence["finance_concept"] = stored_finance_concept
 
-        visual_plan = self._scene_visual_plan(scene)
-        if not visual_plan:
-            visual_plan = list(intelligence.get("visual_plan") or [])
+        # Prefer the freshly computed visual plan — it reflects all pipeline
+        # improvements. Only fall back to the stored plan if nothing was computed.
+        visual_plan = list(intelligence.get("visual_plan") or []) or self._scene_visual_plan(scene)
         return {
             "text": narration,
             "weight": self._weight_for_scene_kind(kind),
@@ -266,7 +269,9 @@ class MediaService:
             "has_numbers": bool(intelligence.get("has_numbers")),
             "has_comparison": bool(intelligence.get("has_comparison")),
             "has_causation": bool(intelligence.get("has_causation")),
+            "visual_scene": stored_visual_scene or intelligence.get("visual_scene") or {},
         }
+
 
     def _scene_visual_plan(self, scene: dict) -> list[dict]:
         raw = scene.get("visual_plan_json")
@@ -284,17 +289,37 @@ class MediaService:
         section = self._section_intelligence_from_narration(narration, kind)
         return list(section.get("visual_plan") or [])
 
-    def _section_intelligence_from_narration(self, narration: str, kind: str) -> dict:
+    def _section_intelligence_from_narration(self, narration: str, kind: str, visual_scene: dict | None = None) -> dict:
         signals = self._scene_text_signals(narration)
-        section = {
+        section: dict = {
             "type": "problem" if kind == "hook" else ("optimization" if kind == "outro" else "explanation"),
             "text": narration,
             "weight": self._weight_for_scene_kind(kind),
             **signals,
         }
-        story_plan = {"hook": "", "agenda": [], "sections": [section]}
+        # If the scene already has a Groq-generated visual_scene (mechanism, visual_beats, etc.)
+        # inject it so story_pipeline._visual_scene_source() fast-paths this section.
+        if visual_scene:
+            section["visual_scene"] = visual_scene
+        story_plan = {"hook": narration[:60], "agenda": [], "sections": [section]}
         story_plan = self.story_pipeline.attach_section_concepts(story_plan)
         story_plan = self.story_pipeline.attach_section_narrative_arc(story_plan)
+        # Seed a concept-aware visual_story so _recurring_objects() picks the right objects
+        # instead of always defaulting to ["phone_account", "salary_balance"].
+        sections_after_concepts = story_plan.get("sections") or [{}]
+        if sections_after_concepts:
+            concept_type = str(sections_after_concepts[0].get("concept_type") or "")
+            if not concept_type:
+                # Derive from finance_concept produced by attach_section_concepts
+                fc = sections_after_concepts[0].get("finance_concept") or {}
+                concept_type = str(fc.get("concept_type") or "").lower()
+            seed_objects = self.story_pipeline.visual_story_engine.CONCEPT_TO_OBJECTS.get(
+                concept_type, ["phone_account", "salary_balance"]
+            )
+            story_plan["visual_story"] = {
+                "protagonist": {"role": "young_salaried_professional"},
+                "recurring_objects": list(seed_objects),
+            }
         story_plan = self.story_pipeline.attach_visual_story(story_plan)
         story_plan = self.story_pipeline.attach_section_visual_plan(story_plan)
         return dict((story_plan.get("sections") or [{}])[0])
@@ -1203,10 +1228,19 @@ class MediaService:
             (
                 file_info
                 for file_info in video_files
-                if file_info.get("quality") == "sd" and file_info.get("link")
+                if file_info.get("quality") == "hd" and file_info.get("link")
             ),
             None,
         )
+        if best_file is None:
+            best_file = next(
+                (
+                    file_info
+                    for file_info in video_files
+                    if file_info.get("quality") == "sd" and file_info.get("link")
+                ),
+                None,
+            )
         if best_file is None:
             best_file = next(
                 (file_info for file_info in video_files if file_info.get("link")),

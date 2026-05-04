@@ -303,7 +303,6 @@ class VisualDirector:
         money = state_change.get("money") if isinstance(state_change.get("money"), dict) else {}
         active_objects = story_state.get("active_objects") or []
         visual_answer = str(story_state.get("visual_answer") or "").strip()
-        callback_to = str(story_state.get("callback_to") or "").strip()
         story_data = {
             "story_state": dict(story_state),
             "active_objects": list(active_objects),
@@ -317,12 +316,33 @@ class VisualDirector:
             data.update(story_data)
             text = beat.text
             if index == 0 and money.get("from"):
-                text = str(money["from"])
+                text = self._concept_label_for_amount(beat.component, str(money["from"]), active_objects)
             if index == len(beats) - 1 and visual_answer:
                 text = visual_answer
-            subtext = beat.subtext or callback_to.replace("_", " ")
+            subtext = beat.subtext
             updated.append(replace(beat, text=text, subtext=subtext, data=data))
         return updated
+
+    def _concept_label_for_amount(self, component: str, amount: str, active_objects: list[Any]) -> str:
+        if "debt_pressure" in active_objects:
+            return f"{amount} outstanding"
+        if "sip_jar" in active_objects:
+            return f"{amount} per month"
+        if "inflation_basket" in active_objects:
+            return f"{amount} today"
+        if "portfolio_grid" in active_objects:
+            return f"{amount} at risk"
+        if "salary_balance" in active_objects or "phone_account" in active_objects:
+            return f"{amount} salary in"
+        labels = {
+            "MoneyFlowDiagram": f"{amount} salary in",
+            "DebtSpiralVisualizer": f"{amount} outstanding",
+            "SIPGrowthEngine": f"{amount} per month",
+            "GrowthChart": f"{amount} today",
+            "CalculationStrip": f"{amount} in motion",
+            "StatCard": f"{amount} in focus",
+        }
+        return labels.get(component, amount)
 
     def _cinematic_intent(self, concept_type: str, concept_name: str, data: dict[str, Any]) -> CinematicIntent:
         recipe_key = {
@@ -912,7 +932,12 @@ class VisualDirector:
 
     def _normalized_concept_type(self, director_input: VisualDirectorInput) -> str:
         explicit = str(director_input.concept_type or "").strip().lower()
-        aliases = {"emi_stack": "emi_pressure", "fomo_risk": "speculation_risk", "tax_drain": "tax_saving"}
+        aliases = {
+            "emi_stack": "emi_pressure",
+            "fomo_risk": "speculation_risk",
+            "salary_depletion": "salary_drain",
+            "tax_drain": "tax_saving",
+        }
         if explicit in aliases:
             return aliases[explicit]
         if explicit in {

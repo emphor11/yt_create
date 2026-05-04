@@ -88,7 +88,7 @@ const humanizeToken = (value: string): string =>
 		.trim();
 
 const weakObjectText: Record<string, string> = {
-	'phone account': 'Money state changes',
+	'phone account': 'Money hits the account',
 	'salary balance': 'Balance starts moving',
 	'emi stack': 'Fixed payments stack',
 	'debt pressure': 'Pressure becomes visible',
@@ -107,10 +107,12 @@ const storyTitle = (beat: BeatComponentProps['beat'], intent: Intent, storyState
 	const answer = String(storyState.visual_answer ?? '').trim();
 	const overlay = String(intent.overlay_text ?? '').trim();
 	const raw = String(beat.text ?? '').trim();
+	const change = String(storyState.state_change?.money?.change_label ?? '').trim();
+	const question = String(storyState.visual_question ?? '').trim();
 	if (beat.emphasis === 'hero') {
-		return cleanTitle(answer || overlay || raw || 'Money state changes');
+		return cleanTitle(answer || overlay || change || raw || question);
 	}
-	return cleanTitle(raw || answer || overlay || storyState.state_change?.money?.change_label || 'Money state changes');
+	return cleanTitle(raw || change || overlay || answer || question);
 };
 
 const storySubtitle = (beat: BeatComponentProps['beat'], intent: Intent, storyState: StoryState, story: VisualStory): string => {
@@ -363,6 +365,8 @@ const AccountPanel: React.FC<{progress: number; accent: string; storyState: Stor
 	const from = money.from || story.goal?.target_amount || '₹50,000';
 	const to = money.to || 'DAY 20';
 	const change = money.change_label || 'salary balance changes';
+	const activeObjects = storyState.active_objects ?? [];
+	const label = activeObjects.includes('salary_balance') ? 'SALARY IN' : activeObjects.includes('debt_pressure') ? 'OUTSTANDING' : 'BALANCE';
 	return (
 		<div
 			style={{
@@ -380,7 +384,7 @@ const AccountPanel: React.FC<{progress: number; accent: string; storyState: Stor
 				fontFamily: BODY_FONT_FAMILY,
 			}}
 		>
-			<div style={{color: COLORS.text_secondary, fontSize: 24, fontWeight: 900, letterSpacing: 0}}>PHONE ACCOUNT</div>
+			<div style={{color: COLORS.text_secondary, fontSize: 24, fontWeight: 900, letterSpacing: 0}}>{label}</div>
 			<div style={{marginTop: 34, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 88, lineHeight: 0.9}}>{from}</div>
 			<div style={{marginTop: 24, height: 16, borderRadius: 99, background: COLORS.stroke, overflow: 'hidden'}}>
 				<div

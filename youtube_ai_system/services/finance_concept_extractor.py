@@ -21,6 +21,16 @@ class FinanceConcept:
 
 
 CONCEPT_TAXONOMY: dict[str, dict[str, Any]] = {
+    "salary_drain": {
+        "signals": [
+            r"\bsalary\b.*\b(gone|drain|drains|vanish|vanishes|disappear|disappears|left|broke|spent|empty)\b",
+            r"\bpaycheck\s+to\s+paycheck\b",
+            r"\bnothing\s+left\b",
+            r"\bsalary\b.*\b(month|end|day)\b.*\b(nothing|zero|empty|left)\b",
+        ],
+        "type": "risk",
+        "visual_pattern": "income_drain_waterfall",
+    },
     "emi_pressure": {
         "signals": [
             r"\bemi\b.*\b(stack|pressure|joins?|leaves?|starts?|takes?|fixed|month|monthly)\b",
@@ -99,19 +109,34 @@ CONCEPT_TAXONOMY: dict[str, dict[str, Any]] = {
         "type": "growth",
         "visual_pattern": "exponential_growth_curve",
     },
-    "salary_depletion": {
+    "fomo_risk": {
         "signals": [
-            r"salary.*gone",
-            r"paycheck.*paycheck",
-            r"month.*broke",
-            r"income.*expenses",
-            r"nothing.*left",
-            r"save.*nothing",
-            r"salary.*leak",
-            r"salary.*vanish",
+            r"\bfomo\b",
+            r"\bspeculat\w+\b",
+            r"\blife savings\b",
+            r"\bdon'?t understand\b",
+            r"\bdo not understand\b",
+            r"\bhype\b.*\b(invest|buy|trade)\b",
+            r"\bpanic\b.*\b(sell|buy|starts?)\b",
+            r"\benter\b.*\blate\b",
+            r"\beveryone talks about\b",
+            r"\bemotion\b.*\bfinance\b",
+            r"\bcryptocurrency\b|\bcrypto\b",
         ],
         "type": "risk",
-        "visual_pattern": "income_drain_waterfall",
+        "visual_pattern": "speculation_vs_investing",
+    },
+    "diversification": {
+        "signals": [
+            r"\bdiversif\w+\b",
+            r"\bone basket\b",
+            r"\bone stock\b",
+            r"\ball eggs\b",
+            r"\basset class\w*\b",
+            r"\bspread\b.*\b(risk|investment|assets?)\b",
+        ],
+        "type": "comparison",
+        "visual_pattern": "diversification_grid",
     },
     "opportunity_cost": {
         "signals": [
@@ -324,13 +349,15 @@ class FinanceConceptExtractor:
 
     def _display_name(self, concept_key: str) -> str:
         display_map = {
+            "salary_drain": "Salary Drain",
             "emi_pressure": "EMI Pressure",
             "sip_growth": "SIP Growth",
             "lifestyle_inflation": "Lifestyle Inflation",
             "debt_trap": "Debt Trap",
             "inflation_erosion": "Inflation Loss",
             "compound_growth": "Compounding Growth",
-            "salary_depletion": "Salary Depletion",
+            "fomo_risk": "FOMO Risk",
+            "diversification": "Diversification",
             "opportunity_cost": "Opportunity Cost",
             "savings_rate": "Savings Rate",
             "tax_efficiency": "Tax Saving",
@@ -358,6 +385,12 @@ class FinanceConceptExtractor:
             return comparison_name
         if "emi" in lowered or "instalment" in lowered or "installment" in lowered:
             return "EMI Pressure"
+        if any(token in lowered for token in ("fomo", "speculation", "hype", "enter late", "panic")):
+            return "FOMO Risk"
+        if any(token in lowered for token in ("diversification", "diversify", "one basket", "one stock", "all eggs")):
+            return "Diversification"
+        if "salary" in lowered and any(token in lowered for token in ("gone", "drain", "vanish", "disappear", "nothing left")):
+            return "Salary Drain"
         if "sip" in lowered or ("monthly investment" in lowered and ("compound" in lowered or "return" in lowered)):
             return "SIP Growth"
         if "credit card" in lowered or "interest" in lowered or "minimum payment" in lowered:

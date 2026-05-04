@@ -194,13 +194,15 @@ class ScriptService:
             }
         ]
         for index, scene in enumerate(payload["scenes"], start=1):
-            scene_rows.append(
-                {
-                    "scene_order": index,
-                    "kind": scene.get("kind", "body"),
-                    "narration_text": scene["narration"],
-                }
-            )
+            row = {
+                "scene_order": index,
+                "kind": scene.get("kind", "body"),
+                "narration_text": scene["narration"],
+            }
+            visual_scene = self._visual_scene_for_row(payload, scene, index)
+            if visual_scene:
+                row["visual_scene_json"] = json.dumps(visual_scene, ensure_ascii=False)
+            scene_rows.append(row)
         scene_rows.append(
             {
                 "scene_order": len(scene_rows),
@@ -209,6 +211,24 @@ class ScriptService:
             }
         )
         return scene_rows
+
+    def _visual_scene_for_row(self, payload: dict[str, Any], scene: dict[str, Any], index: int) -> dict[str, Any]:
+        source = self._visual_scene_from_raw_scene(scene, str(scene.get("narration") or ""))
+        if source:
+            return source
+        story_sections = ((payload.get("story_plan") or {}).get("sections") or [])
+        scene_text = " ".join(str(scene.get("narration") or "").split())
+        for section in story_sections:
+            section_text = " ".join(str(section.get("text") or "").split())
+            visual_scene = section.get("visual_scene")
+            if isinstance(visual_scene, dict) and section_text and section_text == scene_text:
+                return dict(visual_scene)
+        section_index = index - 1
+        if 0 <= section_index < len(story_sections):
+            visual_scene = story_sections[section_index].get("visual_scene")
+            if isinstance(visual_scene, dict):
+                return dict(visual_scene)
+        return {}
 
     def _generate_payload(self, topic: str, angle: str, prompt: str) -> tuple[dict[str, Any], str]:
         provider = current_app.config.get("LLM_PROVIDER", "auto")
@@ -221,25 +241,24 @@ class ScriptService:
             ),
         )
 
-        if provider in {"auto", "groq"} and current_app.config.get("GROQ_API_KEY"):
-            try:
-                payload = self._groq_script(topic, angle, prompt, current_app.config["GROQ_API_KEY"])
-                payload = self._normalize_payload(payload, topic, angle)
-                payload.setdefault("meta", {})["source"] = "live_groq"
-                self.logger.log("script_generation", "completed", "Script source selected: live_groq.")
-                return payload, "live Groq API"
-            except (error.URLError, ValueError, KeyError, json.JSONDecodeError) as exc:
-                self.logger.log(
-                    "script_generation",
-                    "failed",
-                    f"Groq generation failed ({exc}). Falling back to the next provider.",
-                )
+        if provider not in {"auto", "groq"}:
+            raise ValueError(f"Script generation requires Groq. Unsupported LLM_PROVIDER={provider!r}.")
+        if not current_app.config.get("GROQ_API_KEY"):
+            raise ValueError("Script generation requires Groq, but GROQ_API_KEY is not configured.")
 
-        payload = self._demo_script(topic, angle)
-        payload = self._normalize_payload(payload, topic, angle)
-        payload.setdefault("meta", {})["source"] = "demo"
-        self.logger.log("script_generation", "completed", "Script source selected: demo_fallback.")
-        return payload, "demo fallback"
+        try:
+            payload = self._groq_script(topic, angle, prompt, current_app.config["GROQ_API_KEY"])
+            payload = self._normalize_payload(payload, topic, angle)
+            payload.setdefault("meta", {})["source"] = "live_groq"
+            self.logger.log("script_generation", "completed", "Script source selected: live_groq.")
+            return payload, "live Groq API"
+        except (error.URLError, ValueError, KeyError, json.JSONDecodeError) as exc:
+            self.logger.log(
+                "script_generation",
+                "failed",
+                f"Groq generation failed ({exc}).",
+            )
+            raise
 
     def _build_prompt(
         self,
@@ -301,7 +320,7 @@ class ScriptService:
             "HOOK:\n\n"
             "* First 2–5 sentences\n"
             "* Start with strong curiosity or tension\n"
-            "* Must pass this hook contract: under 25 words, and include either a question mark/\"why\", or a ₹ amount with a negative finance word like gone/leak/drain/debt/cost, or a percentage/big number with a people group\n"
+            "* Must pass this hook contract: under 35 words, and include either a question mark/\"why\", or a ₹ amount with a negative finance word like gone/leak/drain/debt/cost, or a percentage/big number with a people group\n"
             "* Prefer hooks like: \"Why does your ₹50,000 salary feel gone by day 20?\"\n"
             "* Avoid validator-weak hooks like: \"You work hard but still struggle to save.\"\n"
             "* No greetings, no \"hey guys\", no \"welcome back\"\n"
@@ -345,9 +364,9 @@ class ScriptService:
             "OUTPUT FORMAT:\n"
             "Return one valid JSON object only.\n"
             "{\n"
-            '  "hook": {"narration": "string", "duration": 6, "tension_type": "curiosity_gap"},\n'
-            '  "scenes": [{"scene_index": 1, "kind": "body", "narration": "string", "duration": 45, "visual_intent": "what the viewer sees", "visual_beats": ["beat 1", "beat 2", "beat 3"], "numbers": ["only numbers spoken in narration"], "emotion": "anxiety", "mechanism": "lifestyle_inflation"}],\n'
-            '  "outro": {"narration": "string", "duration": 18},\n'
+            '  "hook": {"narration": "<one sharp spoken hook under 35 words>", "duration": "<estimated seconds, usually 4-8>", "tension_type": "<curiosity_gap | shocking_statistic | contrarian_claim | common_mistake_reveal | before_after>"},\n'
+            '  "scenes": [{"scene_index": "<1-based scene number>", "kind": "body", "narration": "<70-110 words, 5-8 short spoken sentences, one finance mechanism only>", "duration": "<estimated seconds, usually 40-70>", "visual_intent": "<one sentence describing what visibly changes on screen>", "visual_beats": ["<object/action setup>", "<money or mechanism changes>", "<consequence or emotional payoff>"], "numbers": ["<only numbers actually spoken in narration>"], "emotion": "<anxiety | shock | clarity | confidence | urgency>", "mechanism": "<specific mechanism from the allowed list above>"}],\n'
+            '  "outro": {"narration": "<3-6 short spoken recap sentences with one practical takeaway>", "duration": "<estimated seconds, usually 12-25>"},\n'
             '  "suggested_titles": ["title option 1", "title option 2"],\n'
             '  "suggested_description": "string",\n'
             '  "tags": ["tag1", "tag2"],\n'

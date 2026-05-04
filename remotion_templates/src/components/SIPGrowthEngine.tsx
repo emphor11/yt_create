@@ -19,7 +19,12 @@ export const SIPGrowthEngine: React.FC<BeatComponentProps> = ({beat, frameWithin
 	const investedHeight = 230;
 	const corpusHeight = Math.min(540, Math.max(260, investedHeight * Math.max(aweRatio, 1.2) * 0.78));
 	const investedFill = investedHeight * Math.min(progress * 1.35, 1);
-	const corpusFill = corpusHeight * Math.max(0, Math.min((progress - 0.28) / 0.72, 1));
+	const rawCorpusProgress = Math.max(0, Math.min((progress - 0.25) / 0.75, 1));
+	const corpusFill = corpusHeight * Math.pow(rawCorpusProgress, 0.6);
+	const displayedRatio = interpolate(progress, [0.42, 1], [1, Math.max(aweRatio, 1)], {
+		extrapolateLeft: 'clamp',
+		extrapolateRight: 'clamp',
+	});
 
 	return (
 		<AbsoluteFill
@@ -107,6 +112,20 @@ export const SIPGrowthEngine: React.FC<BeatComponentProps> = ({beat, frameWithin
 						{formatIndianRupee(finalCorpus)}
 					</div>
 				</div>
+			</div>
+			<div
+				style={{
+					position: 'absolute',
+					left: SPACING.safe,
+					bottom: SPACING.safe + 128,
+					fontFamily: DISPLAY_FONT_FAMILY,
+					fontSize: 78,
+					lineHeight: 0.9,
+					color: COLORS.positive,
+					opacity: interpolate(progress, [0.55, 0.86], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
+				}}
+			>
+				{displayedRatio.toFixed(1)}x more than invested
 			</div>
 			<div
 				style={{

@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import json
 from pathlib import Path
 
 from youtube_ai_system import create_app
@@ -48,8 +49,33 @@ class MediaServiceSceneRenderTestCase(unittest.TestCase):
         self.assertEqual(section["finance_concept"]["concept_name"], "Debt Trap")
         self.assertEqual(section["narrative_arc"]["visual_type"], "balance_decay")
         self.assertEqual(section["state"]["money_out"], "40%")
-        self.assertEqual(section["visual_plan"][0]["visual"]["pattern"], "RiskCard")
+        self.assertEqual(section["visual_plan"][0]["visual"]["pattern"], "DebtSpiralVisualizer")
         self.assertTrue(section["visual_story"])
+        self.assertTrue(section["story_state"])
+
+    def test_section_for_scene_render_preserves_stored_visual_scene_contract(self) -> None:
+        visual_scene = {
+            "narration": "Income rises. Lifestyle rises with it. Savings stay stuck.",
+            "visual_intent": "Show income rising, lifestyle absorbing it, and savings staying flat.",
+            "visual_beats": ["Income rises", "Lifestyle rises", "Savings stay stuck"],
+            "numbers": [],
+            "emotion": "anxiety",
+            "mechanism": "lifestyle_inflation",
+        }
+        section = self.service._section_for_scene_render(
+            {
+                "kind": "body",
+                "narration_text": visual_scene["narration"],
+                "visual_scene_json": json.dumps(visual_scene),
+                "visual_plan_json": '[{"visual":{"pattern":"ConceptCard"},"beats":{"beats":[{"component":"ConceptCard","text":"Old stale plan"}]}}]',
+            },
+            10.0,
+            Path(self.temp_dir.name) / "scene.wav",
+        )
+
+        self.assertEqual(section["visual_scene"]["mechanism"], "lifestyle_inflation")
+        self.assertEqual(section["concept_type"], "lifestyle_inflation")
+        self.assertNotEqual(section["visual_plan"][0]["beats"]["beats"][0]["text"], "Old stale plan")
         self.assertTrue(section["story_state"])
 
     def test_derived_visual_plan_uses_full_story_pipeline_fallback(self) -> None:
@@ -60,7 +86,7 @@ class MediaServiceSceneRenderTestCase(unittest.TestCase):
 
         self.assertEqual(section["dominant_entity"], "salary")
         self.assertEqual(section["idea_type"], "decay")
-        self.assertEqual(section["finance_concept"]["concept_name"], "Salary Depletion")
+        self.assertEqual(section["finance_concept"]["concept_name"], "Salary Drain")
         self.assertTrue(section["narrative_arc"])
         self.assertTrue(section["visual_plan"])
         self.assertTrue(section["visual_story"])

@@ -96,6 +96,7 @@ class V2PipelineTestCase(unittest.TestCase):
             for row in get_db().execute("PRAGMA table_info(scenes)").fetchall()
         }
         self.assertIn("visual_plan_json", columns)
+        self.assertIn("visual_scene_json", columns)
 
     def test_ten_minute_prompt_contains_style_and_beat_rules(self) -> None:
         self.app.config["CHANNEL_STYLE"] = "ten_minute_finance"

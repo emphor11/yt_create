@@ -31,8 +31,11 @@ export const DebtSpiralVisualizer: React.FC<BeatComponentProps> = ({beat, frameW
 	const isTrap = Boolean(data.is_trap);
 	const progress = Math.min(getBeatProgress(frameWithinBeat, Math.floor(durationFrames * 0.75)), 1);
 	const reveal = spring({frame: Math.min(frameWithinBeat, 18), fps, config: SPRINGS.impact, durationInFrames: 18});
+	const pulse = spring({frame: frameWithinBeat % 30, fps, config: {stiffness: 220, damping: 11, mass: 0.6}, durationInFrames: 18});
+	const trapScale = isTrap ? 1 + pulse * 0.05 : 1;
 	const accent = isTrap ? COLORS.danger : COLORS.warning;
 	const path = spiralPoints(Math.max(balances.length, 12), progress);
+	const monthlyGap = Math.max(monthlyInterest - minimumPayment, 0);
 
 	return (
 		<AbsoluteFill
@@ -52,7 +55,27 @@ export const DebtSpiralVisualizer: React.FC<BeatComponentProps> = ({beat, frameW
 				<circle cx="760" cy="540" r="328" fill="rgba(230,57,70,0.035)" stroke="rgba(255,255,255,0.08)" />
 				<polyline points={path} fill="none" stroke={accent} strokeWidth="26" strokeLinecap="round" strokeLinejoin="round" />
 				<polyline points={path} fill="none" stroke="rgba(255,255,255,0.36)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
-				<circle cx="760" cy="540" r={interpolate(reveal, [0, 1], [24, 48])} fill={COLORS.bg_surface} stroke={accent} strokeWidth="5" />
+				<circle
+					cx="760"
+					cy="540"
+					r={interpolate(reveal, [0, 1], [24, 48]) * trapScale}
+					fill={COLORS.bg_surface}
+					stroke={accent}
+					strokeWidth={isTrap ? 8 : 5}
+				/>
+				{isTrap ? (
+					<text
+						x="760"
+						y="565"
+						textAnchor="middle"
+						fontSize="72"
+						fill={COLORS.danger}
+						fontFamily={DISPLAY_FONT_FAMILY}
+						opacity={interpolate(progress, [0.58, 0.88], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'})}
+					>
+						STILL GROWING
+					</text>
+				) : null}
 			</svg>
 			<div
 				style={{
@@ -69,6 +92,29 @@ export const DebtSpiralVisualizer: React.FC<BeatComponentProps> = ({beat, frameW
 					{principal?.value ?? formatIndianRupee(Number(principal?.amount ?? 0))}
 				</div>
 			</div>
+			{isTrap && monthlyGap > 0 ? (
+				<div
+					style={{
+						position: 'absolute',
+						right: SPACING.safe,
+						bottom: 222,
+						width: 470,
+						padding: '18px 24px',
+						borderRadius: 8,
+						background: 'rgba(230,57,70,0.16)',
+						border: `2px solid ${COLORS.danger}`,
+						opacity: interpolate(progress, [0.52, 0.78], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
+						boxShadow: '0 0 46px rgba(230,57,70,0.18)',
+					}}
+				>
+					<div style={{fontSize: TYPE_SCALE.micro.size + 4, color: COLORS.text_secondary, fontWeight: 800}}>
+						Gap every month
+					</div>
+					<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 52, lineHeight: 1, color: COLORS.danger}}>
+						{formatIndianRupee(monthlyGap)} still unpaid
+					</div>
+				</div>
+			) : null}
 			<div
 				style={{
 					position: 'absolute',

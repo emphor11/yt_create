@@ -7,6 +7,17 @@ from typing import Any
 class VisualBeatExpander:
     """Adds enough visual beats for longer narration without changing the scene concept."""
 
+    OBJECT_TO_VIEWER_TEXT = {
+        "phone_account": "Money hits the account",
+        "salary_balance": "Salary lands",
+        "emi_stack": "Fixed payments stack up",
+        "debt_pressure": "Debt starts compounding",
+        "inflation_basket": "Buying power starts shrinking",
+        "sip_jar": "Compounding starts working",
+        "portfolio_grid": "Risk gets distributed",
+        "emergency_buffer": "Safety net absorbs the shock",
+    }
+
     def expand_section(self, section: dict[str, Any]) -> dict[str, Any]:
         visual_plan = section.get("visual_plan") or []
         if not visual_plan:
@@ -72,16 +83,22 @@ class VisualBeatExpander:
         active_objects = [str(obj) for obj in (story_state.get("active_objects") or []) if str(obj)]
         visual_answer = str(story_state.get("visual_answer") or "").strip()
         visual_question = str(story_state.get("visual_question") or "").strip()
-        callback_to = str(story_state.get("callback_to") or "").replace("_", " ").strip()
         texts = [
             self._object_setup_text(active_objects, money),
             str(money.get("change_label") or "").strip(),
-            visual_question,
             self._mechanism_text(pattern, mechanism),
+            visual_question,
             visual_answer,
-            callback_to,
         ]
+        texts = [self._sanitize_viewer_text(text) for text in texts if text]
         texts = [text for text in texts if text]
+        if len(texts) < target:
+            for fallback in self._fallback_texts(fallback_beats, target - len(texts)):
+                sanitized = self._sanitize_viewer_text(fallback)
+                if sanitized and sanitized not in texts:
+                    texts.append(sanitized)
+                if len(texts) >= target:
+                    break
         if len(texts) < 3:
             return []
         beats: list[dict[str, Any]] = []
@@ -117,25 +134,22 @@ class VisualBeatExpander:
         return self._component_for("", index, is_first, is_last, pattern, mechanism)
 
     def _object_setup_text(self, active_objects: list[str], money: dict[str, Any]) -> str:
-        if "phone_account" in active_objects and money.get("from"):
-            return f"Phone account: {money['from']}"
-        if "salary_balance" in active_objects and money.get("from"):
-            return f"Salary balance: {money['from']}"
-        if "debt_pressure" in active_objects:
-            return "Debt pressure appears"
-        if "inflation_basket" in active_objects:
-            return "Basket starts shrinking"
-        if "sip_jar" in active_objects:
-            return "SIP jar starts growing"
-        if "portfolio_grid" in active_objects:
-            return "Portfolio grid appears"
-        return active_objects[0].replace("_", " ").title() if active_objects else ""
+        primary = active_objects[0] if active_objects else ""
+        label = self.OBJECT_TO_VIEWER_TEXT.get(primary, "")
+        amount = str(money.get("from") or "").strip()
+        if amount and label:
+            return f"{amount} - {label}"
+        if amount:
+            return amount
+        if label:
+            return label
+        return primary.replace("_", " ").title() if primary else ""
 
     def _mechanism_text(self, pattern: str, mechanism: str) -> str:
         if pattern == "MoneyFlowDiagram":
             return "Money path becomes visible"
         if pattern == "DebtSpiralVisualizer":
-            return "Interest pressure grows"
+            return "Interest beats payment"
         if pattern == "SIPGrowthEngine":
             return "Compounding engine starts"
         if pattern == "GrowthChart":
@@ -143,6 +157,25 @@ class VisualBeatExpander:
         if pattern == "SplitComparison":
             return "Two paths separate"
         return mechanism.replace("_", " ").title()
+
+    def _sanitize_viewer_text(self, text: str) -> str:
+        clean = " ".join(str(text or "").replace("_", " ").split()).strip()
+        if not clean:
+            return ""
+        lowered = clean.lower()
+        if lowered == "state changes":
+            return ""
+        internal_map = {
+            "phone account": "Money hits the account",
+            "salary balance": "Salary lands",
+            "emi stack": "Fixed payments stack up",
+            "debt pressure": "Debt starts compounding",
+            "inflation basket": "Buying power starts shrinking",
+            "sip jar": "Compounding starts working",
+            "portfolio grid": "Risk gets distributed",
+            "emergency buffer": "Safety net absorbs the shock",
+        }
+        return internal_map.get(lowered, clean)
 
     def _target_beat_count(self, text: str, sentences: list[str]) -> int:
         words = len(text.split())
@@ -182,9 +215,11 @@ class VisualBeatExpander:
             is_first = index == 0
             is_last = index == min(target, len(selected)) - 1
             component = self._component_for(sentence, index, is_first, is_last, pattern, mechanism)
+            raw_text = self._beat_text(sentence, mechanism, is_last)
+            sanitized_text = self._sanitize_viewer_text(raw_text) or raw_text
             beat = {
                 "component": component,
-                "text": self._beat_text(sentence, mechanism, is_last),
+                "text": sanitized_text,
                 "source_text": sentence,
                 "sentence_index": min(index, max(len(sentences) - 1, 0)),
             }
@@ -216,9 +251,16 @@ class VisualBeatExpander:
 
         result = list(expanded)
         for component in required_components:
-            if any(beat.get("component") == component for beat in result):
-                continue
             original_beat = next((beat for beat in original if beat.get("component") == component), None)
+            existing_index = next((index for index, beat in enumerate(result) if beat.get("component") == component), None)
+            if existing_index is not None:
+                if original_beat and self._has_component_data(original_beat, component) and not self._has_component_data(result[existing_index], component):
+                    merged = dict(result[existing_index])
+                    merged["data"] = original_beat.get("data")
+                    if original_beat.get("props") is not None:
+                        merged["props"] = original_beat.get("props")
+                    result[existing_index] = merged
+                continue
             if not original_beat:
                 continue
             preserved = dict(original_beat)
@@ -226,6 +268,21 @@ class VisualBeatExpander:
             insert_at = min(2, len(result))
             result.insert(insert_at, preserved)
         return self._dedupe_adjacent(result[:9])
+
+    def _has_component_data(self, beat: dict[str, Any], component: str = "") -> bool:
+        data = beat.get("data")
+        props = beat.get("props")
+        expected_keys = {
+            "CalculationStrip": ("steps",),
+            "DebtSpiralVisualizer": ("balances", "principal"),
+            "MoneyFlowDiagram": ("flows", "source", "remainder"),
+            "SIPGrowthEngine": ("monthly_sip", "final_corpus"),
+        }.get(component, ("steps", "balances", "flows", "monthly_sip"))
+        if isinstance(data, dict) and any(key in data for key in expected_keys):
+            return True
+        if isinstance(props, dict) and any(key in props for key in expected_keys):
+            return True
+        return False
 
     def _component_for(self, sentence: str, index: int, is_first: bool, is_last: bool, pattern: str, mechanism: str) -> str:
         if is_first:

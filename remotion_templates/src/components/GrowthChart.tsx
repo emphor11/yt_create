@@ -4,6 +4,26 @@ import {BODY_FONT_FAMILY, DISPLAY_FONT_FAMILY, FONT_FACES} from '../fonts';
 import {BeatComponentProps} from './types';
 import {COLORS, sceneText, sceneValues} from './visualUtils';
 
+const curvePoint = (t: number, curveDown: boolean, width: number, height: number) => {
+	const x = t * width;
+	const y = curveDown
+		? height * 0.18 + height * 0.66 * Math.exp(-2.9 * t)
+		: height * 0.84 - height * 0.66 * Math.pow(t, 2.15);
+	return {x, y};
+};
+
+const curvePath = (progress: number, curveDown: boolean, width: number, height: number) => {
+	const points = 64;
+	const visible = Math.max(2, Math.floor(points * progress));
+	const coords: string[] = [];
+	for (let index = 0; index <= visible; index++) {
+		const t = Math.min(index / points, progress);
+		const point = curvePoint(t, curveDown, width, height);
+		coords.push(`${point.x.toFixed(1)},${point.y.toFixed(1)}`);
+	}
+	return `M ${coords.join(' L ')}`;
+};
+
 export const GrowthChart: React.FC<BeatComponentProps> = ({beat, scene, frameWithinBeat}) => {
 	const {fps} = useVideoConfig();
 	const values = sceneValues(scene);
@@ -18,8 +38,9 @@ export const GrowthChart: React.FC<BeatComponentProps> = ({beat, scene, frameWit
 		extrapolateRight: 'clamp',
 	});
 	const accent = curveDown ? COLORS.red : COLORS.teal;
-	const lineWidth = 760 * progress;
-	const endY = curveDown ? 420 : 210;
+	const chartWidth = 760;
+	const chartHeight = 460;
+	const endPoint = curvePoint(progress, curveDown, chartWidth, chartHeight);
 	const ghostBars = curveDown ? [0.92, 0.72, 0.52] : [0.32, 0.58, 0.92];
 
 	return (
@@ -51,25 +72,23 @@ export const GrowthChart: React.FC<BeatComponentProps> = ({beat, scene, frameWit
 							}}
 						/>
 					))}
+					<svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} style={{position: 'absolute', inset: 0, width: '100%', height: '100%', overflow: 'visible'}}>
+						<path
+							d={curvePath(progress, curveDown, chartWidth, chartHeight)}
+							fill="none"
+							stroke={accent}
+							strokeWidth={12}
+							strokeLinecap="round"
+							strokeLinejoin="round"
+							style={{filter: `drop-shadow(0 0 20px ${accent})`}}
+						/>
+					</svg>
+					{/* The path above is deliberately curved: compounding should accelerate, inflation should decay. */}
 					<div
 						style={{
 							position: 'absolute',
-							left: 0,
-							top: curveDown ? 190 : 390,
-							width: lineWidth,
-							height: 12,
-							background: accent,
-							transform: `rotate(${curveDown ? 13 : -13}deg)`,
-							transformOrigin: 'left center',
-							boxShadow: `0 0 40px ${accent}`,
-							borderRadius: 99,
-						}}
-					/>
-					<div
-						style={{
-							position: 'absolute',
-							left: Math.max(0, lineWidth - 26),
-							top: endY,
+							left: endPoint.x - 17,
+							top: endPoint.y - 17,
 							width: 34,
 							height: 34,
 							borderRadius: 999,

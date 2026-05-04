@@ -81,6 +81,42 @@ class FinanceConceptExtractorTestCase(unittest.TestCase):
         self.assertEqual(result.concept_name, "Emergency Fund")
         self.assertEqual(result.concept_type, "definition")
 
+    def test_maps_salary_drain_not_legacy_salary_depletion(self) -> None:
+        result = self.extractor.extract(
+            {
+                "combined_text": "My salary vanishes before the month ends and nothing is left.",
+                "dominant_entity": "salary",
+                "idea_type": "risk",
+            }
+        )
+
+        self.assertEqual(result.concept_name, "Salary Drain")
+        self.assertEqual(result.concept_type, "risk")
+
+    def test_maps_fomo_risk(self) -> None:
+        result = self.extractor.extract(
+            {
+                "combined_text": "FOMO investing feels like action. Everyone talks about a stock, you enter late, then panic starts.",
+                "dominant_entity": "investment",
+                "idea_type": "risk",
+            }
+        )
+
+        self.assertEqual(result.concept_name, "FOMO Risk")
+        self.assertEqual(result.concept_type, "risk")
+
+    def test_maps_diversification_without_risk_return_phrase(self) -> None:
+        result = self.extractor.extract(
+            {
+                "combined_text": "Do not put all eggs in one basket. Diversification spreads money across assets.",
+                "dominant_entity": "investment",
+                "idea_type": "comparison",
+            }
+        )
+
+        self.assertEqual(result.concept_name, "Diversification")
+        self.assertEqual(result.concept_type, "comparison")
+
     def test_numeric_pattern_extracts_structured_fallback(self) -> None:
         result = self.extractor.extract(
             {

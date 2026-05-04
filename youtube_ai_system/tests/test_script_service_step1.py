@@ -230,9 +230,22 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.assertNotIn("this scene is about", narration.lower())
         self.assertNotIn("real story needs", narration.lower())
 
-    def test_scene_rows_store_no_visual_payload(self) -> None:
+    def test_scene_rows_store_visual_scene_payload_for_body_scenes(self) -> None:
         payload = self.service._normalize_payload(
-            self.service._demo_script("Saving money", "bad defaults"),
+            {
+                "hook": {"narration": "Why does your ₹50,000 salary feel gone by day 20?", "duration": 6},
+                "scenes": [
+                    {
+                        "narration": "Income rises. Lifestyle rises with it. Savings stay stuck.",
+                        "visual_intent": "Show income rising, lifestyle absorbing it, and savings staying flat.",
+                        "visual_beats": ["Income rises", "Lifestyle rises", "Savings stay stuck"],
+                        "numbers": [],
+                        "emotion": "anxiety",
+                        "mechanism": "lifestyle_inflation",
+                    }
+                ],
+                "outro": {"narration": "Track the leak before the month tracks you."},
+            },
             "Saving money",
             "bad defaults",
         )
@@ -242,6 +255,9 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.assertTrue(all("visual_instruction" not in row for row in rows))
         self.assertTrue(all("visual_type" not in row for row in rows))
         self.assertTrue(all("visual_plan_json" not in row for row in rows))
+        self.assertNotIn("visual_scene_json", rows[0])
+        self.assertIn("visual_scene_json", rows[1])
+        self.assertIn("lifestyle_inflation", rows[1]["visual_scene_json"])
 
     def test_group_sentences_into_sections_pairs_simple_sequence(self) -> None:
         grouped = self.pipeline.group_sentences_into_sections(

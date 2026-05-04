@@ -150,6 +150,25 @@ class VisualStoryEngineTestCase(unittest.TestCase):
         self.assertNotIn("debt_pressure", state["active_objects"])
         self.assertEqual(state["visual_question"], "What changes when returns start earning returns?")
 
+    def test_fomo_scene_uses_portfolio_not_sip_or_debt(self) -> None:
+        result = VisualStoryEngine().attach_visual_story(
+            {
+                "sections": [
+                    make_section(
+                        "fomo_risk",
+                        "FOMO investing feels like action. You enter late, the price falls, and panic starts.",
+                    )
+                ]
+            }
+        )
+        state = result["sections"][0]["story_state"]
+
+        self.assertEqual(state["active_objects"], ["portfolio_grid"])
+        self.assertNotIn("sip_jar", state["active_objects"])
+        self.assertNotIn("debt_pressure", state["active_objects"])
+        self.assertEqual(state["visual_question"], "What happens when emotion becomes the strategy?")
+        self.assertEqual(state["visual_answer"], "emotion stops pretending to be a strategy")
+
     def test_inflation_story_state_uses_directed_end_value_not_percentage(self) -> None:
         section = make_section(
             "inflation_erosion",
