@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import re
 from typing import Any
@@ -45,6 +46,13 @@ PATTERN_PRIORITY = {
     "StepFlow": 2,
     "ConceptCard": 1,
 }
+REQUIRED_BEAT_DATA = {
+    "MoneyFlowDiagram": ("source", "flows", "remainder"),
+    "DebtSpiralVisualizer": ("principal", "monthly_interest"),
+    "SIPGrowthEngine": ("monthly_sip", "final_corpus"),
+    "CalculationStrip": ("steps",),
+    "SplitComparison": ("left", "right"),
+}
 
 
 class SceneBuilder:
@@ -75,6 +83,9 @@ class SceneBuilder:
             beats = self._section_beats(section)
             timed_beats = self._timeline_from_beats(beats, audio_duration, section)
             self._extend_last_beat_to_scene_duration(timed_beats, scene_duration)
+            data_warnings = self._validate_beat_data(timed_beats)
+            for warning in data_warnings:
+                current_app.logger.warning("SceneBuilder data warning for scene %s: %s", index, warning)
             pattern, data, concept = self._scene_visual_contract(section)
             map_pattern_to_component(pattern)
 
@@ -92,6 +103,7 @@ class SceneBuilder:
                     "story_state": section.get("story_state") or {},
                     "theme": section.get("theme") or {},
                     "beats": timed_beats,
+                    "warnings": data_warnings,
                     "duration": round(scene_duration, 2),
                     "total_duration": round(scene_duration, 2),
                     "audio_duration": round(audio_duration, 2),
@@ -153,7 +165,8 @@ class SceneBuilder:
                 "text": beat["text"],
                 "start_time": round(start_time, 2),
                 "end_time": round(end_time, 2),
-                "emphasis": self._beat_emphasis(index, len(beats)),
+                "emphasis": str(beat.get("emphasis") or self._beat_emphasis(index, len(beats))),
+                "beat_role": str(beat.get("beat_role") or self._beat_role(beat, index, len(beats))),
             }
             for key in ("subtext", "steps", "props", "data", "source_text", "sentence_index"):
                 if key in beat:
@@ -180,7 +193,8 @@ class SceneBuilder:
                 "text": beat["text"],
                 "start_time": round(start_time, 2),
                 "end_time": round(end_time, 2),
-                "emphasis": self._beat_emphasis(index, len(beats)),
+                "emphasis": str(beat.get("emphasis") or self._beat_emphasis(index, len(beats))),
+                "beat_role": str(beat.get("beat_role") or self._beat_role(beat, index, len(beats))),
             }
             for key in ("subtext", "steps", "props", "data", "source_text", "sentence_index"):
                 if key in beat:
@@ -205,7 +219,9 @@ class SceneBuilder:
             for item in visual_plan:
                 visual = item.get("visual") or {}
                 pattern = str(visual.get("pattern") or "").strip()
-                data = dict(visual.get("data") or {})
+                data = self._normalize_data_dict(visual.get("data"))
+                if not data:
+                    data = self._data_from_matching_beat(item, pattern)
                 concept = str((item.get("concept") or {}).get("concept") or "").strip()
                 score = PATTERN_PRIORITY.get(pattern, 0)
                 if pattern and data and concept and score > best_score:
@@ -259,7 +275,7 @@ class SceneBuilder:
         if component == "CalculationStrip":
             flat_steps: list[Any] = []
             for beat in beats:
-                data = beat.get("data") if isinstance(beat.get("data"), dict) else {}
+                data = self._normalize_data_dict(beat.get("data"))
                 steps = data.get("steps") or beat.get("steps") or []
                 if isinstance(steps, list):
                     flat_steps.extend(steps)
@@ -297,39 +313,40 @@ class SceneBuilder:
             values = self._append_unique_values(values, [start_value, rate, end_value])
             if values:
                 enriched["values"] = values[:3]
-            if start_value:
+            if start_value and not enriched.get("start"):
                 enriched["start"] = start_value
-            if rate:
+            if rate and not enriched.get("rate"):
                 enriched["rate"] = rate
-            if end_value:
+            if end_value and not enriched.get("end"):
                 enriched["end"] = end_value
         elif pattern == "GrowthChart":
-            if start_value:
+            if start_value and not enriched.get("start"):
                 enriched["start"] = start_value
-            if end_value:
+            if end_value and not enriched.get("end"):
                 enriched["end"] = end_value
-            if rate:
+            if rate and not enriched.get("rate"):
                 enriched["rate"] = rate
         elif pattern in {"RiskCard", "ConceptCard"}:
-            if rate:
+            if rate and not enriched.get("subtitle"):
                 enriched["subtitle"] = f"{rate} impact"
-            if end_value:
+            if end_value and not enriched.get("value"):
                 enriched["value"] = end_value
-            if state:
+            if state and not enriched.get("state"):
                 enriched["state"] = dict(state)
         elif pattern == "SplitComparison":
             if start_value and not enriched.get("left"):
                 enriched["left"] = {"label": start_value}
             if end_value and not enriched.get("right"):
                 enriched["right"] = {"label": end_value}
-            if rate:
+            if rate and not enriched.get("rate"):
                 enriched["rate"] = rate
         elif pattern == "StepFlow":
             steps = [str(step).strip() for step in enriched.get("steps") or [] if str(step).strip()]
-            enriched["steps"] = self._append_unique_values(steps, [start_value, rate, end_value]) or steps
+            if not enriched.get("steps"):
+                enriched["steps"] = self._append_unique_values(steps, [start_value, rate, end_value]) or steps
 
         visual_type = str(section.get("visual_type") or narrative_arc.get("visual_type") or "").strip()
-        if visual_type:
+        if visual_type and not enriched.get("visual_type"):
             enriched["visual_type"] = visual_type
         return enriched
 
@@ -348,11 +365,52 @@ class SceneBuilder:
                 "component": str(beat.get("component") or "").strip() or "ConceptCard",
                 "text": text,
             }
-            for extra_key in ("subtext", "steps", "props", "data", "source_text", "sentence_index"):
+            for extra_key in ("subtext", "steps", "props", "source_text", "sentence_index", "beat_role", "emphasis"):
                 if extra_key in beat:
                     cleaned_beat[extra_key] = beat[extra_key]
+            data = self._normalize_data_dict(beat.get("data"))
+            if data:
+                cleaned_beat["data"] = data
             cleaned.append(cleaned_beat)
         return cleaned
+
+    def _normalize_data_dict(self, value: Any) -> dict[str, Any]:
+        if isinstance(value, dict):
+            return dict(value)
+        if isinstance(value, str) and value.strip():
+            try:
+                parsed = json.loads(value)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return {}
+            return dict(parsed) if isinstance(parsed, dict) else {}
+        return {}
+
+    def _data_from_matching_beat(self, item: dict[str, Any], pattern: str) -> dict[str, Any]:
+        if not pattern:
+            return {}
+        beats = (item.get("beats") or {}).get("beats") or []
+        for beat in beats:
+            if str(beat.get("component") or "").strip() == pattern:
+                data = self._normalize_data_dict(beat.get("data"))
+                if data:
+                    return data
+        return {}
+
+    def _validate_beat_data(self, beats: list[dict[str, Any]]) -> list[str]:
+        warnings: list[str] = []
+        for index, beat in enumerate(beats):
+            component = str(beat.get("component") or "").strip()
+            required_fields = REQUIRED_BEAT_DATA.get(component)
+            if not required_fields:
+                continue
+            data = self._normalize_data_dict(beat.get("data"))
+            if not data:
+                warnings.append(f"beat {index}: {component} has no data dict")
+                continue
+            for field in required_fields:
+                if field not in data:
+                    warnings.append(f"beat {index}: {component} missing required data field '{field}'")
+        return warnings
 
     def _sentence_aligned_spans(
         self,
@@ -467,6 +525,16 @@ class SceneBuilder:
             return "normal"
         return "subtle"
 
+    def _beat_role(self, beat: dict[str, Any], index: int, total: int) -> str:
+        component = str(beat.get("component") or "").strip()
+        if index == 0:
+            return "introduce"
+        if total <= 1 or index == total - 1:
+            return "result"
+        if component in {"MoneyFlowDiagram", "DebtSpiralVisualizer", "SIPGrowthEngine", "CalculationStrip", "GrowthChart", "FlowDiagram", "FlowBar", "SplitComparison"}:
+            return "process"
+        return "change"
+
     def _append_unique_values(self, current: list[str], candidates: list[str]) -> list[str]:
         values = list(current)
         seen = {value.lower() for value in values}
@@ -515,7 +583,7 @@ class SceneBuilder:
             merged[-1]["component"] = last["component"] or merged[-1]["component"]
         return merged
 
-    def _expand_minimum_beats(self, beats: list[dict[str, str]], section_text: str) -> list[dict[str, str]]:
+    def _expand_minimum_beats(self, beats: list[dict[str, Any]], section_text: str) -> list[dict[str, Any]]:
         if len(beats) >= 2:
             return beats
         first, second = self._split_section_ideas(section_text)
@@ -527,8 +595,11 @@ class SceneBuilder:
             words = second.split()
             if len(words) > 1:
                 second = " ".join(words[-2:])
+        primary_beat = dict(beats[0]) if beats else {"component": base_component}
+        primary_beat["component"] = base_component
+        primary_beat["text"] = primary_text
         return [
-            {"component": base_component, "text": primary_text},
+            primary_beat,
             {"component": "ConceptCard", "text": self._clean_beat_text(second, section_text)},
         ]
 

@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -482,6 +483,129 @@ class SceneBuilderTestCase(unittest.TestCase):
         flow_beat = next(beat for beat in result["scenes"][0]["beats"] if beat["component"] == "MoneyFlowDiagram")
         self.assertEqual(flow_beat["data"]["source"]["amount"], 50000)
         self.assertEqual(flow_beat["data"]["flows"][0]["label"], "EMI")
+        self.assertEqual(flow_beat["beat_role"], "process")
+
+    def test_scene_visual_contract_uses_matching_beat_data_when_visual_data_missing(self) -> None:
+        flow_data = {
+            "source": {"label": "Salary", "value": "₹50,000", "amount": 50000},
+            "flows": [{"label": "EMI", "value": "₹18,000", "amount": 18000, "color": "red", "order": 1}],
+            "remainder": {"value": "₹3,000", "amount": 3000, "is_dangerous": True},
+        }
+        result = build_scenes(
+            [
+                {
+                    "text": "My ₹50,000 salary disappears every month. EMI takes ₹18,000 and only ₹3,000 is left.",
+                    "audio_file": str((Path(self.temp_dir.name) / "storage" / "audio" / "dummy.wav").resolve()),
+                    "audio_duration": 6.0,
+                    "visual_plan": [
+                        {
+                            "concept": {"concept": "Salary Drain", "type": "salary_drain"},
+                            "visual": {"pattern": "MoneyFlowDiagram", "data": {}},
+                            "beats": {
+                                "beats": [
+                                    {"component": "StatCard", "text": "₹50,000"},
+                                    {"component": "MoneyFlowDiagram", "text": "Where salary goes", "data": flow_data},
+                                ]
+                            },
+                        }
+                    ],
+                }
+            ]
+        )
+
+        scene = result["scenes"][0]
+        self.assertEqual(scene["pattern"], "MoneyFlowDiagram")
+        self.assertEqual(scene["data"]["source"]["amount"], 50000)
+        self.assertEqual(scene["warnings"], [])
+
+    def test_scene_builder_normalizes_json_string_beat_data(self) -> None:
+        flow_data = {
+            "source": {"label": "Salary", "value": "₹50,000", "amount": 50000},
+            "flows": [{"label": "EMI", "value": "₹18,000", "amount": 18000, "color": "red", "order": 1}],
+            "remainder": {"value": "₹3,000", "amount": 3000, "is_dangerous": True},
+        }
+        result = build_scenes(
+            [
+                {
+                    "text": "My ₹50,000 salary disappears every month. EMI takes ₹18,000 and only ₹3,000 is left.",
+                    "audio_file": str((Path(self.temp_dir.name) / "storage" / "audio" / "dummy.wav").resolve()),
+                    "audio_duration": 6.0,
+                    "visual_plan": [
+                        {
+                            "concept": {"concept": "Salary Drain", "type": "salary_drain"},
+                            "visual": {"pattern": "MoneyFlowDiagram"},
+                            "beats": {
+                                "beats": [
+                                    {"component": "MoneyFlowDiagram", "text": "Where salary goes", "data": json.dumps(flow_data)},
+                                ]
+                            },
+                        }
+                    ],
+                }
+            ]
+        )
+
+        scene = result["scenes"][0]
+        self.assertEqual(scene["data"]["remainder"]["amount"], 3000)
+        self.assertEqual(scene["beats"][0]["data"]["source"]["value"], "₹50,000")
+        self.assertIsInstance(scene["beats"][0]["data"], dict)
+        self.assertEqual(scene["beats"][0]["beat_role"], "introduce")
+
+    def test_enrich_data_does_not_overwrite_rich_visual_director_fields(self) -> None:
+        result = build_scenes(
+            [
+                {
+                    "text": "Credit card debt at 40% interest creates pressure.",
+                    "audio_file": str((Path(self.temp_dir.name) / "storage" / "audio" / "dummy.wav").resolve()),
+                    "audio_duration": 6.0,
+                    "finance_concept": {"end_value": "₹1,40,000", "percentage": 40.0},
+                    "narrative_arc": {"rate": "40%", "visual_type": "balance_decay"},
+                    "state": {"money_out": "40%", "balance_change": "Debt grows"},
+                    "visual_plan": [
+                        {
+                            "concept": {"concept": "Debt Trap", "type": "risk"},
+                            "visual": {
+                                "pattern": "RiskCard",
+                                "data": {
+                                    "title": "DEBT TRAP",
+                                    "subtitle": "Minimum payment fails",
+                                    "value": "Still growing",
+                                    "state": {"risk": "visible"},
+                                    "visual_type": "custom_risk",
+                                },
+                            },
+                            "beats": {"beats": [{"component": "RiskCard", "text": "Debt Trap"}]},
+                        }
+                    ],
+                }
+            ]
+        )
+
+        data = result["scenes"][0]["data"]
+        self.assertEqual(data["subtitle"], "Minimum payment fails")
+        self.assertEqual(data["value"], "Still growing")
+        self.assertEqual(data["state"], {"risk": "visible"})
+        self.assertEqual(data["visual_type"], "custom_risk")
+
+    def test_scene_builder_warns_when_directed_component_data_is_incomplete(self) -> None:
+        result = build_scenes(
+            [
+                {
+                    "text": "My ₹50,000 salary disappears every month.",
+                    "audio_file": str((Path(self.temp_dir.name) / "storage" / "audio" / "dummy.wav").resolve()),
+                    "audio_duration": 4.0,
+                    "visual_plan": [
+                        {
+                            "concept": {"concept": "Salary Drain", "type": "salary_drain"},
+                            "visual": {"pattern": "MoneyFlowDiagram", "data": {"source": {"value": "₹50,000"}}},
+                            "beats": {"beats": [{"component": "MoneyFlowDiagram", "text": "Where salary goes"}]},
+                        }
+                    ],
+                }
+            ]
+        )
+
+        self.assertTrue(any("MoneyFlowDiagram has no data dict" in warning for warning in result["scenes"][0]["warnings"]))
 
     def test_calculation_strip_contract_preserves_steps_when_inferred_from_beats(self) -> None:
         result = build_scenes(

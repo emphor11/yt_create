@@ -36,14 +36,14 @@ const activeObjects = (storyState: StoryState): string[] =>
 const objectLabel = (object: string): string =>
 	(
 		{
-			phone_account: 'Phone account',
-			salary_balance: 'Salary balance',
-			emi_stack: 'EMI stack',
-			debt_pressure: 'Debt pressure',
-			inflation_basket: 'Inflation basket',
-			sip_jar: 'SIP jar',
-			portfolio_grid: 'Portfolio grid',
-			emergency_buffer: 'Emergency buffer',
+			phone_account: 'Account',
+			salary_balance: 'Salary',
+			emi_stack: 'Fixed payments',
+			debt_pressure: 'Debt',
+			inflation_basket: 'Buying power',
+			sip_jar: 'SIP growth',
+			portfolio_grid: 'Portfolio',
+			emergency_buffer: 'Safety buffer',
 		} as Record<string, string>
 	)[object] ?? object.replace(/_/g, ' ');
 
@@ -162,12 +162,12 @@ const styles = {
 	panel: {
 		position: 'absolute' as const,
 		right: SPACING.safe,
-		top: 96,
+		bottom: 72,
 		width: 430,
-		minHeight: 250,
+		minHeight: 210,
 		borderRadius: 26,
 		border: '2px solid rgba(255,255,255,0.18)',
-		background: 'linear-gradient(150deg, rgba(18,18,31,0.86), rgba(10,10,20,0.72))',
+		background: 'linear-gradient(150deg, rgba(18,18,31,0.78), rgba(10,10,20,0.64))',
 		backdropFilter: 'blur(8px)',
 		padding: 28,
 		color: COLORS.text_primary,
@@ -190,9 +190,9 @@ const styles = {
 		fontWeight: 900,
 	},
 	answer: {
-		marginTop: 24,
+		marginTop: 20,
 		fontFamily: DISPLAY_FONT_FAMILY,
-		fontSize: 42,
+		fontSize: 36,
 		lineHeight: 0.92,
 		maxWidth: 370,
 	},

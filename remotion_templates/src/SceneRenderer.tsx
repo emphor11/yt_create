@@ -70,20 +70,21 @@ const OVERLAY_FRIENDLY_COMPONENTS = new Set([
 ]);
 
 const shouldShowStoryOverlay = (beat: Beat, beatIndex: number, totalBeats: number): boolean => {
-	const role = String(beat.props?.beat_role ?? beat.data?.beat_role ?? '').toLowerCase();
+	const overlayRequested = Boolean(beat.props?.show_story_overlay ?? beat.data?.show_story_overlay);
+	if (!overlayRequested) {
+		return false;
+	}
+	const role = String(beat.beat_role ?? beat.props?.beat_role ?? beat.data?.beat_role ?? '').toLowerCase();
 	if (role === 'process' || role === 'change') {
 		return false;
 	}
 	if (role === 'introduce' || role === 'result' || role === 'punch') {
-		return true;
+		return OVERLAY_FRIENDLY_COMPONENTS.has(beat.component);
 	}
 	if (DATA_HEAVY_COMPONENTS.has(beat.component)) {
 		return false;
 	}
-	if (beatIndex === 0 || beatIndex === totalBeats - 1) {
-		return true;
-	}
-	return OVERLAY_FRIENDLY_COMPONENTS.has(beat.component);
+	return (beatIndex === 0 || beatIndex === totalBeats - 1) && OVERLAY_FRIENDLY_COMPONENTS.has(beat.component);
 };
 
 export const SceneRenderer: React.FC<Props> = ({scene}) => {
@@ -103,16 +104,10 @@ export const SceneRenderer: React.FC<Props> = ({scene}) => {
 	const {startFrame, endFrame} = beatFrameRange(activeBeat, fps);
 	const frameWithinBeat = frame - startFrame;
 	const durationFrames = endFrame - startFrame;
-	const hasCinematicIntent =
-		scene.cinematic_intent && Object.keys(scene.cinematic_intent).length > 0;
 	const hasStoryState =
 		scene.story_state && Object.keys(scene.story_state).length > 0;
-	const cinematicTextBeat =
-		(hasCinematicIntent || hasStoryState) &&
-		['StatCard', 'ConceptCard', 'ConceptCardScene', 'HighlightText'].includes(activeBeat.component);
-	const Component = cinematicTextBeat
-		? CinematicScene
-		: COMPONENT_MAP[activeBeat.component as keyof typeof COMPONENT_MAP] ?? StatCard;
+	const cinematicTextBeat = activeBeat.component === 'CinematicScene';
+	const Component = COMPONENT_MAP[activeBeat.component as keyof typeof COMPONENT_MAP] ?? ConceptCard;
 	const shouldOverlayStoryWorld =
 		hasStoryState &&
 		!cinematicTextBeat &&
