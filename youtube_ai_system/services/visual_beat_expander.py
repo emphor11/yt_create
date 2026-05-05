@@ -12,6 +12,7 @@ class VisualBeatExpander:
         "DebtSpiralVisualizer",
         "SIPGrowthEngine",
         "InflationErosionVisualizer",
+        "LifestyleCreepVisualizer",
     }
 
     MECHANISM_PHASES = {
@@ -19,6 +20,7 @@ class VisualBeatExpander:
         "DebtSpiralVisualizer": ("principal", "spiral", "spiral", "spiral", "consequence", "consequence", "consequence"),
         "SIPGrowthEngine": ("contribution", "growth", "growth", "growth", "corpus", "corpus", "corpus"),
         "InflationErosionVisualizer": ("today", "erosion", "erosion", "erosion", "future", "future", "future"),
+        "LifestyleCreepVisualizer": ("income_base", "raise_arrives", "expenses_follow", "expenses_follow", "gap_revealed", "gap_revealed", "gap_revealed"),
     }
 
     OBJECT_TO_VIEWER_TEXT = {
@@ -286,6 +288,8 @@ class VisualBeatExpander:
             required_components.append("MoneyFlowDiagram")
         if pattern == "InflationErosionVisualizer" or mechanism in {"inflation_erosion", "real_return", "fd_vs_inflation"}:
             required_components.append("InflationErosionVisualizer")
+        if pattern == "LifestyleCreepVisualizer" or mechanism == "lifestyle_inflation":
+            required_components.append("LifestyleCreepVisualizer")
 
         result = list(expanded)
         for component in required_components:
@@ -316,6 +320,7 @@ class VisualBeatExpander:
             "MoneyFlowDiagram": ("flows", "source", "remainder"),
             "SIPGrowthEngine": ("monthly_sip", "final_corpus"),
             "InflationErosionVisualizer": ("start", "end"),
+            "LifestyleCreepVisualizer": ("start_income", "end_income"),
         }.get(component, ("steps", "balances", "flows", "monthly_sip"))
         if isinstance(data, dict) and any(key in data for key in expected_keys):
             return True

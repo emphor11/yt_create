@@ -111,12 +111,13 @@ class VisualDirectorTestCase(unittest.TestCase):
         self.assertIsNone(result.fallback_reason)
         self.assertIn("Interest starts", [node["label"] for node in result.data["nodes"]])
 
-    def test_director_does_not_invent_money_flow_numbers_for_generic_lifestyle(self) -> None:
+    def test_director_routes_generic_lifestyle_to_creep_visualizer(self) -> None:
         result = self.director.direct(build_input("You earn well. You spend well. Saving is a myth. Lifestyle inflation is real.", "lifestyle_inflation"))
 
-        self.assertEqual(result.pattern, "FlowDiagram")
-        self.assertNotIn("₹", str(result.data))
-        self.assertEqual(result.data["nodes"][-1]["label"], "Savings stay stuck")
+        self.assertEqual(result.pattern, "LifestyleCreepVisualizer")
+        self.assertEqual([beat.component for beat in result.beats], ["LifestyleCreepVisualizer"] * 4)
+        self.assertEqual([beat.beat_phase for beat in result.beats], ["income_base", "raise_arrives", "expenses_follow", "gap_revealed"])
+        self.assertIn("start_income", result.data)
 
     def test_generic_inflation_visual_stays_qualitative_without_numbers(self) -> None:
         result = self.director.direct(build_input("Inflation is a slow poison. It eats into your savings. Without you even noticing.", "inflation_erosion"))
@@ -179,7 +180,7 @@ class VisualDirectorTestCase(unittest.TestCase):
 
     def test_major_finance_concepts_do_not_fall_back_to_concept_card(self) -> None:
         cases = [
-            ("Lifestyle inflation is a silent killer. As salary increases, expenses rise on luxuries, not necessities.", "lifestyle_inflation", "FlowDiagram"),
+            ("Lifestyle inflation is a silent killer. As salary increases, expenses rise on luxuries, not necessities.", "lifestyle_inflation", "LifestyleCreepVisualizer"),
             ("Inflation quietly erodes your purchasing power over 10 years.", "inflation_erosion", "InflationErosionVisualizer"),
             ("Expense leakage from subscriptions and food apps eats your salary.", "expense_leakage", "FlowDiagram"),
             ("Emergency fund protects you when a medical bill hits.", "emergency_fund", "FlowDiagram"),
@@ -205,7 +206,7 @@ class VisualDirectorTestCase(unittest.TestCase):
         )
 
         self.assertEqual(result.concept_type, "lifestyle_inflation")
-        self.assertEqual(result.pattern, "FlowDiagram")
+        self.assertEqual(result.pattern, "LifestyleCreepVisualizer")
 
     def test_plain_compounding_does_not_route_to_debt_or_sip_without_sip_data(self) -> None:
         result = self.director.direct(

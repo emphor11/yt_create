@@ -9,6 +9,7 @@ SCENE_COMPONENT_BY_PATTERN = {
     "StepFlow": "StepFlowScene",
     "GrowthChart": "GrowthChartScene",
     "InflationErosionVisualizer": "InflationErosionVisualizer",
+    "LifestyleCreepVisualizer": "LifestyleCreepVisualizer",
     "RiskCard": "RiskCardScene",
     "NumericComparison": "CalculationStrip",
     "CalculationStrip": "CalculationStrip",

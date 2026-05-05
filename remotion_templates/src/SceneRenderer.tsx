@@ -8,6 +8,7 @@ import {DebtSpiralVisualizer} from './components/DebtSpiralVisualizer';
 import {FlowDiagram} from './components/FlowDiagram';
 import {GrowthChart} from './components/GrowthChart';
 import {InflationErosionVisualizer} from './components/InflationErosionVisualizer';
+import {LifestyleCreepVisualizer} from './components/LifestyleCreepVisualizer';
 import {MoneyFlowDiagram} from './components/MoneyFlowDiagram';
 import {RiskCard} from './components/RiskCard';
 import {SIPGrowthEngine} from './components/SIPGrowthEngine';
@@ -33,6 +34,7 @@ const COMPONENT_MAP = {
 	GrowthChart,
 	GrowthChartScene: GrowthChart,
 	InflationErosionVisualizer,
+	LifestyleCreepVisualizer,
 	RiskCard,
 	RiskCardScene: RiskCard,
 	BalanceBar,
@@ -59,6 +61,7 @@ const DATA_HEAVY_COMPONENTS = new Set([
 	'GrowthChart',
 	'GrowthChartScene',
 	'InflationErosionVisualizer',
+	'LifestyleCreepVisualizer',
 	'FlowDiagram',
 	'FlowBar',
 	'SplitComparison',

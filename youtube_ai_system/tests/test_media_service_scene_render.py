@@ -100,7 +100,7 @@ class MediaServiceSceneRenderTestCase(unittest.TestCase):
         )
 
         self.assertEqual(section["concept_type"], "lifestyle_inflation")
-        self.assertEqual(section["visual_plan"][0]["visual"]["pattern"], "FlowDiagram")
+        self.assertEqual(section["visual_plan"][0]["visual"]["pattern"], "LifestyleCreepVisualizer")
         self.assertNotEqual(section["visual_plan"][0]["visual"]["pattern"], "InflationErosionVisualizer")
 
     def test_render_time_intelligence_routes_plain_compounding_to_growth_not_debt(self) -> None:

@@ -70,7 +70,9 @@ class SceneBuilderTestCase(unittest.TestCase):
         self.assertEqual(PATTERN_PRIORITY["GrowthChart"], 6)
         self.assertEqual(PATTERN_PRIORITY["SplitComparison"], 6)
         self.assertEqual(PATTERN_PRIORITY["InflationErosionVisualizer"], 7)
+        self.assertEqual(PATTERN_PRIORITY["LifestyleCreepVisualizer"], 7)
         self.assertEqual(COMPONENT_DURATION_WEIGHTS["FlowDiagram"], 1.6)
+        self.assertEqual(COMPONENT_DURATION_WEIGHTS["LifestyleCreepVisualizer"], 2.4)
         self.assertEqual(COMPONENT_DURATION_WEIGHTS["BalanceBar"], 1.5)
 
     def test_build_scenes_falls_back_to_single_concept_card_when_beats_missing(self) -> None:

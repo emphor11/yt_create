@@ -254,6 +254,8 @@ class VisualDirector:
         concept_type = self._normalized_concept_type(director_input)
         if concept_type == "salary_drain":
             return self._with_cinematic_intent(self._salary_drain_plan(director_input, concept_type), director_input)
+        if concept_type == "lifestyle_inflation":
+            return self._with_cinematic_intent(self._lifestyle_creep_plan(director_input, concept_type), director_input)
         if concept_type in {"lifestyle_inflation", "expense_leakage", "budgeting", "savings_rate", "emergency_fund", "rent_burden", "tax_drain"}:
             return self._with_cinematic_intent(self._money_mechanism_plan(director_input, concept_type), director_input)
         if concept_type == "debt_trap":
@@ -487,6 +489,55 @@ class VisualDirector:
             "StatCard",
             "Salary Drain",
             "insufficient data for MoneyFlowDiagram",
+        )
+
+    def _lifestyle_creep_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
+        data = self._lifestyle_creep_data(director_input)
+        direction = SceneDirection("hopeful", "anxiety", director_input.section_position, "warning")
+        return DirectedPlan(
+            concept_type=concept_type,
+            concept_name="Lifestyle Inflation",
+            pattern="LifestyleCreepVisualizer",
+            data=data,
+            direction=direction,
+            theme=THEME,
+            beats=self._contextualize_beats(
+                [
+                    DirectedBeat(
+                        "LifestyleCreepVisualizer",
+                        f"{data['start_income']['value']} income",
+                        "normal",
+                        "before the raise",
+                        data={**data, "active_phase": "income_base"},
+                        beat_phase="income_base",
+                    ),
+                    DirectedBeat(
+                        "LifestyleCreepVisualizer",
+                        f"{data['end_income']['value']} income",
+                        "subtle",
+                        "raise arrives",
+                        data={**data, "active_phase": "raise_arrives"},
+                        beat_phase="raise_arrives",
+                    ),
+                    DirectedBeat(
+                        "LifestyleCreepVisualizer",
+                        "Lifestyle catches up",
+                        "subtle",
+                        "spending rises too",
+                        data={**data, "active_phase": "expenses_follow"},
+                        beat_phase="expenses_follow",
+                    ),
+                    DirectedBeat(
+                        "LifestyleCreepVisualizer",
+                        "Savings gap stays flat",
+                        "hero",
+                        "raise absorbed",
+                        data={**data, "active_phase": "gap_revealed"},
+                        beat_phase="gap_revealed",
+                    ),
+                ],
+                director_input.narration_text,
+            ),
         )
 
     def _debt_trap_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
@@ -1007,6 +1058,52 @@ class VisualDirector:
                 "amount": round(remainder_amount, 2),
                 "is_dangerous": ratio < 0.10,
             },
+        }
+
+    def _lifestyle_creep_data(self, director_input: VisualDirectorInput) -> dict[str, Any]:
+        text = director_input.narration_text
+        amounts = self._money_mentions(text)
+        income_mentions = [
+            float(item["amount"])
+            for item in amounts
+            if str(item.get("label") or "").lower() in {"salary", "income"}
+        ]
+        all_amounts = [float(item["amount"]) for item in amounts]
+        start_income = self._parse_rupee(director_input.start_value)
+        if start_income is None:
+            start_income = income_mentions[0] if income_mentions else (all_amounts[0] if all_amounts else 50000.0)
+
+        end_income = self._parse_rupee(director_input.end_value)
+        if end_income is None:
+            candidates = [amount for amount in [*income_mentions, *all_amounts] if amount > start_income * 1.08]
+            end_income = candidates[0] if candidates else start_income * 1.6
+        if end_income <= start_income:
+            end_income = start_income * 1.45
+
+        lowered = text.lower()
+        savings_flat = any(token in lowered for token in ("savings stay flat", "saving stays flat", "savings are zero", "savings stay stuck", "zero savings"))
+        old_savings = max(start_income * (0.0 if "zero" in lowered and "savings" in lowered else 0.18), 0.0)
+        if "savings stay flat" in lowered or "savings stay stuck" in lowered:
+            new_savings = old_savings
+        elif savings_flat:
+            new_savings = max(old_savings * 0.65, 0.0)
+        else:
+            new_savings = max(end_income * 0.12, old_savings * 0.8)
+
+        old_spending = max(start_income - old_savings, 0.0)
+        new_spending = max(end_income - new_savings, old_spending)
+        raise_amount = max(end_income - start_income, 0.0)
+
+        return {
+            "title": "Income rises. Savings don't.",
+            "start_income": {"value": self._format_rupee(start_income), "amount": round(start_income, 2)},
+            "end_income": {"value": self._format_rupee(end_income), "amount": round(end_income, 2)},
+            "old_spending": {"value": self._format_rupee(old_spending), "amount": round(old_spending, 2)},
+            "new_spending": {"value": self._format_rupee(new_spending), "amount": round(new_spending, 2)},
+            "old_savings": {"value": self._format_rupee(old_savings), "amount": round(old_savings, 2)},
+            "new_savings": {"value": self._format_rupee(new_savings), "amount": round(new_savings, 2)},
+            "raise": {"value": self._format_rupee(raise_amount), "amount": round(raise_amount, 2)},
+            "accent": "warning",
         }
 
     def _debt_spiral_data(self, text: str, director_input: VisualDirectorInput) -> dict[str, Any] | None:
