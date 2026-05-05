@@ -115,6 +115,36 @@ class MediaServiceSceneRenderTestCase(unittest.TestCase):
         self.assertNotIn("debt trap", combined)
         self.assertNotIn("balance resists payoff", combined)
 
+    def test_render_time_intelligence_ignores_stale_visual_scene_when_narration_is_debt(self) -> None:
+        stale_visual_scene = {
+            "mechanism": "lifestyle_inflation",
+            "visual_beats": ["Income rises", "Lifestyle rises", "Savings stay stuck"],
+        }
+        section = self.service._section_intelligence_from_narration(
+            "You are stuck in the debt trap. Credit card bills pile up. Interest compounds. "
+            "You pay ₹5,000 in interest alone. Your debt grows. You feel trapped.",
+            "body",
+            visual_scene=stale_visual_scene,
+        )
+
+        self.assertEqual(section["concept_type"], "debt_trap")
+        self.assertEqual(section["visual_plan"][0]["visual"]["pattern"], "DebtSpiralVisualizer")
+
+    def test_render_time_intelligence_ignores_stale_visual_scene_when_narration_is_sip(self) -> None:
+        stale_visual_scene = {
+            "mechanism": "debt_trap",
+            "visual_beats": ["Debt appears", "Interest grows", "Trap closes"],
+        }
+        section = self.service._section_intelligence_from_narration(
+            "A ₹5,000 SIP looks boring in the first month. At 12% annual return over 20 years, "
+            "₹12 lakh can become nearly ₹50 lakh. Compounding needs time.",
+            "body",
+            visual_scene=stale_visual_scene,
+        )
+
+        self.assertEqual(section["concept_type"], "sip_growth")
+        self.assertEqual(section["visual_plan"][0]["visual"]["pattern"], "SIPGrowthEngine")
+
     def test_render_time_intelligence_routes_outro_to_recap_system(self) -> None:
         section = self.service._section_intelligence_from_narration(
             "Recap: salary drain, lifestyle inflation, and debt trap destroy wealth. Break free. Invest wisely. Diversify. Avoid FOMO. Build an emergency fund. Start now. Your future self will thank you.",

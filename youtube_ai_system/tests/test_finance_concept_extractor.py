@@ -59,6 +59,37 @@ class FinanceConceptExtractorTestCase(unittest.TestCase):
         self.assertEqual(result.concept_name, "SIP Growth")
         self.assertEqual(result.concept_type, "growth")
 
+    def test_sip_with_interest_language_does_not_become_debt_trap(self) -> None:
+        result = self.extractor.extract(
+            {
+                "combined_text": "A ₹5,000 SIP at 12% annual interest rate compounds for 20 years and becomes a large corpus.",
+                "dominant_entity": "investment",
+                "idea_type": "growth",
+            }
+        )
+
+        self.assertEqual(result.concept_name, "SIP Growth")
+        self.assertNotEqual(result.concept_name, "Debt Trap")
+
+    def test_debt_trap_requires_debt_context_for_compounding_interest(self) -> None:
+        debt_result = self.extractor.extract(
+            {
+                "combined_text": "Credit card bills pile up. Interest compounds. You pay ₹5,000 in interest alone. Your debt grows.",
+                "dominant_entity": "debt",
+                "idea_type": "risk",
+            }
+        )
+        growth_result = self.extractor.extract(
+            {
+                "combined_text": "Compounding is powerful. Interest earns interest and wealth grows over time.",
+                "dominant_entity": "investment",
+                "idea_type": "growth",
+            }
+        )
+
+        self.assertEqual(debt_result.concept_name, "Debt Trap")
+        self.assertNotEqual(growth_result.concept_name, "Debt Trap")
+
     def test_maps_expense_leakage(self) -> None:
         result = self.extractor.extract(
             {

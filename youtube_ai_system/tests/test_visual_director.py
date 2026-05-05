@@ -208,6 +208,39 @@ class VisualDirectorTestCase(unittest.TestCase):
         self.assertEqual(result.concept_type, "lifestyle_inflation")
         self.assertEqual(result.pattern, "LifestyleCreepVisualizer")
 
+    def test_project_81_failed_narrations_route_to_correct_mechanisms(self) -> None:
+        cases = [
+            (
+                "You are stuck in the debt trap. Credit card bills pile up. Interest compounds. "
+                "You pay ₹5,000 in interest alone. Your debt grows. You feel trapped.",
+                "definition",
+                "debt_trap",
+                "DebtSpiralVisualizer",
+            ),
+            (
+                "A ₹5,000 SIP looks boring in the first month. It still looks small in the first year. "
+                "At 12% annual return over 20 years, the story changes. You invest about ₹12 lakh from your pocket. "
+                "Compounding can turn it into nearly ₹50 lakh.",
+                "definition",
+                "sip_growth",
+                "SIPGrowthEngine",
+            ),
+            (
+                "Your salary rises from ₹50,000 to ₹80,000. At first, it feels like progress. "
+                "Then rent upgrades, food apps, weekend plans, and shopping expand with it. "
+                "Lifestyle absorbs the raise before you notice it.",
+                "risk",
+                "lifestyle_inflation",
+                "LifestyleCreepVisualizer",
+            ),
+        ]
+
+        for narration, input_type, expected_type, expected_pattern in cases:
+            with self.subTest(expected_type=expected_type):
+                result = self.director.direct(build_input(narration, input_type))
+                self.assertEqual(result.concept_type, expected_type)
+                self.assertEqual(result.pattern, expected_pattern)
+
     def test_plain_compounding_does_not_route_to_debt_or_sip_without_sip_data(self) -> None:
         result = self.director.direct(
             build_input(

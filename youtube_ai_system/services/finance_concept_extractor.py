@@ -60,7 +60,12 @@ CONCEPT_TAXONOMY: dict[str, dict[str, Any]] = {
             r"spend more",
             r"expenses increase",
             r"raise.*spend",
+            r"raise.*upgrade.*lifestyle",
             r"income.*upgrade",
+            r"income\s+rises?.*savings\s+stay",
+            r"lifestyle\s+rises?",
+            r"lifestyle\s+absorbs?",
+            r"spending\s+rises?.*savings",
             r"earn more.*buy",
             r"salary rises.*expenses rise faster",
             r"fancy phone",
@@ -72,15 +77,17 @@ CONCEPT_TAXONOMY: dict[str, dict[str, Any]] = {
     },
     "debt_trap": {
         "signals": [
-            r"debt trap",
-            r"credit card.*interest",
-            r"emi.*burden",
-            r"loan.*spiral",
-            r"borrow.*repay",
-            r"interest.*compound",
-            r"minimum payment",
-            r"minimum dues",
-            r"outstanding balance",
+            r"\bdebt\s+trap\b",
+            r"\bcredit\s+card\b.*\binterest\b",
+            r"\bcredit\s+card\b.*\bbills?\b",
+            r"\bemi\b.*\bburden\b",
+            r"\bloan\b.*\bspiral\b",
+            r"\bborrow\b.*\brepay\b",
+            r"\bdebt\b.*\bgrows?\b",
+            r"\binterest\b.*\bcompound\b.*\bdebt\b",
+            r"\bminimum\s+payment\b",
+            r"\bminimum\s+dues?\b",
+            r"\boutstanding\s+balance\b",
         ],
         "type": "risk",
         "visual_pattern": "debt_growth_spiral",
@@ -100,8 +107,8 @@ CONCEPT_TAXONOMY: dict[str, dict[str, Any]] = {
     },
     "compound_growth": {
         "signals": [
-            r"compound",
-            r"compounding",
+            r"\bcompound\b",
+            r"\bcompounding\b",
             r"grows over time",
             r"long.?term.*investment",
             r"wealth.*build",
@@ -222,6 +229,25 @@ CONCEPT_TAXONOMY: dict[str, dict[str, Any]] = {
 }
 
 
+CONCEPT_MATCH_PRIORITY = {
+    "sip_growth": 100,
+    "debt_trap": 95,
+    "emi_pressure": 90,
+    "salary_drain": 120,
+    "lifestyle_inflation": 80,
+    "inflation_erosion": 75,
+    "fomo_risk": 72,
+    "diversification": 70,
+    "compound_growth": 62,
+    "emergency_fund": 60,
+    "opportunity_cost": 55,
+    "savings_rate": 50,
+    "tax_efficiency": 50,
+    "risk_return": 48,
+    "expense_leakage": 35,
+}
+
+
 class FinanceConceptExtractor:
     def extract(self, idea_group: Any) -> FinanceConcept:
         text = self._group_text(idea_group)
@@ -255,30 +281,43 @@ class FinanceConceptExtractor:
 
     def _rule_based_extract(self, text: str, idea_group: Any) -> FinanceConcept:
         text_lower = text.lower()
+        matches: dict[str, int] = {}
 
         for concept_key, config in CONCEPT_TAXONOMY.items():
             for signal in config["signals"]:
                 if re.search(signal, text_lower):
-                    numbers = self._extract_numbers(text)
-                    concept_name = self._display_name(concept_key)
-                    concept_type = self._normalize_type(config["type"])
-                    if concept_key == "risk_return":
-                        comparison_name = self._extract_comparison_name(text)
-                        if comparison_name:
-                            concept_name = comparison_name
-                    return FinanceConcept(
-                        concept_name=concept_name,
-                        concept_type=concept_type,
-                        primary_entity=self._group_entity(idea_group),
-                        action=self._extract_action(text),
-                        start_value=numbers[0] if numbers else None,
-                        end_value=numbers[-1] if len(numbers) > 1 else None,
-                        percentage=self._extract_percentage(text),
-                        time_period=self._extract_time_period(text),
-                        agent=self._extract_agent(text),
-                        victim=self._extract_victim(text, self._group_entity(idea_group)),
-                        confidence=0.9,
-                    )
+                    matches[concept_key] = matches.get(concept_key, 0) + 1
+
+        if matches:
+            concept_key = max(
+                matches,
+                key=lambda key: (
+                    matches[key] * CONCEPT_MATCH_PRIORITY.get(key, 0),
+                    CONCEPT_MATCH_PRIORITY.get(key, 0),
+                    matches[key],
+                ),
+            )
+            config = CONCEPT_TAXONOMY[concept_key]
+            numbers = self._extract_numbers(text)
+            concept_name = self._display_name(concept_key)
+            concept_type = self._normalize_type(config["type"])
+            if concept_key == "risk_return":
+                comparison_name = self._extract_comparison_name(text)
+                if comparison_name:
+                    concept_name = comparison_name
+            return FinanceConcept(
+                concept_name=concept_name,
+                concept_type=concept_type,
+                primary_entity=self._group_entity(idea_group),
+                action=self._extract_action(text),
+                start_value=numbers[0] if numbers else None,
+                end_value=numbers[-1] if len(numbers) > 1 else None,
+                percentage=self._extract_percentage(text),
+                time_period=self._extract_time_period(text),
+                agent=self._extract_agent(text),
+                victim=self._extract_victim(text, self._group_entity(idea_group)),
+                confidence=0.9,
+            )
 
         return FinanceConcept(
             concept_name="Unknown",

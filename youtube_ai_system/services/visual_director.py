@@ -256,7 +256,7 @@ class VisualDirector:
             return self._with_cinematic_intent(self._salary_drain_plan(director_input, concept_type), director_input)
         if concept_type == "lifestyle_inflation":
             return self._with_cinematic_intent(self._lifestyle_creep_plan(director_input, concept_type), director_input)
-        if concept_type in {"lifestyle_inflation", "expense_leakage", "budgeting", "savings_rate", "emergency_fund", "rent_burden", "tax_drain"}:
+        if concept_type in {"expense_leakage", "budgeting", "savings_rate", "emergency_fund", "rent_burden", "tax_drain"}:
             return self._with_cinematic_intent(self._money_mechanism_plan(director_input, concept_type), director_input)
         if concept_type == "debt_trap":
             return self._with_cinematic_intent(self._debt_trap_plan(director_input, concept_type), director_input)
@@ -1110,6 +1110,17 @@ class VisualDirector:
         amounts = self._money_mentions(text)
         principal = self._principal_amount(amounts, text, director_input)
         rate = director_input.percentage if director_input.percentage is not None else self._first_percentage(text)
+        lowered = text.lower()
+        debt_context = any(token in lowered for token in ("debt trap", "credit card", "minimum payment", "minimum dues", "outstanding balance", "debt grows", "debt grow", "debt"))
+        if debt_context and amounts:
+            if rate is None:
+                rate = 40.0
+            if principal is None:
+                interest_amount = self._interest_amount(amounts, text)
+                if interest_amount is not None and rate:
+                    principal = interest_amount / (float(rate) / 100.0 / 12.0)
+                else:
+                    principal = max(float(item["amount"]) for item in amounts)
         if principal is None or rate is None:
             return None
         minimum = self._minimum_payment(amounts, text, principal)
@@ -1144,6 +1155,13 @@ class VisualDirector:
             "is_trap": bool(payment and payment < monthly_interest),
         }
 
+    def _interest_amount(self, amounts: list[dict[str, Any]], text: str) -> float | None:
+        for item in amounts:
+            window = self._window(text, int(item.get("start") or 0), int(item.get("end") or 0), radius=32).lower()
+            if "interest" in window:
+                return float(item["amount"])
+        return None
+
     def _sip_growth_data(self, text: str, director_input: VisualDirectorInput) -> dict[str, Any] | None:
         amounts = self._money_mentions(text)
         monthly = self._sip_amount(amounts, text, director_input)
@@ -1173,6 +1191,9 @@ class VisualDirector:
 
     def _normalized_concept_type(self, director_input: VisualDirectorInput) -> str:
         explicit = str(director_input.concept_type or "").strip().lower()
+        narration_text = str(director_input.narration_text or "").lower()
+        if narration_text.strip().startswith("recap") or ("break free" in narration_text and "future self" in narration_text):
+            return "recap_system"
         aliases = {
             "emi_stack": "emi_pressure",
             "fomo_risk": "speculation_risk",
@@ -1206,28 +1227,37 @@ class VisualDirector:
             "net_worth_growth",
         }:
             return explicit
-        text = f"{director_input.concept_type} {director_input.concept_name} {director_input.narration_text}".lower()
-        if text.strip().startswith("recap") or ("break free" in text and "future self" in text):
-            return "recap_system"
-        if "lifestyle inflation" in text or ("salary" in text and "expenses" in text and any(token in text for token in ("rise", "increase", "doubled", "luxury", "necessities"))):
-            return "lifestyle_inflation"
-        if "salary" in text and any(token in text for token in ("drain", "depletion", "disappear", "vanish", "left")):
-            return "salary_drain"
-        if "emi" in text and any(token in text for token in ("pressure", "burden", "loan", "interest")):
-            return "emi_pressure"
+        text = f"{director_input.narration_text} {explicit}".lower()
+        if "sip" in text or "systematic investment plan" in text:
+            return "sip_growth"
         if any(token in text for token in ("debt trap", "credit card", "minimum payment", "minimum dues")):
             return "debt_trap"
+        if "debt" in text and any(token in text for token in ("interest", "compound", "grows", "trapped", "trap")):
+            return "debt_trap"
+        if "emi" in text and any(token in text for token in ("pressure", "burden", "loan", "interest", "stack", "takes", "fixed", "month")):
+            return "emi_pressure"
+        if "salary" in text and any(token in text for token in ("drain", "depletion", "disappear", "vanish", "left", "gone", "empty", "broke")):
+            return "salary_drain"
+        if "lifestyle inflation" in text:
+            return "lifestyle_inflation"
+        if (
+            ("raise" in text or "hike" in text or "income rises" in text or "salary rises" in text)
+            and any(token in text for token in ("lifestyle", "upgrade", "luxury", "luxuries", "expenses catch", "spending rises", "savings stay", "savings flat"))
+        ):
+            return "lifestyle_inflation"
         # loan/debt checks before generic keyword grabs
         if "loan" in text and ("cost" in text or "interest" in text):
             return "loan_cost"
-        if "sip" in text:
-            return "sip_growth"
-        if "compound" in text or "compounding" in text:
-            return "compounding"
         if "inflation" in text and any(token in text for token in ("fd", "fixed deposit", "real return", "return")):
             return "fd_vs_inflation"
         if "inflation" in text or "purchasing power" in text or "buying power" in text:
             return "inflation_erosion"
+        if "fomo" in text or "speculation" in text or "life savings" in text or "don't understand" in text or "do not understand" in text:
+            return "speculation_risk"
+        if "diversification" in text or "diversify" in text or "asset classes" in text or "one basket" in text or "one stock" in text or "all eggs" in text:
+            return "diversification"
+        if "compound" in text or "compounding" in text:
+            return "compounding"
         if "real return" in text or ("tax" in text and "return" in text):
             return "real_return"
         if "expense leakage" in text or "subscription" in text or "leak" in text:
@@ -1241,10 +1271,6 @@ class VisualDirector:
             return "opportunity_cost"
         if "risk" in text and "return" in text:
             return "risk_return"
-        if "fomo" in text or "speculation" in text or "life savings" in text or "don't understand" in text or "do not understand" in text:
-            return "speculation_risk"
-        if "diversification" in text or "diversify" in text or "asset classes" in text:
-            return "diversification"
         # tax_saving: only when an explicit planning/saving action is present
         if "80c" in text or ("tax" in text and any(token in text for token in ("save", "saving", "invest", "plan", "deduct", "exemption"))):
             return "tax_saving"
@@ -1741,6 +1767,32 @@ class VisualDirector:
         return " ".join(words[:4]) or fallback
 
 
+def _canonical_concept_key_from_name(name: str) -> str:
+    normalized = " ".join(str(name or "").strip().lower().split())
+    return {
+        "salary drain": "salary_drain",
+        "salary depletion": "salary_drain",
+        "lifestyle inflation": "lifestyle_inflation",
+        "emi pressure": "emi_pressure",
+        "debt trap": "debt_trap",
+        "inflation loss": "inflation_erosion",
+        "inflation erosion": "inflation_erosion",
+        "sip growth": "sip_growth",
+        "compounding growth": "compounding",
+        "fomo risk": "speculation_risk",
+        "investing vs speculation": "speculation_risk",
+        "diversification": "diversification",
+        "opportunity cost": "opportunity_cost",
+        "savings rate": "savings_rate",
+        "tax saving": "tax_saving",
+        "risk return": "risk_return",
+        "risk vs return": "risk_return",
+        "expense leakage": "expense_leakage",
+        "emergency fund": "emergency_fund",
+        "net worth growth": "net_worth_growth",
+    }.get(normalized, "")
+
+
 def visual_director_input_from_section(
     section: dict[str, Any],
     section_position: str,
@@ -1750,8 +1802,21 @@ def visual_director_input_from_section(
     concept = (section.get("concepts") or [{}])[0] if section.get("concepts") else {}
     visual_scene = dict(section.get("visual_scene") or {})
     mechanism = str(section.get("mechanism") or visual_scene.get("mechanism") or "").strip()
+    finance_concept_key = _canonical_concept_key_from_name(str(finance_concept.get("concept_name") or ""))
+    finance_confidence = float(finance_concept.get("confidence") or 0.0)
+    if finance_concept_key and finance_confidence >= 0.6:
+        concept_type = finance_concept_key
+    else:
+        concept_type = str(
+            mechanism
+            or section.get("concept_type")
+            or finance_concept.get("concept_type")
+            or concept.get("type")
+            or section.get("idea_type")
+            or "definition"
+        )
     return VisualDirectorInput(
-        concept_type=str(mechanism or section.get("concept_type") or finance_concept.get("concept_type") or concept.get("type") or section.get("idea_type") or "definition"),
+        concept_type=concept_type,
         concept_name=str(finance_concept.get("concept_name") or concept.get("concept") or "Money Change"),
         primary_entity=str(finance_concept.get("primary_entity") or section.get("dominant_entity") or "money"),
         action=str(finance_concept.get("action") or ""),
