@@ -79,6 +79,31 @@ class AssemblyServiceTestCase(unittest.TestCase):
         self.assertIn("subtitles=", " ".join(commands[1]))
         self.assertIn("loudnorm=I=-16:TP=-1.5:LRA=11", " ".join(commands[2]))
 
+    def test_caption_burn_failure_still_exports_final_video(self) -> None:
+        input_path = Path(self.temp_dir.name) / "timeline.mp4"
+        captions_path = Path(self.temp_dir.name) / "captions.srt"
+        output_path = Path(self.temp_dir.name) / "final.mp4"
+        captions_path.write_text("1\n00:00:00,000 --> 00:00:01,000\nhello\n", encoding="utf-8")
+        self.app.config.update({"MUSIC_ENABLED": False, "CAPTIONS_ENABLED": True})
+
+        def fake_run(command, *args, **kwargs):
+            if "subtitles=" in " ".join(command):
+                raise RuntimeError("subtitle filter unavailable")
+
+        with patch.object(self.service, "_run_ffmpeg", side_effect=fake_run) as run:
+            result = self.service._apply_music_and_captions(
+                "ffmpeg",
+                input_path,
+                captions_path,
+                output_path,
+            )
+
+        self.assertEqual(result, output_path)
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(len(commands), 2)
+        self.assertIn("subtitles=", " ".join(commands[0]))
+        self.assertIn("loudnorm=I=-16:TP=-1.5:LRA=11", " ".join(commands[1]))
+
     def test_run_ffmpeg_timeout_raises_clear_error(self) -> None:
         with patch(
             "youtube_ai_system.services.assembly_service.subprocess.run",

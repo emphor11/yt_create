@@ -4,6 +4,7 @@ from pathlib import Path
 
 from youtube_ai_system import create_app
 from youtube_ai_system.db import close_db
+from youtube_ai_system.models.repository import ProjectRepository, utcnow
 from youtube_ai_system.services.script_service import ScriptService
 from youtube_ai_system.services.story_pipeline import StoryPipeline
 
@@ -258,6 +259,78 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.assertNotIn("visual_scene_json", rows[0])
         self.assertIn("visual_scene_json", rows[1])
         self.assertIn("lifestyle_inflation", rows[1]["visual_scene_json"])
+
+    def test_approval_blocks_duplicate_body_scenes(self) -> None:
+        repo = ProjectRepository()
+        project_id = repo.create_project("duplicate check")
+        repo.update_project(project_id, target_duration_minutes=3)
+        payload = {
+            "hook": {"narration": "Why does your ₹50,000 salary feel gone by day 20?", "duration": 6},
+            "scenes": [
+                {
+                    "kind": "body",
+                    "narration": "A ₹1,00,000 credit card balance does not look scary at first. The bank says the minimum payment is only ₹3,000. At 40% annual interest, the balance barely moves.",
+                },
+                {
+                    "kind": "body",
+                    "narration": "A ₹1,00,000 credit card balance does not look scary at first. The bank says the minimum payment is only ₹3,000. At 40% annual interest, the balance barely moves.",
+                },
+            ],
+            "outro": {"narration": "Pay down the trap before it owns the month.", "duration": 18},
+        }
+        script_id = repo.create_script_version(project_id, payload["hook"], payload["outro"], [], "", [], payload, "")
+        repo.update_script_version(script_id, user_edited_at=utcnow())
+
+        ready, errors, _ = self.service.approval_ready(repo.get_script_version(script_id))
+
+        self.assertFalse(ready)
+        self.assertTrue(any("too similar" in error for error in errors))
+
+    def test_approval_blocks_too_few_body_scenes_for_long_form(self) -> None:
+        repo = ProjectRepository()
+        project_id = repo.create_project("short long form")
+        repo.update_project(project_id, target_duration_minutes=8)
+        payload = {
+            "hook": {"narration": "Why does your ₹50,000 salary feel gone by day 20?", "duration": 6},
+            "scenes": [
+                {"kind": "body", "narration": f"Scene {index} explains one money leak with a concrete example."}
+                for index in range(1, 6)
+            ],
+            "outro": {"narration": "Track the leak before the month tracks you.", "duration": 18},
+        }
+        script_id = repo.create_script_version(project_id, payload["hook"], payload["outro"], [], "", [], payload, "")
+        repo.update_script_version(script_id, user_edited_at=utcnow())
+
+        ready, errors, _ = self.service.approval_ready(repo.get_script_version(script_id))
+
+        self.assertFalse(ready)
+        self.assertTrue(any("only 5 body scenes" in error for error in errors))
+
+    def test_save_script_edits_preserves_scene_mechanism_metadata(self) -> None:
+        repo = ProjectRepository()
+        project_id = repo.create_project("preserve metadata")
+        repo.update_project(project_id, topic="Emergency fund", angle="stability first")
+        payload = {
+            "hook": {"narration": "Why does your ₹50,000 salary feel gone by day 20?", "duration": 6},
+            "scenes": [
+                {
+                    "kind": "body",
+                    "narration": "Emergency fund is crucial. 3-6 months of expenses are a must. Job loss and medical emergencies can arrive without warning.",
+                    "duration": 45,
+                    "mechanism": "emergency_fund",
+                    "emotion": "clarity",
+                    "visual_intent": "Show emergency fund as protection",
+                }
+            ],
+            "outro": {"narration": "Build survival before chasing returns.", "duration": 18},
+        }
+        script_id = repo.create_script_version(project_id, payload["hook"], payload["outro"], [], "", [], payload, "")
+
+        self.service.save_script_edits(script_id, payload)
+        saved = self.service.load_script_payload(repo.get_script_version(script_id))
+
+        self.assertEqual(saved["scenes"][0]["mechanism"], "emergency_fund")
+        self.assertIn("emergency fund", saved["scenes"][0]["narration"].lower())
 
     def test_group_sentences_into_sections_pairs_simple_sequence(self) -> None:
         grouped = self.pipeline.group_sentences_into_sections(

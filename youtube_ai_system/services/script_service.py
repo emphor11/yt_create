@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from difflib import SequenceMatcher
 from typing import Any
 from urllib import error
 
@@ -66,6 +67,8 @@ NEGATIVE_IMPLICATION_WORDS = {
 DEFAULT_TARGET_DURATION_MINUTES = 8
 DEFAULT_CHANNEL_NICHE = "personal finance India"
 DEFAULT_SCRIPT_TONE = "confident, direct, slightly provocative"
+MIN_BODY_SCENES_FOR_LONG_FORM = 8
+DUPLICATE_SCENE_SIMILARITY = 0.92
 VALID_TENSION_TYPES = {
     "curiosity_gap",
     "shocking_statistic",
@@ -117,7 +120,12 @@ class ScriptService:
         payload: dict[str, Any],
     ) -> None:
         project_id = self.repo.get_script_version(script_version_id)["video_project_id"]
-        normalized = self._normalize_payload(payload, "", "")
+        project = self.repo.get_project(project_id)
+        normalized = self._normalize_payload(
+            payload,
+            str(project.get("topic") or ""),
+            str(project.get("angle") or ""),
+        )
         self.repo.update_script_version(
             script_version_id,
             hook_json=json.dumps(normalized["hook"]),
@@ -183,7 +191,51 @@ class ScriptService:
         body_scenes = [scene for scene in payload["scenes"] if scene.get("kind", "body") == "body"]
         if not body_scenes:
             errors.append("At least one body scene is required.")
+        errors.extend(self._validate_body_scene_count(script_version, body_scenes))
+        errors.extend(self._validate_duplicate_body_scenes(body_scenes))
         return (not errors, errors, payload)
+
+    def _validate_body_scene_count(self, script_version: dict[str, Any], body_scenes: list[dict[str, Any]]) -> list[str]:
+        project_id = script_version.get("video_project_id")
+        if not project_id:
+            return []
+        project = self.repo.get_project(int(project_id))
+        target_minutes = int(project.get("target_duration_minutes") or DEFAULT_TARGET_DURATION_MINUTES)
+        if target_minutes >= DEFAULT_TARGET_DURATION_MINUTES and len(body_scenes) < MIN_BODY_SCENES_FOR_LONG_FORM:
+            return [
+                (
+                    f"Target duration is {target_minutes} minutes, but the script has only "
+                    f"{len(body_scenes)} body scenes. Add at least {MIN_BODY_SCENES_FOR_LONG_FORM} body scenes before approval."
+                )
+            ]
+        return []
+
+    def _validate_duplicate_body_scenes(self, body_scenes: list[dict[str, Any]]) -> list[str]:
+        errors: list[str] = []
+        normalized = [self._duplicate_signature(str(scene.get("narration") or "")) for scene in body_scenes]
+        for left_index, left_text in enumerate(normalized):
+            if not left_text:
+                continue
+            for right_index in range(left_index + 1, len(normalized)):
+                right_text = normalized[right_index]
+                if not right_text:
+                    continue
+                similarity = SequenceMatcher(None, left_text, right_text).ratio()
+                if similarity >= DUPLICATE_SCENE_SIMILARITY:
+                    errors.append(
+                        (
+                            f"Body scene {left_index + 1} and body scene {right_index + 1} are too similar "
+                            f"({similarity:.0%} match). Rewrite or remove the duplicate before approval."
+                        )
+                    )
+        return errors
+
+    def _duplicate_signature(self, narration: str) -> str:
+        text = narration.lower()
+        text = re.sub(r"₹\s*", "rs ", text)
+        text = re.sub(r"[^\w\s%]", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text
 
     def scene_rows_from_payload(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         scene_rows = [
@@ -498,6 +550,9 @@ class ScriptService:
                 "narration": narration,
                 "duration": self._coerce_duration(scene.get("duration", scene.get("estimated_duration_sec")), 45),
             }
+            for key in ("visual_intent", "numbers", "emotion", "mechanism"):
+                if key in scene:
+                    normalized_scene[key] = scene[key]
             normalized["scenes"].append(normalized_scene)
             planning_scene = dict(normalized_scene)
             visual_scene = dict(refined_scene.get("visual_scene") or self._visual_scene_from_raw_scene(scene, narration))

@@ -183,12 +183,12 @@ class VisualDirectorTestCase(unittest.TestCase):
         cases = [
             ("Lifestyle inflation is a silent killer. As salary increases, expenses rise on luxuries, not necessities.", "lifestyle_inflation", "LifestyleCreepVisualizer"),
             ("Inflation quietly erodes your purchasing power over 10 years.", "inflation_erosion", "InflationErosionVisualizer"),
-            ("Expense leakage from subscriptions and food apps eats your salary.", "expense_leakage", "FlowDiagram"),
+            ("Expense leakage from subscriptions and food apps eats your salary.", "expense_leakage", "SmallLeaksAccumulator"),
             ("Emergency fund protects you when a medical bill hits.", "emergency_fund", "FlowDiagram"),
-            ("Diversification spreads your investments across asset classes.", "diversification", "SplitComparison"),
+            ("Diversification spreads your investments across asset classes.", "diversification", "PortfolioDiversificationVisualizer"),
             ("Risk and return move together in investing.", "risk_return", "SplitComparison"),
             ("Tax saving under 80C can reduce your tax bill.", "tax_saving", "SplitComparison"),
-            ("FOMO investing is not investing. It is speculation. Do not put your life savings into something you don't understand.", "definition", "FlowDiagram"),
+            ("FOMO investing is not investing. It is speculation. Do not put your life savings into something you don't understand.", "definition", "FOMOPriceCrashVisualizer"),
         ]
 
         for narration, concept_type, expected_pattern in cases:
@@ -251,7 +251,7 @@ class VisualDirectorTestCase(unittest.TestCase):
         )
 
         self.assertEqual(result.concept_type, "compounding")
-        self.assertEqual(result.pattern, "GrowthChart")
+        self.assertEqual(result.pattern, "SIPGrowthEngine")
         self.assertNotEqual(result.concept_name, "Debt Trap")
 
     def test_tax_drain_is_not_treated_as_tax_saving(self) -> None:

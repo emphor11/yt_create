@@ -29,6 +29,10 @@ COMPONENT_DURATION_WEIGHTS = {
     "GrowthChartScene": 1.5,
     "InflationErosionVisualizer": 2.8,
     "LifestyleCreepVisualizer": 2.4,
+    "EMIStackVisualizer": 2.5,
+    "FOMOPriceCrashVisualizer": 2.4,
+    "PortfolioDiversificationVisualizer": 2.4,
+    "SmallLeaksAccumulator": 2.3,
     "StepFlow": 1.4,
     "StepFlowScene": 1.4,
     "MoneyFlowDiagram": 1.8,
@@ -41,6 +45,10 @@ PATTERN_PRIORITY = {
     "SIPGrowthEngine": 7,
     "InflationErosionVisualizer": 7,
     "LifestyleCreepVisualizer": 7,
+    "EMIStackVisualizer": 7,
+    "FOMOPriceCrashVisualizer": 7,
+    "PortfolioDiversificationVisualizer": 7,
+    "SmallLeaksAccumulator": 7,
     "GrowthChart": 6,
     "SplitComparison": 6,
     "FlowDiagram": 6,
@@ -56,6 +64,10 @@ REQUIRED_BEAT_DATA = {
     "SIPGrowthEngine": ("monthly_sip", "final_corpus"),
     "InflationErosionVisualizer": ("start", "end"),
     "LifestyleCreepVisualizer": ("start_income", "end_income"),
+    "EMIStackVisualizer": ("salary", "emis", "remaining"),
+    "FOMOPriceCrashVisualizer": ("points",),
+    "PortfolioDiversificationVisualizer": ("assets",),
+    "SmallLeaksAccumulator": ("leaks", "monthly_loss"),
     "CalculationStrip": ("steps",),
     "SplitComparison": ("left", "right"),
 }
@@ -65,6 +77,10 @@ DOMINANT_COMPONENTS = {
     "SIPGrowthEngine",
     "InflationErosionVisualizer",
     "LifestyleCreepVisualizer",
+    "EMIStackVisualizer",
+    "FOMOPriceCrashVisualizer",
+    "PortfolioDiversificationVisualizer",
+    "SmallLeaksAccumulator",
     "GrowthChart",
     "FlowDiagram",
     "SplitComparison",
@@ -88,6 +104,18 @@ PHASE_WEIGHT_MULTIPLIERS = {
     "raise_arrives": 1.1,
     "expenses_follow": 1.45,
     "gap_revealed": 1.0,
+    "first_emi": 0.75,
+    "stacking": 1.45,
+    "pressure": 1.0,
+    "rise": 0.9,
+    "crash": 1.55,
+    "loss": 1.0,
+    "concentrated": 0.8,
+    "spread": 1.35,
+    "impact": 1.05,
+    "first_leak": 0.8,
+    "repeat": 1.45,
+    "month_end": 1.0,
 }
 
 
@@ -659,7 +687,22 @@ class SceneBuilder:
             return "introduce"
         if total <= 1 or index == total - 1:
             return "result"
-        if component in {"MoneyFlowDiagram", "DebtSpiralVisualizer", "SIPGrowthEngine", "InflationErosionVisualizer", "LifestyleCreepVisualizer", "CalculationStrip", "GrowthChart", "FlowDiagram", "FlowBar", "SplitComparison"}:
+        if component in {
+            "MoneyFlowDiagram",
+            "DebtSpiralVisualizer",
+            "SIPGrowthEngine",
+            "InflationErosionVisualizer",
+            "LifestyleCreepVisualizer",
+            "EMIStackVisualizer",
+            "FOMOPriceCrashVisualizer",
+            "PortfolioDiversificationVisualizer",
+            "SmallLeaksAccumulator",
+            "CalculationStrip",
+            "GrowthChart",
+            "FlowDiagram",
+            "FlowBar",
+            "SplitComparison",
+        }:
             return "process"
         return "change"
 
@@ -750,7 +793,17 @@ class SceneBuilder:
         if visual_plan:
             visual = visual_plan[0].get("visual") or {}
             pattern = str(visual.get("pattern") or "").strip()
-        tail = 0.8 if pattern in {"MoneyFlowDiagram", "DebtSpiralVisualizer", "SIPGrowthEngine", "InflationErosionVisualizer", "LifestyleCreepVisualizer"} else 0.4
+        tail = 0.8 if pattern in {
+            "MoneyFlowDiagram",
+            "DebtSpiralVisualizer",
+            "SIPGrowthEngine",
+            "InflationErosionVisualizer",
+            "LifestyleCreepVisualizer",
+            "EMIStackVisualizer",
+            "FOMOPriceCrashVisualizer",
+            "PortfolioDiversificationVisualizer",
+            "SmallLeaksAccumulator",
+        } else 0.4
         return round(max(float(audio_duration or 0), 0.0) + tail, 2)
 
     def _clean_beat_text(self, text: str, section_text: str) -> str:

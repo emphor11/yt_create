@@ -249,6 +249,7 @@ class MediaService:
         visual_plan = list(intelligence.get("visual_plan") or []) or self._scene_visual_plan(scene)
         return {
             "text": narration,
+            "kind": kind,
             "weight": self._weight_for_scene_kind(kind),
             "visual_plan": visual_plan,
             "audio_file": str(audio_path),
@@ -290,6 +291,9 @@ class MediaService:
         return list(section.get("visual_plan") or [])
 
     def _section_intelligence_from_narration(self, narration: str, kind: str, visual_scene: dict | None = None) -> dict:
+        if kind == "outro":
+            return self._outro_section_intelligence(narration)
+
         signals = self._scene_text_signals(narration)
         section: dict = {
             "type": "problem" if kind == "hook" else ("optimization" if kind == "outro" else "explanation"),
@@ -323,6 +327,58 @@ class MediaService:
         story_plan = self.story_pipeline.attach_visual_story(story_plan)
         story_plan = self.story_pipeline.attach_section_visual_plan(story_plan)
         return dict((story_plan.get("sections") or [{}])[0])
+
+    def _outro_section_intelligence(self, narration: str) -> dict:
+        punch = self._outro_punchline(narration)
+        visual_plan = [
+            {
+                "concept": {"concept": "Final Takeaway", "type": "outro"},
+                "visual": {"pattern": "ConceptCard", "data": {"title": punch.upper()}},
+                "beats": {
+                    "beats": [
+                        {"component": "StatCard", "text": "Final takeaway", "emphasis": "normal"},
+                        {"component": "ConceptCard", "text": punch, "emphasis": "hero"},
+                    ]
+                },
+            }
+        ]
+        return {
+            "type": "optimization",
+            "text": narration,
+            "weight": self._weight_for_scene_kind("outro"),
+            "visual_plan": visual_plan,
+            "finance_concept": {"concept_name": "Final Takeaway", "concept_type": "outro"},
+            "narrative_arc": {"visual_type": "recap", "story_goal": punch},
+            "visual_story": {},
+            "story_state": {},
+            "direction": {"emotional_arc": {"opening": "aware", "closing": "confidence"}, "scene_position": "outro", "accent": "positive"},
+            "visual_mode": "graphic_recap",
+            "cinematic_intent": {"visual_mode": "graphic_recap", "overlay_text": punch, "scene_role": "outro"},
+            "concept_type": "outro",
+            "theme": {},
+            "state": {},
+            "visual_type": "recap",
+            "dominant_entity": "money",
+            "idea_type": "process",
+            "has_numbers": bool(re.search(r"₹|Rs\.?\s*|\d+|%", narration, re.IGNORECASE)),
+            "has_comparison": False,
+            "has_causation": False,
+            "visual_scene": {
+                "scene_id": "outro",
+                "narration": narration,
+                "visual_intent": "Show final recap and practical takeaway",
+                "visual_beats": ["Final takeaway", "Action step"],
+                "numbers": [],
+                "emotion": "confidence",
+                "mechanism": "definition",
+            },
+        }
+
+    def _outro_punchline(self, narration: str) -> str:
+        sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", narration) if part.strip()]
+        if sentences:
+            return sentences[-1].rstrip(".!?")
+        return "Build the system before the next month starts"
 
     def _scene_text_signals(self, narration: str) -> dict[str, object]:
         return {

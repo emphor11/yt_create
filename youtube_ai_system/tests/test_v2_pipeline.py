@@ -58,6 +58,18 @@ class V2PipelineTestCase(unittest.TestCase):
         self.assertEqual(spec.props["headline"], "80%")
         self.assertEqual(spec.props["sentiment"], "negative")
 
+    def test_outro_scene_uses_recap_visual_plan(self) -> None:
+        service = MediaService()
+        section = service._section_intelligence_from_narration(
+            "Build an emergency fund, diversify, and avoid lifestyle inflation. Take control of your finances today.",
+            "outro",
+        )
+
+        self.assertEqual(section["concept_type"], "outro")
+        self.assertEqual(section["visual_type"], "recap")
+        self.assertEqual(section["visual_plan"][0]["concept"]["type"], "outro")
+        self.assertEqual(section["visual_plan"][0]["visual"]["pattern"], "ConceptCard")
+
     def test_render_spec_maps_graph_to_line_or_bar(self) -> None:
         service = RenderSpecService()
         line = service.scene_spec(

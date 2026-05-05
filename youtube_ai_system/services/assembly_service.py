@@ -99,8 +99,24 @@ class AssemblyService:
                 "0",
                 "-i",
                 str(concat_manifest),
-                "-c",
-                "copy",
+                "-c:v",
+                "libx264",
+                "-preset",
+                self.FINAL_PRESET,
+                "-crf",
+                self.FINAL_CRF,
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "192k",
+                "-ar",
+                "48000",
+                "-ac",
+                "2",
+                "-movflags",
+                "+faststart",
                 str(assembled_path),
             ],
             cwd=output_dir,
@@ -154,6 +170,10 @@ class AssemblyService:
                 "aac",
                 "-b:a",
                 "192k",
+                "-ar",
+                "48000",
+                "-ac",
+                "2",
                 "-movflags",
                 "+faststart",
                 str(output_path),
@@ -187,6 +207,10 @@ class AssemblyService:
                 "aac",
                 "-b:a",
                 "192k",
+                "-ar",
+                "48000",
+                "-ac",
+                "2",
                 "-movflags",
                 "+faststart",
                 str(output_path),
@@ -337,8 +361,15 @@ class AssemblyService:
 
         captioned_path = output_path.with_name("timeline_with_captions.mp4")
         if current_app.config.get("CAPTIONS_ENABLED") and captions_path.exists():
-            self._burn_captions(ffmpeg_bin, current_path, captions_path, captioned_path)
-            current_path = captioned_path
+            try:
+                self._burn_captions(ffmpeg_bin, current_path, captions_path, captioned_path)
+                current_path = captioned_path
+            except RuntimeError as exc:
+                current_app.logger.warning(
+                    "Caption burn failed; continuing final export without burned captions. SRT remains at %s. Error: %s",
+                    captions_path,
+                    exc,
+                )
 
         self._final_export(ffmpeg_bin, current_path, output_path)
         return output_path

@@ -5,13 +5,17 @@ import {CalculationStrip} from './components/CalculationStrip';
 import {CinematicScene} from './components/CinematicScene';
 import {ConceptCard} from './components/ConceptCard';
 import {DebtSpiralVisualizer} from './components/DebtSpiralVisualizer';
+import {EMIStackVisualizer} from './components/EMIStackVisualizer';
 import {FlowDiagram} from './components/FlowDiagram';
+import {FOMOPriceCrashVisualizer} from './components/FOMOPriceCrashVisualizer';
 import {GrowthChart} from './components/GrowthChart';
 import {InflationErosionVisualizer} from './components/InflationErosionVisualizer';
 import {LifestyleCreepVisualizer} from './components/LifestyleCreepVisualizer';
 import {MoneyFlowDiagram} from './components/MoneyFlowDiagram';
+import {PortfolioDiversificationVisualizer} from './components/PortfolioDiversificationVisualizer';
 import {RiskCard} from './components/RiskCard';
 import {SIPGrowthEngine} from './components/SIPGrowthEngine';
+import {SmallLeaksAccumulator} from './components/SmallLeaksAccumulator';
 import {SplitComparison} from './components/SplitComparison';
 import {StatCard} from './components/StatCard';
 import {StepFlow} from './components/StepFlow';
@@ -41,6 +45,10 @@ const COMPONENT_MAP = {
 	MoneyFlowDiagram,
 	DebtSpiralVisualizer,
 	SIPGrowthEngine,
+	EMIStackVisualizer,
+	FOMOPriceCrashVisualizer,
+	PortfolioDiversificationVisualizer,
+	SmallLeaksAccumulator,
 	CinematicScene,
 } as const;
 
@@ -62,6 +70,10 @@ const DATA_HEAVY_COMPONENTS = new Set([
 	'GrowthChartScene',
 	'InflationErosionVisualizer',
 	'LifestyleCreepVisualizer',
+	'EMIStackVisualizer',
+	'FOMOPriceCrashVisualizer',
+	'PortfolioDiversificationVisualizer',
+	'SmallLeaksAccumulator',
 	'FlowDiagram',
 	'FlowBar',
 	'SplitComparison',

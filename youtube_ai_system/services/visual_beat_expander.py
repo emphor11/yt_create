@@ -13,6 +13,10 @@ class VisualBeatExpander:
         "SIPGrowthEngine",
         "InflationErosionVisualizer",
         "LifestyleCreepVisualizer",
+        "EMIStackVisualizer",
+        "FOMOPriceCrashVisualizer",
+        "PortfolioDiversificationVisualizer",
+        "SmallLeaksAccumulator",
     }
 
     MECHANISM_PHASES = {
@@ -21,6 +25,10 @@ class VisualBeatExpander:
         "SIPGrowthEngine": ("contribution", "growth", "growth", "growth", "corpus", "corpus", "corpus"),
         "InflationErosionVisualizer": ("today", "erosion", "erosion", "erosion", "future", "future", "future"),
         "LifestyleCreepVisualizer": ("income_base", "raise_arrives", "expenses_follow", "expenses_follow", "gap_revealed", "gap_revealed", "gap_revealed"),
+        "EMIStackVisualizer": ("first_emi", "stacking", "stacking", "stacking", "pressure", "pressure", "pressure"),
+        "FOMOPriceCrashVisualizer": ("rise", "crash", "crash", "crash", "loss", "loss", "loss"),
+        "PortfolioDiversificationVisualizer": ("concentrated", "spread", "spread", "spread", "impact", "impact", "impact"),
+        "SmallLeaksAccumulator": ("first_leak", "repeat", "repeat", "repeat", "month_end", "month_end", "month_end"),
     }
 
     OBJECT_TO_VIEWER_TEXT = {
@@ -152,7 +160,15 @@ class VisualBeatExpander:
             if beat_phase:
                 beat_data["active_phase"] = beat_phase
             beat["data"] = beat_data
-            if component in {"FlowDiagram", "FlowBar", "GrowthChart"} and data:
+            if component in {
+                "FlowDiagram",
+                "FlowBar",
+                "GrowthChart",
+                "EMIStackVisualizer",
+                "FOMOPriceCrashVisualizer",
+                "PortfolioDiversificationVisualizer",
+                "SmallLeaksAccumulator",
+            } and data:
                 beat["props"] = data
             beats.append(beat)
         return self._dedupe_adjacent(beats)
@@ -201,6 +217,14 @@ class VisualBeatExpander:
             return "Interest beats payment"
         if pattern == "SIPGrowthEngine":
             return "Compounding engine starts"
+        if pattern == "EMIStackVisualizer":
+            return "Fixed payments stack"
+        if pattern == "FOMOPriceCrashVisualizer":
+            return "Hype becomes loss"
+        if pattern == "PortfolioDiversificationVisualizer":
+            return "Risk gets spread"
+        if pattern == "SmallLeaksAccumulator":
+            return "Small leaks add up"
         if pattern in {"GrowthChart", "InflationErosionVisualizer"}:
             return "Value path changes"
         if pattern == "SplitComparison":
@@ -278,7 +302,14 @@ class VisualBeatExpander:
             component_data = {**data, "active_phase": beat_phase} if data and beat_phase else data
             if component in self.PRIMARY_MECHANISM_COMPONENTS and component_data:
                 beat["data"] = component_data
-            if component in {"FlowDiagram", "FlowBar"} and data:
+            if component in {
+                "FlowDiagram",
+                "FlowBar",
+                "EMIStackVisualizer",
+                "FOMOPriceCrashVisualizer",
+                "PortfolioDiversificationVisualizer",
+                "SmallLeaksAccumulator",
+            } and data:
                 beat["data"] = data
                 beat["props"] = data
             if component == "GrowthChart" and data:
@@ -307,6 +338,14 @@ class VisualBeatExpander:
             required_components.append("InflationErosionVisualizer")
         if pattern == "LifestyleCreepVisualizer" or mechanism == "lifestyle_inflation":
             required_components.append("LifestyleCreepVisualizer")
+        if pattern == "EMIStackVisualizer" or mechanism in {"emi_pressure", "emi_stack"}:
+            required_components.append("EMIStackVisualizer")
+        if pattern == "FOMOPriceCrashVisualizer" or mechanism in {"fomo_risk", "speculation_risk"}:
+            required_components.append("FOMOPriceCrashVisualizer")
+        if pattern == "PortfolioDiversificationVisualizer" or mechanism == "diversification":
+            required_components.append("PortfolioDiversificationVisualizer")
+        if pattern == "SmallLeaksAccumulator" or mechanism in {"expense_leakage", "subscription_leak"}:
+            required_components.append("SmallLeaksAccumulator")
 
         result = list(expanded)
         for component in required_components:
@@ -338,6 +377,10 @@ class VisualBeatExpander:
             "SIPGrowthEngine": ("monthly_sip", "final_corpus"),
             "InflationErosionVisualizer": ("start", "end"),
             "LifestyleCreepVisualizer": ("start_income", "end_income"),
+            "EMIStackVisualizer": ("salary", "emis"),
+            "FOMOPriceCrashVisualizer": ("points",),
+            "PortfolioDiversificationVisualizer": ("assets",),
+            "SmallLeaksAccumulator": ("leaks", "monthly_loss"),
         }.get(component, ("steps", "balances", "flows", "monthly_sip"))
         if isinstance(data, dict) and any(key in data for key in expected_keys):
             return True

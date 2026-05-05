@@ -211,11 +211,12 @@ def save_script(project_id: int):
     existing_scenes = existing_payload.get("scenes", [])
     for index in range(scene_count):
         existing_scene = existing_scenes[index] if index < len(existing_scenes) else {}
+        scene_payload = dict(existing_scene)
+        scene_payload["kind"] = "body"
+        scene_payload["narration"] = request.form.get(f"scene_{index}_narration", "").strip()
+        scene_payload.setdefault("scene_index", index + 1)
         payload["scenes"].append(
-            {
-                "kind": "body",
-                "narration": request.form.get(f"scene_{index}_narration", "").strip(),
-            }
+            scene_payload
         )
 
     ScriptService().save_script_edits(script_version["id"], payload)

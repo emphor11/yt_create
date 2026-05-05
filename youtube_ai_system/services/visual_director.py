@@ -256,11 +256,15 @@ class VisualDirector:
             return self._with_cinematic_intent(self._salary_drain_plan(director_input, concept_type), director_input)
         if concept_type == "lifestyle_inflation":
             return self._with_cinematic_intent(self._lifestyle_creep_plan(director_input, concept_type), director_input)
-        if concept_type in {"expense_leakage", "budgeting", "savings_rate", "emergency_fund", "rent_burden", "tax_drain"}:
+        if concept_type in {"expense_leakage", "subscription_leak"}:
+            return self._with_cinematic_intent(self._small_leaks_plan(director_input, concept_type), director_input)
+        if concept_type in {"budgeting", "savings_rate", "emergency_fund", "rent_burden", "tax_drain"}:
             return self._with_cinematic_intent(self._money_mechanism_plan(director_input, concept_type), director_input)
         if concept_type == "debt_trap":
             return self._with_cinematic_intent(self._debt_trap_plan(director_input, concept_type), director_input)
-        if concept_type in {"emi_pressure", "emi_stack", "loan_cost"}:
+        if concept_type in {"emi_pressure", "emi_stack"}:
+            return self._with_cinematic_intent(self._emi_stack_plan(director_input, concept_type), director_input)
+        if concept_type in {"loan_cost"}:
             return self._with_cinematic_intent(self._loan_pressure_plan(director_input, concept_type), director_input)
         if concept_type == "sip_growth":
             return self._with_cinematic_intent(self._sip_growth_plan(director_input, concept_type), director_input)
@@ -272,7 +276,9 @@ class VisualDirector:
             return self._with_cinematic_intent(self._inflation_return_plan(director_input, concept_type), director_input)
         if concept_type in {"speculation_risk", "fomo_risk"}:
             return self._with_cinematic_intent(self._speculation_risk_plan(director_input, concept_type), director_input)
-        if concept_type in {"opportunity_cost", "comparison_timeline", "risk_return", "diversification", "tax_saving"}:
+        if concept_type == "diversification":
+            return self._with_cinematic_intent(self._diversification_plan(director_input, concept_type), director_input)
+        if concept_type in {"opportunity_cost", "comparison_timeline", "risk_return", "tax_saving"}:
             return self._with_cinematic_intent(self._comparison_mechanism_plan(director_input, concept_type), director_input)
         return self._with_cinematic_intent(self._generic_plan(director_input, concept_type), director_input)
 
@@ -326,6 +332,10 @@ class VisualDirector:
             "SIPGrowthEngine",
             "InflationErosionVisualizer",
             "LifestyleCreepVisualizer",
+            "EMIStackVisualizer",
+            "FOMOPriceCrashVisualizer",
+            "PortfolioDiversificationVisualizer",
+            "SmallLeaksAccumulator",
         }
         for index, beat in enumerate(beats):
             data = dict(beat.data or {})
@@ -590,42 +600,37 @@ class VisualDirector:
                 "Debt Trap",
                 "insufficient data for DebtSpiralVisualizer",
             )
+        if "emi" in director_input.narration_text.lower():
+            return self._emi_stack_plan(director_input, "emi_pressure")
         return self._qualitative_debt_plan(director_input, concept_type, direction, "Debt Trap")
 
     def _sip_growth_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
         sip_data = self._sip_growth_data(director_input.narration_text, director_input)
+        if not sip_data:
+            sip_data = self._inferred_sip_growth_data(director_input)
         direction = SceneDirection("confusion", "confidence", director_input.section_position, "positive")
-        if sip_data:
-            contribution_data = {**sip_data, "active_phase": "contribution"}
-            growth_data = {**sip_data, "active_phase": "growth"}
-            corpus_data = {**sip_data, "active_phase": "corpus"}
-            return DirectedPlan(
-                concept_type=concept_type,
-                concept_name="SIP Growth",
-                pattern="SIPGrowthEngine",
-                data=sip_data,
-                direction=direction,
-                theme=THEME,
-                beats=self._contextualize_beats([
-                    DirectedBeat("SIPGrowthEngine", sip_data["monthly_sip"]["value"], "normal", "monthly SIP", data=contribution_data, beat_phase="contribution"),
-                    DirectedBeat("SIPGrowthEngine", "Compounding engine", "subtle", data=growth_data, beat_phase="growth"),
-                    DirectedBeat(
-                        "SIPGrowthEngine",
-                        self._format_rupee(sip_data["final_corpus"]),
-                        "hero",
-                        f"{sip_data['awe_ratio']}x return",
-                        data=corpus_data,
-                        beat_phase="corpus",
-                    ),
-                ], director_input.narration_text),
-            )
-        return self._fallback_plan(
-            director_input,
-            concept_type,
-            direction,
-            "StatCard",
-            "SIP Growth",
-            "insufficient data for SIPGrowthEngine",
+        contribution_data = {**sip_data, "active_phase": "contribution"}
+        growth_data = {**sip_data, "active_phase": "growth"}
+        corpus_data = {**sip_data, "active_phase": "corpus"}
+        return DirectedPlan(
+            concept_type=concept_type,
+            concept_name="SIP Growth",
+            pattern="SIPGrowthEngine",
+            data=sip_data,
+            direction=direction,
+            theme=THEME,
+            beats=self._contextualize_beats([
+                DirectedBeat("SIPGrowthEngine", sip_data["monthly_sip"]["value"], "normal", "monthly SIP", data=contribution_data, beat_phase="contribution"),
+                DirectedBeat("SIPGrowthEngine", "Compounding engine", "subtle", data=growth_data, beat_phase="growth"),
+                DirectedBeat(
+                    "SIPGrowthEngine",
+                    self._format_rupee(sip_data["final_corpus"]),
+                    "hero",
+                    f"{sip_data['awe_ratio']}x return",
+                    data=corpus_data,
+                    beat_phase="corpus",
+                ),
+            ], director_input.narration_text),
         )
 
     def _money_mechanism_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
@@ -665,6 +670,30 @@ class VisualDirector:
             ], text),
         )
 
+    def _emi_stack_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
+        data = self._emi_stack_data(director_input)
+        direction = SceneDirection("calm", "pressure", director_input.section_position, "danger")
+        concept_name = self._display_concept_name(concept_type)
+        first_data = {**data, "active_phase": "first_emi"}
+        stacking_data = {**data, "active_phase": "stacking"}
+        pressure_data = {**data, "active_phase": "pressure"}
+        return DirectedPlan(
+            concept_type=concept_type,
+            concept_name=concept_name,
+            pattern="EMIStackVisualizer",
+            data=data,
+            direction=direction,
+            theme=THEME,
+            beats=self._contextualize_beats(
+                [
+                    DirectedBeat("EMIStackVisualizer", "One EMI looks harmless", "normal", data=first_data, beat_phase="first_emi"),
+                    DirectedBeat("EMIStackVisualizer", "Fixed payments stack", "subtle", data=stacking_data, beat_phase="stacking"),
+                    DirectedBeat("EMIStackVisualizer", f"{data['remaining']['value']} left after EMIs", "hero", data=pressure_data, beat_phase="pressure"),
+                ],
+                director_input.narration_text,
+            ),
+        )
+
     def _loan_pressure_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
         debt_data = self._debt_spiral_data(director_input.narration_text, director_input)
         direction = SceneDirection("neutral", "urgency", director_input.section_position, "danger")
@@ -700,7 +729,7 @@ class VisualDirector:
         concept_name = self._display_concept_name(concept_type)
         sip_data = self._sip_growth_data(director_input.narration_text, director_input)
         if sip_data is None:
-            return self._qualitative_growth_plan(director_input, concept_type, direction, concept_name)
+            sip_data = self._inferred_sip_growth_data(director_input)
         contribution_data = {**sip_data, "active_phase": "contribution"}
         growth_data = {**sip_data, "active_phase": "growth"}
         corpus_data = {**sip_data, "active_phase": "corpus"}
@@ -767,6 +796,27 @@ class VisualDirector:
                 DirectedBeat("SplitComparison", concept_name, "subtle", data=data),
                 DirectedBeat("HighlightText", data["punch"], "hero", data={"primary_value": data["punch"], "label": concept_name, "color": data.get("accent", "teal")}),
             ], director_input.narration_text),
+        )
+
+    def _diversification_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
+        data = self._diversification_data()
+        direction = SceneDirection("concentrated", "systematic", director_input.section_position, "positive")
+        concept_name = self._display_concept_name(concept_type)
+        return DirectedPlan(
+            concept_type=concept_type,
+            concept_name=concept_name,
+            pattern="PortfolioDiversificationVisualizer",
+            data=data,
+            direction=direction,
+            theme=THEME,
+            beats=self._contextualize_beats(
+                [
+                    DirectedBeat("PortfolioDiversificationVisualizer", "One bet decides everything", "normal", data={**data, "active_phase": "concentrated"}, beat_phase="concentrated"),
+                    DirectedBeat("PortfolioDiversificationVisualizer", "Risk spreads across assets", "subtle", data={**data, "active_phase": "spread"}, beat_phase="spread"),
+                    DirectedBeat("PortfolioDiversificationVisualizer", "One fall does not break all", "hero", data={**data, "active_phase": "impact"}, beat_phase="impact"),
+                ],
+                director_input.narration_text,
+            ),
         )
 
     def _recap_system_plan(self, director_input: VisualDirectorInput) -> DirectedPlan:
@@ -921,34 +971,45 @@ class VisualDirector:
         )
 
     def _speculation_risk_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
-        """Speculation/FOMO gets an urgent qualitative plan, not a calm SplitComparison.
-        The emotional register should be panic/alarm, not analytical."""
         direction = SceneDirection("overconfidence", "alarm", director_input.section_position, "danger")
         concept_name = self._display_concept_name(concept_type)
-        # Use HighlightText + FlowDiagram in urgent mode — no calm comparison panel
-        nodes = [
-            {"label": "Hype drives the buy", "subtext": "FOMO at peak price"},
-            {"label": "Price drops", "subtext": "panic replaces excitement"},
-            {"label": "Loss is locked", "subtext": "no plan = no exit"},
-        ]
-        punch = "Do not invest in what you cannot explain"
-        data = {"title": "Speculation vs Investing", "nodes": nodes, "accent": "danger"}
-        beats = self._contextualize_beats(
-            [
-                DirectedBeat("StatCard", "Hype is not a thesis", "normal", "the real trap", {"primary_value": "Hype is not a thesis", "label": "the real trap", "color": "red"}),
-                DirectedBeat("FlowDiagram", "How FOMO becomes loss", "subtle", data=data, props=data),
-                DirectedBeat("HighlightText", punch, "hero", data={"primary_value": punch, "label": concept_name, "color": "red"}),
-            ],
-            director_input.narration_text,
-        )
+        data = self._fomo_crash_data()
         return DirectedPlan(
             concept_type=concept_type,
             concept_name=concept_name,
-            pattern="FlowDiagram",
+            pattern="FOMOPriceCrashVisualizer",
             data=data,
-            beats=beats,
             direction=direction,
             theme=THEME,
+            beats=self._contextualize_beats(
+                [
+                    DirectedBeat("FOMOPriceCrashVisualizer", "Hype runs first", "normal", data={**data, "active_phase": "rise"}, beat_phase="rise"),
+                    DirectedBeat("FOMOPriceCrashVisualizer", "The crash arrives", "subtle", data={**data, "active_phase": "crash"}, beat_phase="crash"),
+                    DirectedBeat("FOMOPriceCrashVisualizer", "Do not buy what you cannot explain", "hero", data={**data, "active_phase": "loss"}, beat_phase="loss"),
+                ],
+                director_input.narration_text,
+            ),
+        )
+
+    def _small_leaks_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
+        direction = SceneDirection("unaware", "aware", director_input.section_position, "warning")
+        concept_name = self._display_concept_name(concept_type)
+        data = self._small_leaks_data(director_input)
+        return DirectedPlan(
+            concept_type=concept_type,
+            concept_name=concept_name,
+            pattern="SmallLeaksAccumulator",
+            data=data,
+            direction=direction,
+            theme=THEME,
+            beats=self._contextualize_beats(
+                [
+                    DirectedBeat("SmallLeaksAccumulator", "One small spend", "normal", data={**data, "active_phase": "first_leak"}, beat_phase="first_leak"),
+                    DirectedBeat("SmallLeaksAccumulator", "Small leaks repeat", "subtle", data={**data, "active_phase": "repeat"}, beat_phase="repeat"),
+                    DirectedBeat("SmallLeaksAccumulator", f"{self._format_rupee(data['monthly_loss'])} monthly pressure", "hero", data={**data, "active_phase": "month_end"}, beat_phase="month_end"),
+                ],
+                director_input.narration_text,
+            ),
         )
 
     def _generic_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
@@ -1228,6 +1289,7 @@ class VisualDirector:
             "tax_drain",
             "rent_burden",
             "expense_leakage",
+            "subscription_leak",
             "budgeting",
             "savings_rate",
             "loan_cost",
@@ -1267,7 +1329,13 @@ class VisualDirector:
             return "compounding"
         if "real return" in text or ("tax" in text and "return" in text):
             return "real_return"
-        if "expense leakage" in text or "subscription" in text or "leak" in text:
+        if (
+            "expense leakage" in text
+            or "subscription" in text
+            or "leak" in text
+            or ("small" in text and any(token in text for token in ("choices add", "adding up", "repeats", "tiny", "harmless")))
+            or ("pattern" in text and "expensive" in text)
+        ):
             return "expense_leakage"
         if "emergency fund" in text or "cash buffer" in text:
             return "emergency_fund"
@@ -1342,6 +1410,90 @@ class VisualDirector:
         if flow_data["remainder"]["is_dangerous"]:
             return f"{flow_data['remainder']['value']} left"
         return "The gap matters"
+
+    def _emi_stack_data(self, director_input: VisualDirectorInput) -> dict[str, Any]:
+        text = director_input.narration_text
+        amounts = self._money_mentions(text)
+        salary_amount = self._parse_rupee(director_input.start_value) or 50000.0
+        for item in amounts:
+            if str(item.get("label") or "").lower() in {"salary", "income"}:
+                salary_amount = float(item["amount"])
+                break
+        emi_amounts = [
+            float(item["amount"])
+            for item in amounts
+            if any(token in str(item.get("label") or "").lower() for token in ("emi", "loan", "payment"))
+            and float(item["amount"]) < salary_amount
+        ]
+        if not emi_amounts:
+            emi_amounts = [4000.0, 6500.0, 7500.0]
+        labels = ["Phone EMI", "Bike EMI", "Personal loan", "Credit card", "Other EMI"]
+        emis = [
+            {"label": labels[index] if index < len(labels) else f"EMI {index + 1}", "value": self._format_rupee(amount), "amount": amount}
+            for index, amount in enumerate(emi_amounts[:5])
+        ]
+        total_emi = sum(float(item["amount"]) for item in emis)
+        remaining = max(salary_amount - total_emi, 0.0)
+        if "nothing" in text.lower() or "trapped" in text.lower():
+            remaining = min(remaining, salary_amount * 0.12)
+        return {
+            "salary": {"value": self._format_rupee(salary_amount), "amount": salary_amount},
+            "emis": emis,
+            "total_emi": {"value": self._format_rupee(total_emi), "amount": round(total_emi, 2)},
+            "remaining": {
+                "value": self._format_rupee(remaining),
+                "amount": round(remaining, 2),
+                "is_critical": remaining / max(salary_amount, 1) < 0.15,
+            },
+        }
+
+    def _diversification_data(self) -> dict[str, Any]:
+        return {
+            "assets": [
+                {"label": "Equity", "allocation": 45, "color": "#2EC4B6"},
+                {"label": "Debt", "allocation": 25, "color": "#4361EE"},
+                {"label": "FD", "allocation": 15, "color": "#FF9F1C"},
+                {"label": "Gold", "allocation": 10, "color": "#B8A44C"},
+                {"label": "Cash", "allocation": 5, "color": "rgba(255,255,255,0.65)"},
+            ],
+            "shock_asset": "Equity",
+            "punch": "One fall does not break all",
+        }
+
+    def _fomo_crash_data(self) -> dict[str, Any]:
+        return {
+            "points": [
+                {"x": 0.02, "y": 0.68},
+                {"x": 0.18, "y": 0.58},
+                {"x": 0.34, "y": 0.42},
+                {"x": 0.52, "y": 0.18},
+                {"x": 0.66, "y": 0.28},
+                {"x": 0.82, "y": 0.62},
+                {"x": 0.98, "y": 0.78},
+            ],
+            "buy_label": "buy at peak",
+            "loss_label": "panic after entry",
+        }
+
+    def _small_leaks_data(self, director_input: VisualDirectorInput) -> dict[str, Any]:
+        text = director_input.narration_text.lower()
+        leaks = [
+            {"label": "Food apps", "amount": 2400.0},
+            {"label": "Subscriptions", "amount": 1200.0},
+            {"label": "Impulse buys", "amount": 3500.0},
+            {"label": "Convenience fees", "amount": 900.0},
+        ]
+        if "coffee" in text:
+            leaks[0] = {"label": "Coffee runs", "amount": 1800.0}
+        if "week" in text:
+            leaks.append({"label": "Weekly repeats", "amount": 2600.0})
+        return {
+            "leaks": [
+                {**leak, "value": self._format_rupee(float(leak["amount"]))}
+                for leak in leaks[:5]
+            ],
+            "monthly_loss": round(sum(float(leak["amount"]) for leak in leaks[:5]), 2),
+        }
 
     def _inferred_money_flow_data(self, text: str, concept_type: str) -> dict[str, Any]:
         source_amount = self._parse_rupee(text) or (80000.0 if concept_type == "lifestyle_inflation" else 50000.0)

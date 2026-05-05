@@ -19,6 +19,10 @@ SCENE_COMPONENT_BY_PATTERN = {
     "MoneyFlowDiagram": "MoneyFlowDiagram",
     "DebtSpiralVisualizer": "DebtSpiralVisualizer",
     "SIPGrowthEngine": "SIPGrowthEngine",
+    "EMIStackVisualizer": "EMIStackVisualizer",
+    "FOMOPriceCrashVisualizer": "FOMOPriceCrashVisualizer",
+    "PortfolioDiversificationVisualizer": "PortfolioDiversificationVisualizer",
+    "SmallLeaksAccumulator": "SmallLeaksAccumulator",
 }
 
 
