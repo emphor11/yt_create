@@ -66,6 +66,21 @@ DOMINANT_COMPONENTS = {
     "SplitComparison",
 }
 DOMINANT_SHARE = 0.64
+TEXT_COMPONENTS = {"StatCard", "HighlightText", "ConceptCard", "ConceptCardScene", "RiskCard", "RiskCardScene"}
+PHASE_WEIGHT_MULTIPLIERS = {
+    "drain": 1.4,
+    "spiral": 1.4,
+    "growth": 1.4,
+    "erosion": 1.4,
+    "intro": 0.75,
+    "principal": 0.75,
+    "contribution": 0.75,
+    "today": 0.75,
+    "remainder": 0.95,
+    "consequence": 0.95,
+    "corpus": 0.95,
+    "future": 0.95,
+}
 
 
 class SceneBuilder:
@@ -99,6 +114,9 @@ class SceneBuilder:
             data_warnings = self._validate_beat_data(timed_beats)
             for warning in data_warnings:
                 current_app.logger.warning("SceneBuilder data warning for scene %s: %s", index, warning)
+            dominance_warning = self._text_dominance_warning(timed_beats, str(section.get("kind") or section.get("type") or ""))
+            if dominance_warning:
+                current_app.logger.warning("SceneBuilder visual warning for scene %s: %s", index, dominance_warning)
             pattern, data, concept = self._scene_visual_contract(section)
             map_pattern_to_component(pattern)
 
@@ -193,7 +211,7 @@ class SceneBuilder:
                 "emphasis": str(beat.get("emphasis") or self._beat_emphasis(index, len(beats))),
                 "beat_role": str(beat.get("beat_role") or self._beat_role(beat, index, len(beats))),
             }
-            for key in ("subtext", "steps", "props", "data", "source_text", "sentence_index"):
+            for key in ("subtext", "steps", "props", "data", "source_text", "sentence_index", "beat_phase"):
                 if key in beat:
                     timed_beat[key] = beat[key]
             timeline.append(timed_beat)
@@ -221,7 +239,7 @@ class SceneBuilder:
                 "emphasis": str(beat.get("emphasis") or self._beat_emphasis(index, len(beats))),
                 "beat_role": str(beat.get("beat_role") or self._beat_role(beat, index, len(beats))),
             }
-            for key in ("subtext", "steps", "props", "data", "source_text", "sentence_index"):
+            for key in ("subtext", "steps", "props", "data", "source_text", "sentence_index", "beat_phase"):
                 if key in beat:
                     timed_beat[key] = beat[key]
             timeline.append(timed_beat)
@@ -390,7 +408,7 @@ class SceneBuilder:
                 "component": str(beat.get("component") or "").strip() or "ConceptCard",
                 "text": text,
             }
-            for extra_key in ("subtext", "steps", "props", "source_text", "sentence_index", "beat_role", "emphasis"):
+            for extra_key in ("subtext", "steps", "props", "source_text", "sentence_index", "beat_role", "beat_phase", "emphasis"):
                 if extra_key in beat:
                     cleaned_beat[extra_key] = beat[extra_key]
             data = self._normalize_data_dict(beat.get("data"))
@@ -436,6 +454,23 @@ class SceneBuilder:
                 if field not in data:
                     warnings.append(f"beat {index}: {component} missing required data field '{field}'")
         return warnings
+
+    def _text_dominance_warning(self, beats: list[dict[str, Any]], scene_kind: str) -> str:
+        if scene_kind.lower() in {"hook", "outro"} or not beats:
+            return ""
+        total_duration = sum(max(float(beat.get("end_time") or 0.0) - float(beat.get("start_time") or 0.0), 0.0) for beat in beats)
+        if total_duration <= 0:
+            return ""
+        text_duration = sum(
+            max(float(beat.get("end_time") or 0.0) - float(beat.get("start_time") or 0.0), 0.0)
+            for beat in beats
+            if str(beat.get("component") or "") in TEXT_COMPONENTS
+        )
+        text_ratio = text_duration / total_duration
+        if text_ratio <= 0.40:
+            return ""
+        components = [str(beat.get("component") or "") for beat in beats]
+        return f"text components occupy {text_ratio:.0%} of scene duration; beats={components}"
 
     def _sentence_aligned_spans(
         self,
@@ -484,10 +519,7 @@ class SceneBuilder:
         for sentence_index, beat_indices in beat_indices_by_sentence.items():
             sentence_start, sentence_end = sentence_ranges[sentence_index]
             sentence_duration = max(sentence_end - sentence_start, 0.0)
-            weights = [
-                COMPONENT_DURATION_WEIGHTS.get(str(beats[index].get("component") or "ConceptCard"), 1.0)
-                for index in beat_indices
-            ]
+            weights = [self._beat_weight(beats[index]) for index in beat_indices]
             total_weight = sum(weights) or float(len(beat_indices))
             local_cursor = sentence_start
             for position, (beat_index, weight) in enumerate(zip(beat_indices, weights)):
@@ -509,7 +541,7 @@ class SceneBuilder:
             equal_duration = audio_duration / len(beats)
             return [equal_duration for _ in beats]
 
-        weights = [COMPONENT_DURATION_WEIGHTS.get(str(beat.get("component") or "ConceptCard"), 1.0) for beat in beats]
+        weights = [self._beat_weight(beat) for beat in beats]
         durations = [0.0 for _ in beats]
         remaining_indices = set(range(len(beats)))
         remaining_duration = audio_duration
@@ -566,30 +598,45 @@ class SceneBuilder:
             return []
         if audio_duration <= 0:
             return [min_duration for _ in beats]
-        dominant_index = next(
-            (index for index, beat in enumerate(beats) if str(beat.get("component") or "").strip() == dominant_component),
-            -1,
-        )
-        if dominant_index < 0 or len(beats) == 1:
+        dominant_indices = [
+            index for index, beat in enumerate(beats) if str(beat.get("component") or "").strip() == dominant_component
+        ]
+        if not dominant_indices:
             return self._component_weighted_durations(beats, audio_duration, min_duration)
+        if len(beats) == 1:
+            return [audio_duration]
 
-        support_count = len(beats) - 1
-        target_dominant = audio_duration * DOMINANT_SHARE
+        support_indices = [index for index in range(len(beats)) if index not in dominant_indices]
+        if not support_indices:
+            weights = [self._beat_weight(beat) for beat in beats]
+            total_weight = sum(weights) or float(len(beats))
+            return [audio_duration * (weight / total_weight) for weight in weights]
+
+        support_count = len(support_indices)
+        target_share = max(DOMINANT_SHARE, 0.78 if len(dominant_indices) > 1 else DOMINANT_SHARE)
+        target_dominant = audio_duration * target_share
         support_floor = min(min_duration, max((audio_duration - target_dominant) / support_count, 0.35))
         max_dominant = max(audio_duration - support_floor * support_count, audio_duration / len(beats))
-        dominant_duration = min(max(target_dominant, min_duration), max_dominant)
+        dominant_duration = min(max(target_dominant, min_duration * len(dominant_indices)), max_dominant)
         remaining = max(audio_duration - dominant_duration, 0.0)
-        support_indices = [index for index in range(len(beats)) if index != dominant_index]
-        support_weights = [
-            COMPONENT_DURATION_WEIGHTS.get(str(beats[index].get("component") or "ConceptCard"), 1.0)
-            for index in support_indices
-        ]
+        dominant_weights = [self._beat_weight(beats[index]) for index in dominant_indices]
+        total_dominant_weight = sum(dominant_weights) or float(len(dominant_indices))
+        support_weights = [self._beat_weight(beats[index]) for index in support_indices]
         total_support_weight = sum(support_weights) or float(len(support_indices))
         durations = [0.0 for _ in beats]
-        durations[dominant_index] = dominant_duration
+        for index, weight in zip(dominant_indices, dominant_weights):
+            durations[index] = dominant_duration * (weight / total_dominant_weight)
         for index, weight in zip(support_indices, support_weights):
             durations[index] = remaining * (weight / total_support_weight)
         return durations
+
+    def _beat_weight(self, beat: dict[str, Any]) -> float:
+        base = COMPONENT_DURATION_WEIGHTS.get(str(beat.get("component") or "ConceptCard"), 1.0)
+        phase = str(beat.get("beat_phase") or "").strip()
+        data = beat.get("data")
+        if not phase and isinstance(data, dict):
+            phase = str(data.get("active_phase") or "").strip()
+        return base * PHASE_WEIGHT_MULTIPLIERS.get(phase, 1.0)
 
     def _beat_emphasis(self, index: int, total: int) -> str:
         if total <= 1 or index == total - 1:

@@ -49,13 +49,15 @@ const buildUnits = (count: number, activeCount: number, color: string, progress:
 export const InflationErosionVisualizer: React.FC<BeatComponentProps> = ({beat, frameWithinBeat, durationFrames}) => {
 	const {fps} = useVideoConfig();
 	const data = getBeatData<Record<string, unknown>>(beat) ?? {};
+	const phase = String(beat.beat_phase ?? data.active_phase ?? 'erosion');
 	const start = asText(data.start, '₹100');
 	const end = asText(data.end, 'Less buying power');
 	const rate = asText(data.rate, '');
 	const years = asText(data.years, '');
 	const rawItems = Array.isArray(data.items) ? (data.items as InflationItem[]) : [];
 	const items = rawItems.length > 0 ? rawItems : [{name: 'Basket', current: 10, future: 5}];
-	const progress = Math.min(getBeatProgress(frameWithinBeat, Math.floor(durationFrames * 0.75)), 1);
+	const rawProgress = Math.min(getBeatProgress(frameWithinBeat, Math.floor(durationFrames * 0.75)), 1);
+	const progress = phase === 'today' ? 0 : phase === 'future' ? 1 : rawProgress;
 	const reveal = spring({frame: Math.min(frameWithinBeat, 20), fps, config: {stiffness: 190, damping: 18, mass: 0.8}, durationInFrames: 20});
 	const melt = interpolate(progress, [0.18, 0.86], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
 	const accent = COLORS.danger;
@@ -86,7 +88,7 @@ export const InflationErosionVisualizer: React.FC<BeatComponentProps> = ({beat, 
 			/>
 			<div style={{position: 'absolute', inset: 0, left: 0, width: 8, background: accent}} />
 			<div style={{position: 'relative', zIndex: 2, fontSize: TYPE_SCALE.label.size, fontWeight: 900, color: COLORS.text_secondary}}>
-				Purchasing power erosion
+				{phase === 'today' ? 'Buying power today' : phase === 'future' ? 'Buying power later' : 'Purchasing power erosion'}
 			</div>
 
 			<div
@@ -191,7 +193,7 @@ export const InflationErosionVisualizer: React.FC<BeatComponentProps> = ({beat, 
 					fontSize: 82,
 					lineHeight: 0.92,
 					color: accent,
-					opacity: interpolate(progress, [0.66, 1], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
+					opacity: phase === 'today' ? 0 : interpolate(progress, [0.66, 1], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
 				}}
 			>
 				Same money. Less power.

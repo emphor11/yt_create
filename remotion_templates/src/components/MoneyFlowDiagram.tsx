@@ -43,9 +43,12 @@ const moneyFlowData = (beat: BeatComponentProps['beat']) => {
 
 export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, frameWithinBeat, durationFrames}) => {
 	const {fps} = useVideoConfig();
+	const rawData = getBeatData<Record<string, unknown>>(beat) ?? {};
+	const phase = String(beat.beat_phase ?? rawData.active_phase ?? 'drain');
 	const {source, flows, remainder} = moneyFlowData(beat);
 	const total = Math.max(source.amount, 1);
-	const progress = Math.min(getBeatProgress(frameWithinBeat, Math.floor(durationFrames * 0.75)) / 1, 1);
+	const rawProgress = Math.min(getBeatProgress(frameWithinBeat, Math.floor(durationFrames * 0.75)) / 1, 1);
+	const progress = phase === 'intro' ? 0 : phase === 'remainder' ? 1 : rawProgress;
 	const reveal = spring({frame: Math.min(frameWithinBeat, 18), fps, config: SPRINGS.entry, durationInFrames: 18});
 	const opacity = interpolate(reveal, [0, 1], [0, 1]);
 	const sourceX = 240;
@@ -68,7 +71,7 @@ export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, frameWithi
 			<style>{FONT_FACES}</style>
 			<div style={{position: 'absolute', inset: 0, left: 0, width: 8, background: accentColor}} />
 			<div style={{fontSize: TYPE_SCALE.label.size, fontWeight: 800, color: COLORS.text_secondary}}>
-				Where the money goes
+				{phase === 'intro' ? 'Money enters' : phase === 'remainder' ? 'What survives' : 'Where the money goes'}
 			</div>
 			<div
 				style={{
@@ -96,7 +99,7 @@ export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, frameWithi
 				</div>
 			</div>
 			<svg viewBox="0 0 1920 1080" style={{position: 'absolute', inset: 0}}>
-				{flows.map((flow, index) => {
+				{phase !== 'intro' ? flows.map((flow, index) => {
 					const y = rowStartY + index * rowGap;
 					const width = Math.max(10, Math.min(68, (flow.amount / total) * 120));
 					const color = flow.color === 'red' ? COLORS.danger : flow.color === 'teal' ? COLORS.positive : COLORS.warning;
@@ -121,9 +124,9 @@ export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, frameWithi
 							<circle cx={drawX} cy={y} r={Math.max(8, width / 3)} fill={color} opacity={progress > 0.04 ? 1 : 0} />
 						</g>
 					);
-				})}
+				}) : null}
 			</svg>
-			{flows.map((flow, index) => {
+			{phase !== 'intro' ? flows.map((flow, index) => {
 				const y = rowStartY + index * rowGap;
 				return (
 					<div
@@ -139,7 +142,7 @@ export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, frameWithi
 						<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 48, lineHeight: 1}}>{flow.value}</div>
 					</div>
 				);
-			})}
+			}) : null}
 			<div
 				style={{
 					position: 'absolute',
@@ -150,7 +153,7 @@ export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, frameWithi
 					background: remainder.is_dangerous ? 'rgba(230,57,70,0.16)' : COLORS.bg_surface,
 					border: `2px solid ${accentColor}`,
 					textAlign: 'right',
-					opacity: interpolate(progress, [0.72, 1], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
+					opacity: phase === 'intro' ? 0 : interpolate(progress, [0.72, 1], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
 				}}
 			>
 				<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 700}}>Left over</div>

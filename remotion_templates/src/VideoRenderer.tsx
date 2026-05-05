@@ -23,13 +23,14 @@ export const VideoRenderer: React.FC<Props> = ({scenes}) => {
 		<>
 			{scenes.map((scene, index) => {
 				const range = sceneToFrameRange(scenes, index, fps);
+				const audioFile = String(scene.audio_file ?? '').trim();
 				return (
 					<Sequence
 						key={scene.id ?? scene.scene_id ?? `${scene.pattern}-${index}`}
 						from={range.startFrame}
 						durationInFrames={range.durationInFrames}
 					>
-						<Audio src={toAudioSrc(scene.audio_file)} />
+						{audioFile ? <Audio src={toAudioSrc(audioFile)} /> : null}
 						<SceneRenderer scene={scene} />
 					</Sequence>
 				);

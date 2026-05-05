@@ -23,13 +23,15 @@ const spiralPoints = (count: number, progress: number) => {
 export const DebtSpiralVisualizer: React.FC<BeatComponentProps> = ({beat, frameWithinBeat, durationFrames}) => {
 	const {fps} = useVideoConfig();
 	const data = getBeatData<Record<string, unknown>>(beat) ?? {};
+	const phase = String(beat.beat_phase ?? data.active_phase ?? 'spiral');
 	const principal = data.principal as {value?: string; amount?: number} | undefined;
 	const balances = Array.isArray(data.balances) ? (data.balances as BalancePoint[]) : [];
 	const monthlyInterest = Number(data.monthly_interest ?? 0);
 	const minimumPayment = Number(data.minimum_payment ?? 0);
 	const month12Balance = Number(data.month_12_balance ?? balances[balances.length - 1]?.balance ?? principal?.amount ?? 0);
 	const isTrap = Boolean(data.is_trap);
-	const progress = Math.min(getBeatProgress(frameWithinBeat, Math.floor(durationFrames * 0.75)), 1);
+	const rawProgress = Math.min(getBeatProgress(frameWithinBeat, Math.floor(durationFrames * 0.75)), 1);
+	const progress = phase === 'principal' ? 0 : phase === 'consequence' ? 1 : rawProgress;
 	const reveal = spring({frame: Math.min(frameWithinBeat, 18), fps, config: SPRINGS.impact, durationInFrames: 18});
 	const pulse = spring({frame: frameWithinBeat % 30, fps, config: {stiffness: 220, damping: 11, mass: 0.6}, durationInFrames: 18});
 	const trapScale = isTrap ? 1 + pulse * 0.05 : 1;
@@ -49,12 +51,16 @@ export const DebtSpiralVisualizer: React.FC<BeatComponentProps> = ({beat, frameW
 			<style>{FONT_FACES}</style>
 			<div style={{position: 'absolute', inset: 0, left: 0, width: 8, background: accent}} />
 			<div style={{fontSize: TYPE_SCALE.label.size, fontWeight: 800, color: COLORS.text_secondary}}>
-				Minimum payment trap
+				{phase === 'principal' ? 'Debt enters the month' : phase === 'consequence' ? 'Debt after the trap' : 'Minimum payment trap'}
 			</div>
 			<svg viewBox="0 0 1920 1080" style={{position: 'absolute', inset: 0}}>
 				<circle cx="760" cy="540" r="328" fill="rgba(230,57,70,0.035)" stroke="rgba(255,255,255,0.08)" />
-				<polyline points={path} fill="none" stroke={accent} strokeWidth="26" strokeLinecap="round" strokeLinejoin="round" />
-				<polyline points={path} fill="none" stroke="rgba(255,255,255,0.36)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+				{phase !== 'principal' ? (
+					<>
+						<polyline points={path} fill="none" stroke={accent} strokeWidth="26" strokeLinecap="round" strokeLinejoin="round" />
+						<polyline points={path} fill="none" stroke="rgba(255,255,255,0.36)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+					</>
+				) : null}
 				<circle
 					cx="760"
 					cy="540"
@@ -63,7 +69,7 @@ export const DebtSpiralVisualizer: React.FC<BeatComponentProps> = ({beat, frameW
 					stroke={accent}
 					strokeWidth={isTrap ? 8 : 5}
 				/>
-				{isTrap ? (
+				{isTrap && phase !== 'principal' ? (
 					<text
 						x="760"
 						y="565"
@@ -92,7 +98,7 @@ export const DebtSpiralVisualizer: React.FC<BeatComponentProps> = ({beat, frameW
 					{principal?.value ?? formatIndianRupee(Number(principal?.amount ?? 0))}
 				</div>
 			</div>
-			{isTrap && monthlyGap > 0 ? (
+			{isTrap && monthlyGap > 0 && phase !== 'principal' ? (
 				<div
 					style={{
 						position: 'absolute',
@@ -125,7 +131,7 @@ export const DebtSpiralVisualizer: React.FC<BeatComponentProps> = ({beat, frameW
 					gap: SPACING.md,
 				}}
 			>
-				{[
+				{phase !== 'principal' ? [
 					['Monthly interest', formatIndianRupee(monthlyInterest), COLORS.danger],
 					['Minimum payment', minimumPayment ? formatIndianRupee(minimumPayment) : 'not enough', COLORS.warning],
 					['Month 12 balance', formatIndianRupee(month12Balance), accent],
@@ -148,7 +154,7 @@ export const DebtSpiralVisualizer: React.FC<BeatComponentProps> = ({beat, frameW
 						</div>
 						<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 56, lineHeight: 1, color}}>{value}</div>
 					</div>
-				))}
+				)) : null}
 			</div>
 			<div
 				style={{
@@ -159,7 +165,7 @@ export const DebtSpiralVisualizer: React.FC<BeatComponentProps> = ({beat, frameW
 					fontSize: 76,
 					lineHeight: 0.95,
 					color: accent,
-					opacity: interpolate(progress, [0.78, 1], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
+					opacity: phase === 'principal' ? 0 : interpolate(progress, [0.78, 1], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
 				}}
 			>
 				{isTrap ? 'You owe more.' : 'Interest is still heavy.'}

@@ -7,6 +7,20 @@ from typing import Any
 class VisualBeatExpander:
     """Adds enough visual beats for longer narration without changing the scene concept."""
 
+    PRIMARY_MECHANISM_COMPONENTS = {
+        "MoneyFlowDiagram",
+        "DebtSpiralVisualizer",
+        "SIPGrowthEngine",
+        "InflationErosionVisualizer",
+    }
+
+    MECHANISM_PHASES = {
+        "MoneyFlowDiagram": ("intro", "drain", "drain", "drain", "remainder", "remainder", "remainder"),
+        "DebtSpiralVisualizer": ("principal", "spiral", "spiral", "spiral", "consequence", "consequence", "consequence"),
+        "SIPGrowthEngine": ("contribution", "growth", "growth", "growth", "corpus", "corpus", "corpus"),
+        "InflationErosionVisualizer": ("today", "erosion", "erosion", "erosion", "future", "future", "future"),
+    }
+
     OBJECT_TO_VIEWER_TEXT = {
         "phone_account": "Money hits the account",
         "salary_balance": "Salary lands",
@@ -106,19 +120,27 @@ class VisualBeatExpander:
             is_first = index == 0
             is_last = index == min(len(texts), max(3, min(target, 7))) - 1
             component = self._story_component_for(index, is_first, is_last, pattern, mechanism)
+            beat_phase = self._phase_for(pattern, index)
             beat: dict[str, Any] = {
                 "component": component,
                 "text": text,
                 "source_text": text,
                 "sentence_index": index,
-                "data": {"story_state": story_state, **data} if data else {"story_state": story_state},
             }
+            if beat_phase:
+                beat["beat_phase"] = beat_phase
+            beat_data = {"story_state": story_state, **data} if data else {"story_state": story_state}
+            if beat_phase:
+                beat_data["active_phase"] = beat_phase
+            beat["data"] = beat_data
             if component in {"FlowDiagram", "FlowBar", "GrowthChart"} and data:
                 beat["props"] = data
             beats.append(beat)
         return self._dedupe_adjacent(beats)
 
     def _story_component_for(self, index: int, is_first: bool, is_last: bool, pattern: str, mechanism: str) -> str:
+        if pattern in self.PRIMARY_MECHANISM_COMPONENTS:
+            return pattern
         if is_first:
             return "StatCard"
         if is_last:
@@ -134,6 +156,12 @@ class VisualBeatExpander:
         if index == 2 and pattern == "SplitComparison":
             return "SplitComparison"
         return self._component_for("", index, is_first, is_last, pattern, mechanism)
+
+    def _phase_for(self, pattern: str, index: int) -> str:
+        phases = self.MECHANISM_PHASES.get(pattern)
+        if not phases:
+            return ""
+        return phases[min(index, len(phases) - 1)]
 
     def _object_setup_text(self, active_objects: list[str], money: dict[str, Any]) -> str:
         primary = active_objects[0] if active_objects else ""
@@ -217,6 +245,7 @@ class VisualBeatExpander:
             is_first = index == 0
             is_last = index == min(target, len(selected)) - 1
             component = self._component_for(sentence, index, is_first, is_last, pattern, mechanism)
+            beat_phase = self._phase_for(pattern, index)
             raw_text = self._beat_text(sentence, mechanism, is_last)
             sanitized_text = self._sanitize_viewer_text(raw_text) or raw_text
             beat = {
@@ -225,6 +254,11 @@ class VisualBeatExpander:
                 "source_text": sentence,
                 "sentence_index": min(index, max(len(sentences) - 1, 0)),
             }
+            if beat_phase:
+                beat["beat_phase"] = beat_phase
+            component_data = {**data, "active_phase": beat_phase} if data and beat_phase else data
+            if component in self.PRIMARY_MECHANISM_COMPONENTS and component_data:
+                beat["data"] = component_data
             if component in {"FlowDiagram", "FlowBar"} and data:
                 beat["data"] = data
                 beat["props"] = data
@@ -246,7 +280,6 @@ class VisualBeatExpander:
         required_components: list[str] = []
         if pattern == "DebtSpiralVisualizer" or mechanism == "debt_trap":
             required_components.append("DebtSpiralVisualizer")
-            required_components.append("CalculationStrip")
         if pattern == "SIPGrowthEngine" or mechanism in {"sip_growth", "compounding"}:
             required_components.append("SIPGrowthEngine")
         if pattern == "MoneyFlowDiagram" or mechanism in {"salary_drain", "rent_burden", "tax_drain"}:
@@ -291,6 +324,8 @@ class VisualBeatExpander:
         return False
 
     def _component_for(self, sentence: str, index: int, is_first: bool, is_last: bool, pattern: str, mechanism: str) -> str:
+        if pattern in self.PRIMARY_MECHANISM_COMPONENTS:
+            return pattern
         if is_first:
             return "StatCard"
         if is_last:

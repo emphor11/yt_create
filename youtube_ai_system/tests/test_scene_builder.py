@@ -769,6 +769,41 @@ class SceneBuilderTestCase(unittest.TestCase):
 
         self.assertEqual(result["scenes"][0]["duration"], 6.8)
 
+    def test_phase_based_mechanism_scene_has_no_text_beats(self) -> None:
+        visual_data = {
+            "source": {"label": "Salary", "value": "₹50,000", "amount": 50000},
+            "flows": [{"label": "EMI", "value": "₹18,000", "amount": 18000, "color": "red", "order": 1}],
+            "remainder": {"value": "₹3,000", "amount": 3000, "is_dangerous": True},
+        }
+        result = build_scenes(
+            [
+                {
+                    "type": "body",
+                    "text": "My ₹50,000 salary disappears every month. EMI takes ₹18,000 and only ₹3,000 is left.",
+                    "audio_file": str((Path(self.temp_dir.name) / "storage" / "audio" / "dummy.wav").resolve()),
+                    "audio_duration": 9.0,
+                    "visual_plan": [
+                        {
+                            "concept": {"concept": "Salary Drain", "type": "salary_drain"},
+                            "visual": {"pattern": "MoneyFlowDiagram", "data": visual_data},
+                            "beats": {
+                                "beats": [
+                                    {"component": "MoneyFlowDiagram", "text": "₹50,000", "data": {**visual_data, "active_phase": "intro"}, "beat_phase": "intro"},
+                                    {"component": "MoneyFlowDiagram", "text": "Where salary goes", "data": {**visual_data, "active_phase": "drain"}, "beat_phase": "drain"},
+                                    {"component": "MoneyFlowDiagram", "text": "₹3,000 left", "data": {**visual_data, "active_phase": "remainder"}, "beat_phase": "remainder"},
+                                ]
+                            },
+                        }
+                    ],
+                }
+            ]
+        )
+
+        scene = result["scenes"][0]
+        self.assertEqual([beat["component"] for beat in scene["beats"]], ["MoneyFlowDiagram", "MoneyFlowDiagram", "MoneyFlowDiagram"])
+        self.assertEqual([beat["beat_phase"] for beat in scene["beats"]], ["intro", "drain", "remainder"])
+        self.assertEqual(scene["warnings"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

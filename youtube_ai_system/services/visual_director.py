@@ -47,6 +47,7 @@ class DirectedBeat:
     props: dict[str, Any] | None = None
     source_text: str | None = None
     sentence_index: int | None = None
+    beat_phase: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -64,6 +65,8 @@ class DirectedBeat:
             payload["source_text"] = self.source_text
         if self.sentence_index is not None:
             payload["sentence_index"] = self.sentence_index
+        if self.beat_phase:
+            payload["beat_phase"] = self.beat_phase
         return payload
 
 
@@ -447,6 +450,9 @@ class VisualDirector:
         direction = SceneDirection("comfort", "anxiety", director_input.section_position, "danger")
         if flow_data:
             remainder = flow_data["remainder"]
+            intro_data = {**flow_data, "active_phase": "intro"}
+            drain_data = {**flow_data, "active_phase": "drain"}
+            remainder_data = {**flow_data, "active_phase": "remainder"}
             return DirectedPlan(
                 concept_type=concept_type,
                 concept_name="Salary Drain",
@@ -456,19 +462,21 @@ class VisualDirector:
                 theme=THEME,
                 beats=self._contextualize_beats([
                     DirectedBeat(
-                        "StatCard",
+                        "MoneyFlowDiagram",
                         flow_data["source"]["value"],
                         "normal",
                         flow_data["source"]["label"],
-                        {"primary_value": flow_data["source"]["value"], "label": flow_data["source"]["label"], "color": "white"},
+                        data=intro_data,
+                        beat_phase="intro",
                     ),
-                    DirectedBeat("MoneyFlowDiagram", "Where salary goes", "subtle", data=flow_data),
+                    DirectedBeat("MoneyFlowDiagram", "Where salary goes", "subtle", data=drain_data, beat_phase="drain"),
                     DirectedBeat(
-                        "HighlightText",
+                        "MoneyFlowDiagram",
                         f"{remainder['value']} left",
                         "hero",
                         "danger zone" if remainder["is_dangerous"] else "left over",
-                        {"primary_value": remainder["value"], "label": "left over", "color": "red" if remainder["is_dangerous"] else "orange"},
+                        data=remainder_data,
+                        beat_phase="remainder",
                     ),
                 ], director_input.narration_text),
             )
@@ -492,6 +500,9 @@ class VisualDirector:
             ]
             if minimum is not None:
                 steps.append({"label": "Minimum payment", "value": self._format_rupee(minimum), "operation": "-"})
+            principal_data = {**debt_data, "active_phase": "principal", "steps": steps}
+            spiral_data = {**debt_data, "active_phase": "spiral", "steps": steps}
+            consequence_data = {**debt_data, "active_phase": "consequence", "steps": steps}
             return DirectedPlan(
                 concept_type=concept_type,
                 concept_name="Debt Trap",
@@ -500,9 +511,16 @@ class VisualDirector:
                 direction=direction,
                 theme=THEME,
                 beats=self._contextualize_beats([
-                    DirectedBeat("StatCard", debt_data["principal"]["value"], "normal", "credit card balance", {"label": "credit card balance"}),
-                    DirectedBeat("CalculationStrip", "Interest beats payment", "subtle", data={"steps": steps}),
-                    DirectedBeat("DebtSpiralVisualizer", "Debt keeps growing", "hero", data=debt_data),
+                    DirectedBeat("DebtSpiralVisualizer", debt_data["principal"]["value"], "normal", "credit card balance", data=principal_data, beat_phase="principal"),
+                    DirectedBeat("DebtSpiralVisualizer", "Interest beats payment", "subtle", data=spiral_data, beat_phase="spiral"),
+                    DirectedBeat(
+                        "DebtSpiralVisualizer",
+                        f"{self._format_rupee(debt_data['month_12_balance'])} after 12 months",
+                        "hero",
+                        "debt grew despite payments",
+                        data=consequence_data,
+                        beat_phase="consequence",
+                    ),
                 ], director_input.narration_text),
             )
         if self._has_finance_numbers(director_input):
@@ -520,6 +538,9 @@ class VisualDirector:
         sip_data = self._sip_growth_data(director_input.narration_text, director_input)
         direction = SceneDirection("confusion", "confidence", director_input.section_position, "positive")
         if sip_data:
+            contribution_data = {**sip_data, "active_phase": "contribution"}
+            growth_data = {**sip_data, "active_phase": "growth"}
+            corpus_data = {**sip_data, "active_phase": "corpus"}
             return DirectedPlan(
                 concept_type=concept_type,
                 concept_name="SIP Growth",
@@ -528,16 +549,15 @@ class VisualDirector:
                 direction=direction,
                 theme=THEME,
                 beats=self._contextualize_beats([
-                    DirectedBeat("StatCard", sip_data["monthly_sip"]["value"], "normal", "monthly SIP", {"label": "monthly SIP"}),
-                    DirectedBeat("SIPGrowthEngine", "Compounding engine", "subtle", data=sip_data),
+                    DirectedBeat("SIPGrowthEngine", sip_data["monthly_sip"]["value"], "normal", "monthly SIP", data=contribution_data, beat_phase="contribution"),
+                    DirectedBeat("SIPGrowthEngine", "Compounding engine", "subtle", data=growth_data, beat_phase="growth"),
                     DirectedBeat(
-                        "SplitComparison",
-                        "Invested vs corpus",
+                        "SIPGrowthEngine",
+                        self._format_rupee(sip_data["final_corpus"]),
                         "hero",
-                        data={
-                            "left": {"label": "Invested", "value": self._format_rupee(sip_data["total_invested"])},
-                            "right": {"label": "Corpus", "value": self._format_rupee(sip_data["final_corpus"])},
-                        },
+                        f"{sip_data['awe_ratio']}x return",
+                        data=corpus_data,
+                        beat_phase="corpus",
                     ),
                 ], director_input.narration_text),
             )
@@ -557,6 +577,9 @@ class VisualDirector:
         concept_name = self._display_concept_name(concept_type)
         if not flow_data:
             return self._qualitative_money_plan(director_input, concept_type, direction, concept_name)
+        intro_data = {**flow_data, "active_phase": "intro"}
+        drain_data = {**flow_data, "active_phase": "drain"}
+        remainder_data = {**flow_data, "active_phase": "remainder"}
         return DirectedPlan(
             concept_type=concept_type,
             concept_name=concept_name,
@@ -566,18 +589,20 @@ class VisualDirector:
             theme=THEME,
             beats=self._contextualize_beats([
                 DirectedBeat(
-                    "StatCard",
+                    "MoneyFlowDiagram",
                     flow_data["source"]["value"],
                     "normal",
                     flow_data["source"]["label"],
-                    {"primary_value": flow_data["source"]["value"], "label": flow_data["source"]["label"], "color": "white"},
+                    data=intro_data,
+                    beat_phase="intro",
                 ),
-                DirectedBeat("MoneyFlowDiagram", self._money_flow_title(concept_type), "subtle", data=flow_data),
+                DirectedBeat("MoneyFlowDiagram", self._money_flow_title(concept_type), "subtle", data=drain_data, beat_phase="drain"),
                 DirectedBeat(
-                    "HighlightText",
+                    "MoneyFlowDiagram",
                     self._money_mechanism_punch(flow_data, concept_type),
                     "hero",
-                    data={"primary_value": self._money_mechanism_punch(flow_data, concept_type), "label": concept_name, "color": "teal" if concept_type == "emergency_fund" else "orange"},
+                    data=remainder_data,
+                    beat_phase="remainder",
                 ),
             ], text),
         )
@@ -595,6 +620,9 @@ class VisualDirector:
             {"label": "Rate", "value": f"{debt_data['annual_interest_rate']:g}%", "operation": "+"},
             {"label": "Month 12", "value": self._format_rupee(debt_data["month_12_balance"]), "operation": "="},
         ]
+        principal_data = {**debt_data, "active_phase": "principal", "steps": steps}
+        spiral_data = {**debt_data, "active_phase": "spiral", "steps": steps}
+        consequence_data = {**debt_data, "active_phase": "consequence", "steps": steps}
         return DirectedPlan(
             concept_type=concept_type,
             concept_name=concept_name,
@@ -603,9 +631,9 @@ class VisualDirector:
             direction=direction,
             theme=THEME,
             beats=self._contextualize_beats([
-                DirectedBeat("StatCard", debt_data["principal"]["value"], "normal", "loan balance", {"primary_value": debt_data["principal"]["value"], "label": "loan balance", "color": "white"}),
-                DirectedBeat("CalculationStrip", "Interest cost", "subtle", data={"steps": steps}),
-                DirectedBeat("DebtSpiralVisualizer", "Interest pressure", "hero", data=debt_data),
+                DirectedBeat("DebtSpiralVisualizer", debt_data["principal"]["value"], "normal", "loan balance", data=principal_data, beat_phase="principal"),
+                DirectedBeat("DebtSpiralVisualizer", "Interest cost", "subtle", data=spiral_data, beat_phase="spiral"),
+                DirectedBeat("DebtSpiralVisualizer", "Interest pressure", "hero", data=consequence_data, beat_phase="consequence"),
             ], director_input.narration_text),
         )
 
@@ -615,6 +643,9 @@ class VisualDirector:
         sip_data = self._sip_growth_data(director_input.narration_text, director_input)
         if sip_data is None:
             return self._qualitative_growth_plan(director_input, concept_type, direction, concept_name)
+        contribution_data = {**sip_data, "active_phase": "contribution"}
+        growth_data = {**sip_data, "active_phase": "growth"}
+        corpus_data = {**sip_data, "active_phase": "corpus"}
         return DirectedPlan(
             concept_type=concept_type,
             concept_name=concept_name,
@@ -623,9 +654,9 @@ class VisualDirector:
             direction=direction,
             theme=THEME,
             beats=self._contextualize_beats([
-                DirectedBeat("StatCard", sip_data["monthly_sip"]["value"], "normal", "monthly investment", {"primary_value": sip_data["monthly_sip"]["value"], "label": "monthly investment", "color": "teal"}),
-                DirectedBeat("SIPGrowthEngine", "Growth over time", "subtle", data=sip_data),
-                DirectedBeat("HighlightText", f"{sip_data['awe_ratio']}x gap", "hero", data={"primary_value": f"{sip_data['awe_ratio']}x", "label": "corpus vs invested", "color": "teal"}),
+                DirectedBeat("SIPGrowthEngine", sip_data["monthly_sip"]["value"], "normal", "monthly investment", data=contribution_data, beat_phase="contribution"),
+                DirectedBeat("SIPGrowthEngine", "Growth over time", "subtle", data=growth_data, beat_phase="growth"),
+                DirectedBeat("SIPGrowthEngine", f"{sip_data['awe_ratio']}x gap", "hero", "corpus vs invested", data=corpus_data, beat_phase="corpus"),
             ], director_input.narration_text),
         )
 
@@ -656,9 +687,9 @@ class VisualDirector:
             direction=direction,
             theme=THEME,
             beats=self._contextualize_beats([
-                DirectedBeat("StatCard", start["value"], "normal", "today", {"primary_value": start["value"], "label": "today", "color": "white"}),
-                DirectedBeat("InflationErosionVisualizer", "Purchasing power falls", "subtle", data=visual_data),
-                DirectedBeat("HighlightText", final_text, "hero", data={"primary_value": end["value"], "label": final_label, "color": "red"}),
+                DirectedBeat("InflationErosionVisualizer", start["value"], "normal", "today", data={**visual_data, "active_phase": "today"}, beat_phase="today"),
+                DirectedBeat("InflationErosionVisualizer", "Purchasing power falls", "subtle", data={**visual_data, "active_phase": "erosion"}, beat_phase="erosion"),
+                DirectedBeat("InflationErosionVisualizer", final_text, "hero", final_label, data={**visual_data, "active_phase": "future"}, beat_phase="future"),
             ], director_input.narration_text),
         )
 

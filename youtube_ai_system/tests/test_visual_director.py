@@ -91,14 +91,16 @@ class VisualDirectorTestCase(unittest.TestCase):
 
     def test_directed_beats_use_data_without_duplicate_props(self) -> None:
         debt = self.director.direct(build_input("Credit card balance ₹1,00,000 at 40% interest. Minimum payment ₹3,000.", "debt_trap", percentage=40.0))
-        calculation = next(beat for beat in debt.beats if beat.component == "CalculationStrip")
+        debt_phase = next(beat for beat in debt.beats if beat.component == "DebtSpiralVisualizer" and beat.beat_phase == "spiral")
         sip = self.director.direct(build_input("Invest ₹5,000 per month in SIP at 12% returns for 20 years.", "sip_growth", percentage=12.0, time_period="20 years"))
-        comparison = next(beat for beat in sip.beats if beat.component == "SplitComparison")
+        sip_phase = next(beat for beat in sip.beats if beat.component == "SIPGrowthEngine" and beat.beat_phase == "corpus")
 
-        self.assertIsNotNone(calculation.data)
-        self.assertIsNone(calculation.props)
-        self.assertIsNotNone(comparison.data)
-        self.assertIsNone(comparison.props)
+        self.assertIsNotNone(debt_phase.data)
+        self.assertIn("steps", debt_phase.data or {})
+        self.assertIsNone(debt_phase.props)
+        self.assertIsNotNone(sip_phase.data)
+        self.assertEqual((sip_phase.data or {}).get("active_phase"), "corpus")
+        self.assertIsNone(sip_phase.props)
 
     def test_director_falls_back_when_directed_data_is_missing(self) -> None:
         result = self.director.direct(build_input("Debt can feel stressful without a payoff plan.", "debt_trap"))
@@ -228,6 +230,37 @@ class VisualDirectorTestCase(unittest.TestCase):
         self.assertEqual(result.concept_type, "tax_drain")
         self.assertEqual(result.pattern, "MoneyFlowDiagram")
         self.assertNotEqual(result.concept_name, "Tax Saving")
+
+    def test_primary_mechanism_plans_use_phase_based_beats(self) -> None:
+        cases = [
+            (
+                build_input("My ₹50,000 salary disappears. EMI takes ₹18,000 and only ₹3,000 is left.", "salary_drain"),
+                "MoneyFlowDiagram",
+                ["intro", "drain", "remainder"],
+            ),
+            (
+                build_input("Credit card balance ₹1,00,000 at 40% interest. Minimum payment ₹3,000.", "debt_trap", percentage=40.0),
+                "DebtSpiralVisualizer",
+                ["principal", "spiral", "consequence"],
+            ),
+            (
+                build_input("Invest ₹5,000 per month in SIP at 12% returns for 20 years.", "sip_growth", percentage=12.0, time_period="20 years"),
+                "SIPGrowthEngine",
+                ["contribution", "growth", "corpus"],
+            ),
+            (
+                build_input("If ₹1,00,000 sits idle while prices rise at 7%, buying power keeps shrinking.", "inflation_erosion", percentage=7.0),
+                "InflationErosionVisualizer",
+                ["today", "erosion", "future"],
+            ),
+        ]
+
+        for director_input, component, phases in cases:
+            with self.subTest(component=component):
+                result = self.director.direct(director_input)
+                self.assertEqual([beat.component for beat in result.beats], [component, component, component])
+                self.assertEqual([beat.beat_phase for beat in result.beats], phases)
+                self.assertTrue(all((beat.data or {}).get("active_phase") == beat.beat_phase for beat in result.beats))
 
     def test_generic_tax_mentions_route_to_drain_not_saving(self) -> None:
         result = self.director.direct(

@@ -5,6 +5,7 @@ export type Beat = {
 	end_time: number;
 	emphasis: 'normal' | 'subtle' | 'hero';
 	beat_role?: 'introduce' | 'process' | 'change' | 'result' | 'punch' | string;
+	beat_phase?: string;
 	subtext?: string;
 	steps?: Array<Record<string, unknown>>;
 	props?: Record<string, unknown>;

@@ -637,14 +637,15 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         story_plan = self.pipeline.attach_section_narrative_arc(story_plan)
         planned = self.pipeline.attach_section_visual_plan(story_plan)
         beats = planned["sections"][0]["visual_plan"][0]["beats"]["beats"]
-        calculation = next(beat for beat in beats if beat["component"] == "CalculationStrip")
+        spiral = next(beat for beat in beats if beat["component"] == "DebtSpiralVisualizer")
 
         self.assertEqual(planned["sections"][0]["visual_type"], "balance_decay")
-        steps = calculation.get("steps") or calculation.get("data", {}).get("steps") or []
-        self.assertIn(calculation["text"], {"₹1,00,000 x 40% = ₹40,000", "Interest beats payment"})
-        self.assertTrue(steps)
-        self.assertTrue(any(step.get("operation") in {"x", "+", "="} for step in steps[1:]))
-        self.assertIn(beats[-1]["component"], {"HighlightText", "DebtSpiralVisualizer"})
+        data = spiral.get("data") or {}
+        self.assertEqual(spiral.get("beat_phase"), "principal")
+        self.assertEqual(data.get("active_phase"), "principal")
+        self.assertIn("balances", data)
+        self.assertIn("monthly_interest", data)
+        self.assertTrue(all(beat["component"] == "DebtSpiralVisualizer" for beat in beats))
 
     def test_section_flow_validation_logs_warning_without_failing_story_plan(self) -> None:
         class FakeLogger:

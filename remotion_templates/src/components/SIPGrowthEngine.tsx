@@ -7,6 +7,7 @@ import {COLORS, SPACING, SPRINGS, TYPE_SCALE, formatIndianRupee, getBeatData, ge
 export const SIPGrowthEngine: React.FC<BeatComponentProps> = ({beat, frameWithinBeat, durationFrames}) => {
 	const {fps} = useVideoConfig();
 	const data = getBeatData<Record<string, unknown>>(beat) ?? {};
+	const phase = String(beat.beat_phase ?? data.active_phase ?? 'growth');
 	const sip = data.monthly_sip as {value?: string; amount?: number} | undefined;
 	const totalInvested = Number(data.total_invested ?? 0);
 	const finalCorpus = Number(data.final_corpus ?? 0);
@@ -14,7 +15,8 @@ export const SIPGrowthEngine: React.FC<BeatComponentProps> = ({beat, frameWithin
 	const durationYears = Number(data.duration_years ?? 20);
 	const annualReturn = Number(data.annual_return_rate ?? 12);
 	const aweRatio = Number(data.awe_ratio ?? (totalInvested ? finalCorpus / totalInvested : 0));
-	const progress = Math.min(getBeatProgress(frameWithinBeat, Math.floor(durationFrames * 0.75)), 1);
+	const rawProgress = Math.min(getBeatProgress(frameWithinBeat, Math.floor(durationFrames * 0.75)), 1);
+	const progress = phase === 'contribution' ? 0.18 : phase === 'corpus' ? 1 : rawProgress;
 	const reveal = spring({frame: Math.min(frameWithinBeat, 18), fps, config: SPRINGS.entry, durationInFrames: 18});
 	const investedHeight = 230;
 	const corpusHeight = Math.min(540, Math.max(260, investedHeight * Math.max(aweRatio, 1.2) * 0.78));
@@ -38,7 +40,7 @@ export const SIPGrowthEngine: React.FC<BeatComponentProps> = ({beat, frameWithin
 			<style>{FONT_FACES}</style>
 			<div style={{position: 'absolute', inset: 0, left: 0, width: 8, background: COLORS.positive}} />
 			<div style={{fontSize: TYPE_SCALE.label.size, fontWeight: 800, color: COLORS.text_secondary}}>
-				Compounding engine
+				{phase === 'contribution' ? 'Contribution starts' : phase === 'corpus' ? 'Corpus lands' : 'Compounding engine'}
 			</div>
 			<div
 				style={{
@@ -122,7 +124,7 @@ export const SIPGrowthEngine: React.FC<BeatComponentProps> = ({beat, frameWithin
 					fontSize: 78,
 					lineHeight: 0.9,
 					color: COLORS.positive,
-					opacity: interpolate(progress, [0.55, 0.86], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
+					opacity: phase === 'contribution' ? 0 : interpolate(progress, [0.55, 0.86], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
 				}}
 			>
 				{displayedRatio.toFixed(1)}x more than invested
@@ -136,7 +138,7 @@ export const SIPGrowthEngine: React.FC<BeatComponentProps> = ({beat, frameWithin
 					borderRadius: 8,
 					background: COLORS.bg_surface,
 					border: `1px solid ${COLORS.stroke}`,
-					opacity: interpolate(progress, [0.72, 1], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
+					opacity: phase === 'contribution' ? 0 : interpolate(progress, [0.72, 1], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
 				}}
 			>
 				<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 700}}>Returns earned</div>

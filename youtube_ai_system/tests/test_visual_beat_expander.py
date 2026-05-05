@@ -86,10 +86,13 @@ class VisualBeatExpanderTestCase(unittest.TestCase):
         }
 
         result = self.expander.expand_section(section)
-        components = [beat.get("component") for beat in result["visual_plan"][0]["beats"]["beats"]]
+        beats = result["visual_plan"][0]["beats"]["beats"]
+        components = [beat.get("component") for beat in beats]
+        phases = [beat.get("beat_phase") for beat in beats if beat.get("component") == "DebtSpiralVisualizer"]
 
         self.assertIn("DebtSpiralVisualizer", components)
-        self.assertIn("CalculationStrip", components)
+        self.assertIn("spiral", phases)
+        self.assertTrue(all(component != "CalculationStrip" for component in components))
 
 
 if __name__ == "__main__":
