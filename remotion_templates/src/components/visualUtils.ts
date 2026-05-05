@@ -128,7 +128,7 @@ export const sceneText = (scene: Scene | undefined, key: string, fallback = ''):
 	propText(scene?.data, key, fallback);
 
 export const beatTitle = (beat: Beat): string =>
-	propText(beat.props, 'title', beat.text || 'Core idea');
+	propText(beat.props, 'title', beat.text || '');
 
 export const beatSubtitle = (beat: Beat, fallback = ''): string =>
 	propText(beat.props, 'subtitle', beat.subtext || fallback);

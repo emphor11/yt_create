@@ -53,7 +53,7 @@ EMOTION_MAP = {
 }
 
 MECHANISM_KEYWORDS = {
-    "salary_drain": ["salary", "take-home", "take home", "vanish", "disappear", "left over", "net pay"],
+    "salary_drain": ["salary drain", "salary gone", "salary lands", "take-home", "take home", "vanish", "disappear", "left over", "day 20", "still breathing", "net pay"],
     "lifestyle_inflation": ["lifestyle", "upgrade", "wants more", "buy more", "living better"],
     "emi_pressure": ["emi", "home loan", "car loan", "personal loan", "instalment", "installment"],
     "debt_trap": ["credit card", "minimum payment", "interest", "principal", "debt trap"],

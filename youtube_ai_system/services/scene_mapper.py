@@ -8,6 +8,7 @@ SCENE_COMPONENT_BY_PATTERN = {
     "SplitComparison": "SplitComparisonScene",
     "StepFlow": "StepFlowScene",
     "GrowthChart": "GrowthChartScene",
+    "InflationErosionVisualizer": "InflationErosionVisualizer",
     "RiskCard": "RiskCardScene",
     "NumericComparison": "CalculationStrip",
     "CalculationStrip": "CalculationStrip",

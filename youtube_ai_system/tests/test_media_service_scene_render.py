@@ -93,6 +93,38 @@ class MediaServiceSceneRenderTestCase(unittest.TestCase):
         self.assertTrue(section["story_state"])
         self.assertEqual(section["visual_type"], "money_flow")
 
+    def test_render_time_intelligence_does_not_route_lifestyle_to_inflation(self) -> None:
+        section = self.service._section_intelligence_from_narration(
+            "Your salary rises. Lifestyle absorbs it. Savings stay flat. Lifestyle inflation is real.",
+            "body",
+        )
+
+        self.assertEqual(section["concept_type"], "lifestyle_inflation")
+        self.assertEqual(section["visual_plan"][0]["visual"]["pattern"], "FlowDiagram")
+        self.assertNotEqual(section["visual_plan"][0]["visual"]["pattern"], "InflationErosionVisualizer")
+
+    def test_render_time_intelligence_routes_plain_compounding_to_growth_not_debt(self) -> None:
+        section = self.service._section_intelligence_from_narration(
+            "Compounding is powerful. Interest earns interest. Growth accelerates. Time is key. Start now.",
+            "body",
+        )
+
+        self.assertEqual(section["concept_type"], "compounding")
+        self.assertEqual(section["visual_plan"][0]["visual"]["pattern"], "GrowthChart")
+        combined = json.dumps(section["visual_plan"], ensure_ascii=False).lower()
+        self.assertNotIn("debt trap", combined)
+        self.assertNotIn("balance resists payoff", combined)
+
+    def test_render_time_intelligence_routes_outro_to_recap_system(self) -> None:
+        section = self.service._section_intelligence_from_narration(
+            "Recap: salary drain, lifestyle inflation, and debt trap destroy wealth. Break free. Invest wisely. Diversify. Avoid FOMO. Build an emergency fund. Start now. Your future self will thank you.",
+            "outro",
+        )
+
+        self.assertEqual(section["concept_type"], "recap_system")
+        self.assertEqual(section["visual_plan"][0]["visual"]["pattern"], "FlowDiagram")
+        self.assertEqual(section["visual_plan"][0]["concept"]["concept"], "Money System Recap")
+
     def test_format_number_uses_indian_finance_style(self) -> None:
         self.assertEqual(self.service._format_number(1000), "1,000")
         self.assertEqual(self.service._format_number(100000), "1L")

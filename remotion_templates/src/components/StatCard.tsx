@@ -27,7 +27,7 @@ export const StatCard: React.FC<BeatComponentProps> = ({
 	});
 	const isHero = beat.emphasis === 'hero';
 	const primaryValue = propText(beat.data, 'primary_value', beat.text);
-	const label = propText(beat.data, 'label', beat.subtext || (isHero ? 'Key impact' : 'Core idea'));
+	const label = propText(beat.data, 'label', beat.subtext || (isHero ? 'Key impact' : ''));
 	const accent = propText(beat.data, 'color', '').toLowerCase();
 	const accentColor = accent === 'red' ? COLORS.danger : accent === 'teal' ? COLORS.positive : accent === 'orange' ? COLORS.warning : COLORS.accent_line;
 
@@ -74,7 +74,7 @@ export const StatCard: React.FC<BeatComponentProps> = ({
 				>
 					{primaryValue}
 				</div>
-				{durationFrames > 45 ? (
+				{durationFrames > 45 && label ? (
 					<div
 						style={{
 							marginTop: SPACING.lg,

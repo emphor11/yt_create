@@ -127,6 +127,8 @@ class VisualBeatExpander:
             return "FlowDiagram"
         if index == 2 and pattern in {"DebtSpiralVisualizer", "CalculationStrip"}:
             return "CalculationStrip"
+        if index == 2 and pattern == "InflationErosionVisualizer":
+            return "InflationErosionVisualizer"
         if index == 2 and pattern in {"GrowthChart", "SIPGrowthEngine"}:
             return "GrowthChart"
         if index == 2 and pattern == "SplitComparison":
@@ -152,7 +154,7 @@ class VisualBeatExpander:
             return "Interest beats payment"
         if pattern == "SIPGrowthEngine":
             return "Compounding engine starts"
-        if pattern == "GrowthChart":
+        if pattern in {"GrowthChart", "InflationErosionVisualizer"}:
             return "Value path changes"
         if pattern == "SplitComparison":
             return "Two paths separate"
@@ -243,11 +245,14 @@ class VisualBeatExpander:
     ) -> list[dict[str, Any]]:
         required_components: list[str] = []
         if pattern == "DebtSpiralVisualizer" or mechanism == "debt_trap":
+            required_components.append("DebtSpiralVisualizer")
             required_components.append("CalculationStrip")
         if pattern == "SIPGrowthEngine" or mechanism in {"sip_growth", "compounding"}:
             required_components.append("SIPGrowthEngine")
         if pattern == "MoneyFlowDiagram" or mechanism in {"salary_drain", "rent_burden", "tax_drain"}:
             required_components.append("MoneyFlowDiagram")
+        if pattern == "InflationErosionVisualizer" or mechanism in {"inflation_erosion", "real_return", "fd_vs_inflation"}:
+            required_components.append("InflationErosionVisualizer")
 
         result = list(expanded)
         for component in required_components:
@@ -277,6 +282,7 @@ class VisualBeatExpander:
             "DebtSpiralVisualizer": ("balances", "principal"),
             "MoneyFlowDiagram": ("flows", "source", "remainder"),
             "SIPGrowthEngine": ("monthly_sip", "final_corpus"),
+            "InflationErosionVisualizer": ("start", "end"),
         }.get(component, ("steps", "balances", "flows", "monthly_sip"))
         if isinstance(data, dict) and any(key in data for key in expected_keys):
             return True
@@ -295,7 +301,9 @@ class VisualBeatExpander:
             return "FlowDiagram" if index in {2, 4} else "StatCard"
         if pattern in {"DebtSpiralVisualizer", "CalculationStrip"} or mechanism == "debt_trap":
             return "CalculationStrip" if index in {2, 4} else "StatCard"
-        if pattern in {"GrowthChart", "SIPGrowthEngine"} or mechanism in {"inflation_erosion", "sip_growth", "compounding"}:
+        if pattern == "InflationErosionVisualizer" or mechanism in {"inflation_erosion", "real_return", "fd_vs_inflation"}:
+            return "InflationErosionVisualizer" if index in {2, 4} else "StatCard"
+        if pattern in {"GrowthChart", "SIPGrowthEngine"} or mechanism in {"sip_growth", "compounding"}:
             return "GrowthChart" if index in {2, 4} else "StatCard"
         if pattern == "SplitComparison" or mechanism in {"risk_return", "diversification", "speculation_risk"}:
             return "SplitComparison" if index == 2 else "StatCard"

@@ -37,6 +37,7 @@ class VisualStoryEngine:
         "sip_growth": "solution",
         "compounding": "solution",
         "compound_growth": "solution",
+        "recap_system": "resolution",
         "emergency_fund": "solution",
         "savings_rate": "solution",
         "fomo_risk": "turning_point",
@@ -65,6 +66,7 @@ class VisualStoryEngine:
         "sip_growth": ["sip_jar"],
         "compounding": ["sip_jar"],
         "compound_growth": ["sip_jar"],
+        "recap_system": ["salary_balance", "emi_stack", "sip_jar", "portfolio_grid", "emergency_buffer"],
         "savings_rate": ["sip_jar", "salary_balance"],
         "emergency_fund": ["emergency_buffer"],
         "fomo_risk": ["portfolio_grid"],
@@ -93,6 +95,7 @@ class VisualStoryEngine:
         "sip_growth": "What changes when returns start earning returns?",
         "compounding": "Why does time matter more than amount?",
         "compound_growth": "What changes when returns start earning returns?",
+        "recap_system": "What system keeps the money plan alive?",
         "savings_rate": "How much is actually getting saved each month?",
         "emergency_fund": "What absorbs the next financial shock?",
         "fomo_risk": "What happens when emotion becomes the strategy?",
@@ -321,6 +324,8 @@ class VisualStoryEngine:
             return {"from": "hidden", "to": "visible"}
         if concept_type in {"diversification", "risk_return", "fomo_risk", "speculation_risk"}:
             return {"from": "concentrated", "to": "spread"}
+        if concept_type == "recap_system":
+            return {"from": "scattered", "to": "planned"}
         if concept_type in {"sip_growth", "compounding", "emergency_fund"}:
             return {"from": "reactive", "to": "planned"}
         return {"from": "", "to": ""}
@@ -370,6 +375,7 @@ class VisualStoryEngine:
             "inflation_erosion": "buying power keeps shrinking",
             "sip_growth": "small investments create a growing corpus",
             "diversification": "one fragile bet becomes a spread portfolio",
+            "recap_system": "leaks get tracked, buffers protect, investments compound",
         }
         return answers.get(concept_type, "the money state becomes visible")
 
@@ -401,6 +407,7 @@ class VisualStoryEngine:
             "debt_trap": "balance resists payoff",
             "inflation_erosion": "real value falls",
             "sip_growth": "corpus grows",
+            "recap_system": "money gets a system",
             "diversification": "risk spreads",
             "fomo_risk": "emotion drives the trade",
             "speculation_risk": "emotion drives the trade",
@@ -434,14 +441,22 @@ class VisualStoryEngine:
 
     def _concept_from_text(self, text: str) -> str:
         lowered = text.lower()
+        if lowered.startswith("recap") or ("break free" in lowered and "future self" in lowered):
+            return "recap_system"
+        if "lifestyle inflation" in lowered or "lifestyle" in lowered or "upgrade" in lowered:
+            return "lifestyle_inflation"
+        if "salary" in lowered and any(token in lowered for token in ("drain", "gone", "disappear", "left", "rent", "expense", "breathing", "day 20")):
+            return "salary_drain"
         if "credit card" in lowered or "minimum payment" in lowered or "minimum due" in lowered:
             return "debt_trap"
         if "emi" in lowered or "instalment" in lowered or "installment" in lowered:
             return "emi_pressure"
+        if "sip" in lowered:
+            return "sip_growth"
+        if "compound" in lowered or "compounding" in lowered:
+            return "compounding"
         if "inflation" in lowered or "purchasing power" in lowered or "buying power" in lowered:
             return "inflation_erosion"
-        if "sip" in lowered or "compound" in lowered or "compounding" in lowered:
-            return "sip_growth"
         if "emergency" in lowered or "cash buffer" in lowered or "six-month" in lowered:
             return "emergency_fund"
         if (
@@ -457,10 +472,6 @@ class VisualStoryEngine:
             return "fomo_risk"
         if "diversification" in lowered or "portfolio" in lowered or "one stock" in lowered or "one basket" in lowered:
             return "diversification"
-        if "salary" in lowered and any(token in lowered for token in ("drain", "gone", "disappear", "left", "rent", "expense")):
-            return "salary_drain"
-        if "lifestyle" in lowered or "upgrade" in lowered:
-            return "lifestyle_inflation"
         return ""
 
     def _extract_directed_data(self, section: dict[str, Any]) -> dict[str, Any]:
@@ -497,8 +508,14 @@ class VisualStoryEngine:
             return f"{money_from} salary becomes {money_to} by month end"
         if concept_type == "emi_pressure" and money_from:
             return f"{money_from} leaves before the month begins"
-        if concept_type == "debt_trap" and money_to:
-            return f"paying still leaves {money_to} owed"
+        if concept_type == "debt_trap":
+            monthly_interest = self._format_money_like(data.get("monthly_interest")) if data else ""
+            minimum_payment = self._format_money_like(data.get("minimum_payment")) if data and data.get("minimum_payment") else ""
+            if monthly_interest and minimum_payment:
+                return f"{minimum_payment} payment cannot beat {monthly_interest} interest"
+            if money_to:
+                return f"balance can grow to {money_to}"
+            return "minimum payment cannot beat the interest"
         if concept_type == "inflation_erosion" and money_from and money_to:
             return f"{money_from} today buys like {money_to}"
         if concept_type in {"sip_growth", "compounding", "compound_growth"}:
@@ -512,6 +529,8 @@ class VisualStoryEngine:
             return "emotion stops pretending to be a strategy"
         if concept_type in {"diversification", "risk_return"}:
             return "one fragile bet becomes a spread portfolio"
+        if concept_type == "recap_system":
+            return "leaks get tracked, buffers protect, investments compound"
         return ""
 
     def _inject_story_state_into_visual_plan(self, section: dict[str, Any]) -> None:

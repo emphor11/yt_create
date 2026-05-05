@@ -379,7 +379,7 @@ class StoryPipeline:
                 if old_plan:
                     section["visual_plan"] = [old_plan]
                 else:
-                    fallback_text = self._short_visual_text(str(section.get("text") or "Core idea"))
+                    fallback_text = self._short_visual_text(str(section.get("text") or "Core message"))
                     section["visual_plan"] = [
                         {
                             "concept": {"concept": fallback_text, "type": "definition"},

@@ -27,6 +27,7 @@ COMPONENT_DURATION_WEIGHTS = {
     "SplitComparisonScene": 1.3,
     "GrowthChart": 1.5,
     "GrowthChartScene": 1.5,
+    "InflationErosionVisualizer": 2.8,
     "StepFlow": 1.4,
     "StepFlowScene": 1.4,
     "MoneyFlowDiagram": 1.8,
@@ -37,6 +38,7 @@ PATTERN_PRIORITY = {
     "MoneyFlowDiagram": 7,
     "DebtSpiralVisualizer": 7,
     "SIPGrowthEngine": 7,
+    "InflationErosionVisualizer": 7,
     "GrowthChart": 6,
     "SplitComparison": 6,
     "FlowDiagram": 6,
@@ -50,9 +52,20 @@ REQUIRED_BEAT_DATA = {
     "MoneyFlowDiagram": ("source", "flows", "remainder"),
     "DebtSpiralVisualizer": ("principal", "monthly_interest"),
     "SIPGrowthEngine": ("monthly_sip", "final_corpus"),
+    "InflationErosionVisualizer": ("start", "end"),
     "CalculationStrip": ("steps",),
     "SplitComparison": ("left", "right"),
 }
+DOMINANT_COMPONENTS = {
+    "MoneyFlowDiagram",
+    "DebtSpiralVisualizer",
+    "SIPGrowthEngine",
+    "InflationErosionVisualizer",
+    "GrowthChart",
+    "FlowDiagram",
+    "SplitComparison",
+}
+DOMINANT_SHARE = 0.64
 
 
 class SceneBuilder:
@@ -148,10 +161,22 @@ class SceneBuilder:
         beats = self._merge_for_min_duration(beats, audio_duration, min_duration)
         if not beats:
             return []
+        dominant_component = self._dominant_component(section, beats)
+        if dominant_component:
+            durations = self._dominant_component_durations(beats, audio_duration, dominant_component, min_duration)
+            return self._timeline_from_durations(beats, durations, audio_duration)
         aligned_spans = self._sentence_aligned_spans(beats, audio_duration, section)
         if aligned_spans is not None:
             return self._timeline_from_spans(beats, aligned_spans)
         durations = self._component_weighted_durations(beats, audio_duration, min_duration)
+        return self._timeline_from_durations(beats, durations, audio_duration)
+
+    def _timeline_from_durations(
+        self,
+        beats: list[dict[str, Any]],
+        durations: list[float],
+        audio_duration: float,
+    ) -> list[dict[str, Any]]:
 
         timeline: list[dict[str, Any]] = []
         cursor = 0.0
@@ -518,6 +543,54 @@ class SceneBuilder:
 
         return durations
 
+    def _dominant_component(self, section: dict[str, Any], beats: list[dict[str, Any]]) -> str:
+        visual_plan = section.get("visual_plan") or []
+        pattern = ""
+        if visual_plan:
+            pattern = str((visual_plan[0].get("visual") or {}).get("pattern") or "").strip()
+        if pattern in DOMINANT_COMPONENTS and any(str(beat.get("component") or "").strip() == pattern for beat in beats):
+            return pattern
+        for component in DOMINANT_COMPONENTS:
+            if any(str(beat.get("component") or "").strip() == component for beat in beats):
+                return component
+        return ""
+
+    def _dominant_component_durations(
+        self,
+        beats: list[dict[str, Any]],
+        audio_duration: float,
+        dominant_component: str,
+        min_duration: float = MIN_BEAT_DURATION,
+    ) -> list[float]:
+        if not beats:
+            return []
+        if audio_duration <= 0:
+            return [min_duration for _ in beats]
+        dominant_index = next(
+            (index for index, beat in enumerate(beats) if str(beat.get("component") or "").strip() == dominant_component),
+            -1,
+        )
+        if dominant_index < 0 or len(beats) == 1:
+            return self._component_weighted_durations(beats, audio_duration, min_duration)
+
+        support_count = len(beats) - 1
+        target_dominant = audio_duration * DOMINANT_SHARE
+        support_floor = min(min_duration, max((audio_duration - target_dominant) / support_count, 0.35))
+        max_dominant = max(audio_duration - support_floor * support_count, audio_duration / len(beats))
+        dominant_duration = min(max(target_dominant, min_duration), max_dominant)
+        remaining = max(audio_duration - dominant_duration, 0.0)
+        support_indices = [index for index in range(len(beats)) if index != dominant_index]
+        support_weights = [
+            COMPONENT_DURATION_WEIGHTS.get(str(beats[index].get("component") or "ConceptCard"), 1.0)
+            for index in support_indices
+        ]
+        total_support_weight = sum(support_weights) or float(len(support_indices))
+        durations = [0.0 for _ in beats]
+        durations[dominant_index] = dominant_duration
+        for index, weight in zip(support_indices, support_weights):
+            durations[index] = remaining * (weight / total_support_weight)
+        return durations
+
     def _beat_emphasis(self, index: int, total: int) -> str:
         if total <= 1 or index == total - 1:
             return "hero"
@@ -531,7 +604,7 @@ class SceneBuilder:
             return "introduce"
         if total <= 1 or index == total - 1:
             return "result"
-        if component in {"MoneyFlowDiagram", "DebtSpiralVisualizer", "SIPGrowthEngine", "CalculationStrip", "GrowthChart", "FlowDiagram", "FlowBar", "SplitComparison"}:
+        if component in {"MoneyFlowDiagram", "DebtSpiralVisualizer", "SIPGrowthEngine", "InflationErosionVisualizer", "CalculationStrip", "GrowthChart", "FlowDiagram", "FlowBar", "SplitComparison"}:
             return "process"
         return "change"
 
@@ -622,7 +695,7 @@ class SceneBuilder:
         if visual_plan:
             visual = visual_plan[0].get("visual") or {}
             pattern = str(visual.get("pattern") or "").strip()
-        tail = 0.8 if pattern in {"MoneyFlowDiagram", "DebtSpiralVisualizer", "SIPGrowthEngine"} else 0.4
+        tail = 0.8 if pattern in {"MoneyFlowDiagram", "DebtSpiralVisualizer", "SIPGrowthEngine", "InflationErosionVisualizer"} else 0.4
         return round(max(float(audio_duration or 0), 0.0) + tail, 2)
 
     def _clean_beat_text(self, text: str, section_text: str) -> str:

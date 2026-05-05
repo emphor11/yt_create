@@ -1,6 +1,6 @@
 import unittest
 
-from youtube_ai_system.services.visual_director import VisualDirector, VisualDirectorInput
+from youtube_ai_system.services.visual_director import DirectedBeat, VisualDirector, VisualDirectorInput
 from youtube_ai_system.services.story_pipeline import StoryPipeline
 
 
@@ -119,7 +119,7 @@ class VisualDirectorTestCase(unittest.TestCase):
     def test_generic_inflation_visual_stays_qualitative_without_numbers(self) -> None:
         result = self.director.direct(build_input("Inflation is a slow poison. It eats into your savings. Without you even noticing.", "inflation_erosion"))
 
-        self.assertEqual(result.pattern, "GrowthChart")
+        self.assertEqual(result.pattern, "InflationErosionVisualizer")
         self.assertNotIn("₹", str(result.data))
         self.assertEqual(result.data["start"], "Savings")
 
@@ -178,13 +178,13 @@ class VisualDirectorTestCase(unittest.TestCase):
     def test_major_finance_concepts_do_not_fall_back_to_concept_card(self) -> None:
         cases = [
             ("Lifestyle inflation is a silent killer. As salary increases, expenses rise on luxuries, not necessities.", "lifestyle_inflation", "FlowDiagram"),
-            ("Inflation quietly erodes your purchasing power over 10 years.", "inflation_erosion", "GrowthChart"),
+            ("Inflation quietly erodes your purchasing power over 10 years.", "inflation_erosion", "InflationErosionVisualizer"),
             ("Expense leakage from subscriptions and food apps eats your salary.", "expense_leakage", "FlowDiagram"),
             ("Emergency fund protects you when a medical bill hits.", "emergency_fund", "FlowDiagram"),
             ("Diversification spreads your investments across asset classes.", "diversification", "SplitComparison"),
             ("Risk and return move together in investing.", "risk_return", "SplitComparison"),
             ("Tax saving under 80C can reduce your tax bill.", "tax_saving", "SplitComparison"),
-            ("FOMO investing is not investing. It is speculation. Do not put your life savings into something you don't understand.", "definition", "SplitComparison"),
+            ("FOMO investing is not investing. It is speculation. Do not put your life savings into something you don't understand.", "definition", "FlowDiagram"),
         ]
 
         for narration, concept_type, expected_pattern in cases:
@@ -193,6 +193,93 @@ class VisualDirectorTestCase(unittest.TestCase):
                 self.assertEqual(result.pattern, expected_pattern)
                 self.assertIsNone(result.fallback_reason)
                 self.assertNotIn(result.pattern, {"ConceptCard", "StatCard"})
+
+    def test_lifestyle_inflation_keyword_wins_over_inflation_keyword(self) -> None:
+        result = self.director.direct(
+            build_input(
+                "Your salary rises. Lifestyle absorbs it. Savings stay flat. Lifestyle inflation is real.",
+                "risk",
+            )
+        )
+
+        self.assertEqual(result.concept_type, "lifestyle_inflation")
+        self.assertEqual(result.pattern, "FlowDiagram")
+
+    def test_plain_compounding_does_not_route_to_debt_or_sip_without_sip_data(self) -> None:
+        result = self.director.direct(
+            build_input(
+                "Compounding is powerful. Interest earns interest. Growth accelerates. Time is key. Start now.",
+                "growth",
+            )
+        )
+
+        self.assertEqual(result.concept_type, "compounding")
+        self.assertEqual(result.pattern, "GrowthChart")
+        self.assertNotEqual(result.concept_name, "Debt Trap")
+
+    def test_tax_drain_is_not_treated_as_tax_saving(self) -> None:
+        result = self.director.direct(
+            build_input(
+                "Your ₹1,00,000 income arrives, but income tax takes ₹20,000 before money reaches your plan.",
+                "tax_drain",
+            )
+        )
+
+        self.assertEqual(result.concept_type, "tax_drain")
+        self.assertEqual(result.pattern, "MoneyFlowDiagram")
+        self.assertNotEqual(result.concept_name, "Tax Saving")
+
+    def test_generic_tax_mentions_route_to_drain_not_saving(self) -> None:
+        result = self.director.direct(
+            build_input(
+                "Income tax quietly reduces the ₹1,00,000 salary before the monthly budget starts.",
+                "definition",
+            )
+        )
+
+        self.assertEqual(result.concept_type, "tax_drain")
+        self.assertNotEqual(result.pattern, "SplitComparison")
+
+    def test_instead_alone_does_not_trigger_opportunity_cost(self) -> None:
+        result = self.director.direct(
+            build_input(
+                "Instead, track your expenses before the month starts.",
+                "definition",
+            )
+        )
+
+        self.assertNotEqual(result.concept_type, "opportunity_cost")
+
+    def test_wealth_without_growth_direction_does_not_trigger_net_worth_growth(self) -> None:
+        result = self.director.direct(
+            build_input(
+                "Debt can destroy wealth when payments keep growing faster than income.",
+                "definition",
+            )
+        )
+
+        self.assertNotEqual(result.concept_type, "net_worth_growth")
+
+    def test_story_money_override_does_not_use_wrong_scene_amount(self) -> None:
+        beat = DirectedBeat(
+            "StatCard",
+            "₹1,20,000 outstanding",
+            source_text="A ₹1,20,000 credit card balance starts compounding.",
+        )
+        story_state = {
+            "state_change": {"money": {"from": "₹50,000"}},
+            "active_objects": ["debt_pressure"],
+        }
+
+        result = self.director._story_contextualized_beats([beat], story_state)
+
+        self.assertEqual(result[0].text, "₹1,20,000 outstanding")
+
+    def test_money_mentions_accept_unprefixed_amount_with_wider_finance_context(self) -> None:
+        narration = "The monthly EMI has already been scheduled by the bank, and the amount 18000 leaves before you choose anything."
+        mentions = self.director._money_mentions(narration)
+
+        self.assertIn(18000, [int(mention["amount"]) for mention in mentions])
 
     def test_major_finance_concepts_receive_cinematic_intent(self) -> None:
         cases = [

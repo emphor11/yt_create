@@ -69,6 +69,7 @@ class SceneBuilderTestCase(unittest.TestCase):
     def test_pattern_priority_has_no_downgraded_chart_duplicates_and_weights_exist(self) -> None:
         self.assertEqual(PATTERN_PRIORITY["GrowthChart"], 6)
         self.assertEqual(PATTERN_PRIORITY["SplitComparison"], 6)
+        self.assertEqual(PATTERN_PRIORITY["InflationErosionVisualizer"], 7)
         self.assertEqual(COMPONENT_DURATION_WEIGHTS["FlowDiagram"], 1.6)
         self.assertEqual(COMPONENT_DURATION_WEIGHTS["BalanceBar"], 1.5)
 
@@ -606,6 +607,92 @@ class SceneBuilderTestCase(unittest.TestCase):
         )
 
         self.assertTrue(any("MoneyFlowDiagram has no data dict" in warning for warning in result["scenes"][0]["warnings"]))
+
+    def test_directed_mechanism_component_gets_majority_duration(self) -> None:
+        debt_data = {
+            "principal": {"value": "₹1,00,000", "amount": 100000},
+            "annual_interest_rate": 40.0,
+            "monthly_interest": 3333.0,
+            "minimum_payment": 3000.0,
+            "time_period_months": 12,
+            "balances": [{"month": month, "balance": 100000 + month * 400, "interest": 3333, "principal_paid": -333} for month in range(1, 13)],
+            "month_12_balance": 104000,
+            "is_trap": True,
+        }
+        result = build_scenes(
+            [
+                {
+                    "text": (
+                        "A ₹1,00,000 credit card balance does not look scary at first. "
+                        "At 40% annual interest, the monthly interest itself is around ₹3,300. "
+                        "The payment feels responsible but the interest is still winning."
+                    ),
+                    "audio_file": str((Path(self.temp_dir.name) / "storage" / "audio" / "dummy.wav").resolve()),
+                    "audio_duration": 12.0,
+                    "direction": {"emotional_arc": {"opening": "false_security", "closing": "alarm"}},
+                    "visual_plan": [
+                        {
+                            "concept": {"concept": "Debt Trap", "type": "debt_trap"},
+                            "visual": {"pattern": "DebtSpiralVisualizer", "data": debt_data},
+                            "beats": {
+                                "beats": [
+                                    {"component": "StatCard", "text": "₹1,00,000 outstanding"},
+                                    {"component": "CalculationStrip", "text": "Interest beats payment", "data": {"steps": [{"label": "Interest", "value": "₹3,333"}]}},
+                                    {"component": "DebtSpiralVisualizer", "text": "Debt trap closes", "data": debt_data},
+                                    {"component": "HighlightText", "text": "Interest is winning"},
+                                ]
+                            },
+                        }
+                    ],
+                }
+            ]
+        )
+
+        scene = result["scenes"][0]
+        spiral = next(beat for beat in scene["beats"] if beat["component"] == "DebtSpiralVisualizer")
+        spiral_duration = spiral["end_time"] - spiral["start_time"]
+        self.assertGreaterEqual(spiral_duration / scene["audio_duration"], 0.55)
+        self.assertEqual(spiral["beat_role"], "process")
+
+    def test_inflation_visualizer_contract_and_timing(self) -> None:
+        visual_data = {
+            "start": "₹1,00,000",
+            "end": "₹50,835",
+            "rate": "7% for 10 years",
+            "years": 10,
+            "curve": "down",
+            "items": [{"name": "Groceries", "current": 5, "future": 3}],
+        }
+        result = build_scenes(
+            [
+                {
+                    "text": "If ₹1,00,000 sits idle while prices rise at 7%, buying power keeps shrinking.",
+                    "audio_file": str((Path(self.temp_dir.name) / "storage" / "audio" / "dummy.wav").resolve()),
+                    "audio_duration": 8.0,
+                    "direction": {"emotional_arc": {"opening": "false_security", "closing": "alarm"}},
+                    "visual_plan": [
+                        {
+                            "concept": {"concept": "Inflation Erosion", "type": "inflation_erosion"},
+                            "visual": {"pattern": "InflationErosionVisualizer", "data": visual_data},
+                            "beats": {
+                                "beats": [
+                                    {"component": "StatCard", "text": "₹1,00,000 today"},
+                                    {"component": "InflationErosionVisualizer", "text": "Purchasing power falls", "data": visual_data},
+                                    {"component": "HighlightText", "text": "Same money buys less"},
+                                ]
+                            },
+                        }
+                    ],
+                }
+            ]
+        )
+
+        scene = result["scenes"][0]
+        self.assertEqual(scene["pattern"], "InflationErosionVisualizer")
+        erosion = next(beat for beat in scene["beats"] if beat["component"] == "InflationErosionVisualizer")
+        self.assertEqual(erosion["data"]["end"], "₹50,835")
+        self.assertGreaterEqual((erosion["end_time"] - erosion["start_time"]) / scene["audio_duration"], 0.55)
+        self.assertEqual(scene["warnings"], [])
 
     def test_calculation_strip_contract_preserves_steps_when_inferred_from_beats(self) -> None:
         result = build_scenes(

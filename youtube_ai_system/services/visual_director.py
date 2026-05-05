@@ -251,7 +251,7 @@ class VisualDirector:
         concept_type = self._normalized_concept_type(director_input)
         if concept_type == "salary_drain":
             return self._with_cinematic_intent(self._salary_drain_plan(director_input, concept_type), director_input)
-        if concept_type in {"lifestyle_inflation", "expense_leakage", "budgeting", "savings_rate", "emergency_fund", "rent_burden"}:
+        if concept_type in {"lifestyle_inflation", "expense_leakage", "budgeting", "savings_rate", "emergency_fund", "rent_burden", "tax_drain"}:
             return self._with_cinematic_intent(self._money_mechanism_plan(director_input, concept_type), director_input)
         if concept_type == "debt_trap":
             return self._with_cinematic_intent(self._debt_trap_plan(director_input, concept_type), director_input)
@@ -261,9 +261,13 @@ class VisualDirector:
             return self._with_cinematic_intent(self._sip_growth_plan(director_input, concept_type), director_input)
         if concept_type in {"compounding", "net_worth_growth"}:
             return self._with_cinematic_intent(self._growth_mechanism_plan(director_input, concept_type), director_input)
+        if concept_type == "recap_system":
+            return self._with_cinematic_intent(self._recap_system_plan(director_input), director_input)
         if concept_type in {"inflation_erosion", "inflation_loss", "real_return", "fd_vs_inflation"}:
             return self._with_cinematic_intent(self._inflation_return_plan(director_input, concept_type), director_input)
-        if concept_type in {"opportunity_cost", "comparison_timeline", "risk_return", "diversification", "tax_saving", "tax_drain", "speculation_risk", "fomo_risk"}:
+        if concept_type in {"speculation_risk", "fomo_risk"}:
+            return self._with_cinematic_intent(self._speculation_risk_plan(director_input, concept_type), director_input)
+        if concept_type in {"opportunity_cost", "comparison_timeline", "risk_return", "diversification", "tax_saving"}:
             return self._with_cinematic_intent(self._comparison_mechanism_plan(director_input, concept_type), director_input)
         return self._with_cinematic_intent(self._generic_plan(director_input, concept_type), director_input)
 
@@ -315,13 +319,29 @@ class VisualDirector:
             data = dict(beat.data or {})
             data.update(story_data)
             text = beat.text
-            if index == 0 and money.get("from"):
+            if index == 0 and money.get("from") and self._story_money_matches_beat(money.get("from"), beat):
                 text = self._concept_label_for_amount(beat.component, str(money["from"]), active_objects)
             if index == len(beats) - 1 and visual_answer:
                 text = visual_answer
             subtext = beat.subtext
             updated.append(replace(beat, text=text, subtext=subtext, data=data))
         return updated
+
+    def _story_money_matches_beat(self, money_value: Any, beat: DirectedBeat) -> bool:
+        """Only let story-state money relabel a beat when that amount is in this beat's own source text."""
+        money_amount = self._parse_rupee(str(money_value or ""))
+        if money_amount is None:
+            return False
+        source_text = str(beat.source_text or beat.text or "")
+        if not source_text.strip():
+            return False
+        for mention in self._money_mentions(source_text):
+            try:
+                if abs(float(mention.get("amount") or 0) - money_amount) < 100:
+                    return True
+            except (TypeError, ValueError):
+                continue
+        return False
 
     def _concept_label_for_amount(self, component: str, amount: str, active_objects: list[Any]) -> str:
         if "debt_pressure" in active_objects:
@@ -395,12 +415,31 @@ class VisualDirector:
             return f"{data.get('awe_ratio')}x corpus gap"
         if concept_type in {"lifestyle_inflation", "expense_leakage"}:
             return "The leak is the system"
+        if concept_type == "recap_system":
+            return "Track. Protect. Compound."
         if concept_type == "risk_return":
             return "Risk buys upside"
         if concept_type == "diversification":
             return "Spread the risk"
         if concept_type == "speculation_risk":
             return "Hype is not a plan"
+        if concept_type == "compounding":
+            return "Time is doing the work"
+        if concept_type in {"budgeting", "savings_rate"}:
+            return "First 20% is the whole game"
+        if concept_type == "net_worth_growth":
+            return "Patience compounds quietly"
+        if concept_type == "emergency_fund":
+            return "The buffer buys breathing room"
+        if concept_type == "rent_burden":
+            remainder = data.get("remainder") or {}
+            return f"{remainder.get('value', '')} left after rent".strip() or "Rent eats the month"
+        if concept_type == "tax_saving":
+            return "Plan now, keep more"
+        if concept_type == "tax_drain":
+            return "Tax eats what you don't plan"
+        if concept_type == "opportunity_cost":
+            return "Small choice compounds"
         return concept_name
 
     def _salary_drain_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
@@ -599,16 +638,26 @@ class VisualDirector:
         rate = data["rate_label"]
         final_text = f"{end['value']} buying power" if str(end["value"]).startswith("₹") else str(end["value"])
         final_label = "future buying power" if str(end["value"]).startswith("₹") else concept_name
+        visual_data = {
+            "start": start["value"],
+            "end": end["value"],
+            "rate": rate,
+            "years": data.get("years"),
+            "inflation_rate": data.get("inflation_rate"),
+            "curve": "down",
+            "visual_type": "value_decay",
+            "items": self._inflation_items(start["amount"], end["amount"]),
+        }
         return DirectedPlan(
             concept_type=concept_type,
             concept_name=concept_name,
-            pattern="GrowthChart",
-            data={"start": start["value"], "end": end["value"], "rate": rate, "curve": "down", "visual_type": "value_decay"},
+            pattern="InflationErosionVisualizer",
+            data=visual_data,
             direction=direction,
             theme=THEME,
             beats=self._contextualize_beats([
                 DirectedBeat("StatCard", start["value"], "normal", "today", {"primary_value": start["value"], "label": "today", "color": "white"}),
-                DirectedBeat("GrowthChart", "Purchasing power falls", "subtle", data={"start": start["value"], "end": end["value"], "rate": rate, "curve": "down"}, props={"start": start["value"], "end": end["value"], "rate": rate, "curve": "down"}),
+                DirectedBeat("InflationErosionVisualizer", "Purchasing power falls", "subtle", data=visual_data),
                 DirectedBeat("HighlightText", final_text, "hero", data={"primary_value": end["value"], "label": final_label, "color": "red"}),
             ], director_input.narration_text),
         )
@@ -629,6 +678,35 @@ class VisualDirector:
                 DirectedBeat("SplitComparison", concept_name, "subtle", data=data),
                 DirectedBeat("HighlightText", data["punch"], "hero", data={"primary_value": data["punch"], "label": concept_name, "color": data.get("accent", "teal")}),
             ], director_input.narration_text),
+        )
+
+    def _recap_system_plan(self, director_input: VisualDirectorInput) -> DirectedPlan:
+        direction = SceneDirection("aware", "confidence", director_input.section_position, "positive")
+        data = {
+            "title": "Money system recap",
+            "accent": "teal",
+            "nodes": [
+                {"label": "Track leaks", "subtext": "salary drain, EMI, FOMO"},
+                {"label": "Build buffers", "subtext": "emergency fund and diversification"},
+                {"label": "Let time work", "subtext": "SIP and compounding"},
+            ],
+        }
+        beats = self._contextualize_beats(
+            [
+                DirectedBeat("StatCard", "Money gets a system", "normal", "recap", {"primary_value": "Money gets a system", "label": "recap", "color": "teal"}),
+                DirectedBeat("FlowDiagram", "Track. Protect. Compound.", "subtle", data=data, props=data),
+                DirectedBeat("HighlightText", "Small steps become control", "hero", data={"primary_value": "Small steps become control", "label": "final takeaway", "color": "teal"}),
+            ],
+            director_input.narration_text,
+        )
+        return DirectedPlan(
+            concept_type="recap_system",
+            concept_name="Money System Recap",
+            pattern="FlowDiagram",
+            data=data,
+            beats=beats,
+            direction=direction,
+            theme=THEME,
         )
 
     def _qualitative_money_plan(
@@ -753,6 +831,37 @@ class VisualDirector:
             theme=THEME,
         )
 
+    def _speculation_risk_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
+        """Speculation/FOMO gets an urgent qualitative plan, not a calm SplitComparison.
+        The emotional register should be panic/alarm, not analytical."""
+        direction = SceneDirection("overconfidence", "alarm", director_input.section_position, "danger")
+        concept_name = self._display_concept_name(concept_type)
+        # Use HighlightText + FlowDiagram in urgent mode — no calm comparison panel
+        nodes = [
+            {"label": "Hype drives the buy", "subtext": "FOMO at peak price"},
+            {"label": "Price drops", "subtext": "panic replaces excitement"},
+            {"label": "Loss is locked", "subtext": "no plan = no exit"},
+        ]
+        punch = "Do not invest in what you cannot explain"
+        data = {"title": "Speculation vs Investing", "nodes": nodes, "accent": "danger"}
+        beats = self._contextualize_beats(
+            [
+                DirectedBeat("StatCard", "Hype is not a thesis", "normal", "the real trap", {"primary_value": "Hype is not a thesis", "label": "the real trap", "color": "red"}),
+                DirectedBeat("FlowDiagram", "How FOMO becomes loss", "subtle", data=data, props=data),
+                DirectedBeat("HighlightText", punch, "hero", data={"primary_value": punch, "label": concept_name, "color": "red"}),
+            ],
+            director_input.narration_text,
+        )
+        return DirectedPlan(
+            concept_type=concept_type,
+            concept_name=concept_name,
+            pattern="FlowDiagram",
+            data=data,
+            beats=beats,
+            direction=direction,
+            theme=THEME,
+        )
+
     def _generic_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
         direction = SceneDirection("neutral", "clarity", director_input.section_position, "neutral")
         title = director_input.concept_name or "Money Change"
@@ -853,7 +962,11 @@ class VisualDirector:
                 flows = sorted(flows, key=lambda flow: flow["amount"], reverse=True)
         for order, flow in enumerate(flows, start=1):
             flow["order"] = order
-            flow["color"] = "red" if order == 1 else "orange"
+            label_lower = str(flow.get("label") or "").lower()
+            if any(t in label_lower for t in ("invest", "sip", "savings", "emergency")):
+                flow["color"] = "teal"
+            else:
+                flow["color"] = "red" if order == 1 else "orange"
         ratio = remainder_amount / source_amount if source_amount else 0.0
         return {
             "source": {"label": source["label"] or "Salary", "value": self._format_rupee(source_amount), "amount": source_amount},
@@ -936,7 +1049,9 @@ class VisualDirector:
             "emi_stack": "emi_pressure",
             "fomo_risk": "speculation_risk",
             "salary_depletion": "salary_drain",
-            "tax_drain": "tax_saving",
+            # tax_drain is NOT aliased to tax_saving — they are opposite concepts:
+            # tax_drain = money leaking to tax (danger, MoneyFlow)
+            # tax_saving = reducing tax via planning (positive, SplitComparison)
         }
         if explicit in aliases:
             return aliases[explicit]
@@ -948,16 +1063,24 @@ class VisualDirector:
             "inflation_erosion",
             "sip_growth",
             "compounding",
+            "recap_system",
             "risk_return",
             "emergency_fund",
             "speculation_risk",
             "diversification",
             "tax_saving",
+            "tax_drain",
             "rent_burden",
             "expense_leakage",
+            "budgeting",
+            "savings_rate",
+            "loan_cost",
+            "net_worth_growth",
         }:
             return explicit
         text = f"{director_input.concept_type} {director_input.concept_name} {director_input.narration_text}".lower()
+        if text.strip().startswith("recap") or ("break free" in text and "future self" in text):
+            return "recap_system"
         if "lifestyle inflation" in text or ("salary" in text and "expenses" in text and any(token in text for token in ("rise", "increase", "doubled", "luxury", "necessities"))):
             return "lifestyle_inflation"
         if "salary" in text and any(token in text for token in ("drain", "depletion", "disappear", "vanish", "left")):
@@ -966,8 +1089,13 @@ class VisualDirector:
             return "emi_pressure"
         if any(token in text for token in ("debt trap", "credit card", "minimum payment", "minimum dues")):
             return "debt_trap"
-        if "sip" in text or "compound" in text or "compounding" in text:
+        # loan/debt checks before generic keyword grabs
+        if "loan" in text and ("cost" in text or "interest" in text):
+            return "loan_cost"
+        if "sip" in text:
             return "sip_growth"
+        if "compound" in text or "compounding" in text:
+            return "compounding"
         if "inflation" in text and any(token in text for token in ("fd", "fixed deposit", "real return", "return")):
             return "fd_vs_inflation"
         if "inflation" in text or "purchasing power" in text or "buying power" in text:
@@ -978,7 +1106,10 @@ class VisualDirector:
             return "expense_leakage"
         if "emergency fund" in text or "cash buffer" in text:
             return "emergency_fund"
-        if "opportunity cost" in text or "could have" in text or "instead" in text:
+        # opportunity_cost: require specific intent, not just "instead"
+        if "opportunity cost" in text or "could have been" in text or (
+            "instead" in text and any(token in text for token in ("invest", "sip", "fd", "savings", "corpus", "compound"))
+        ):
             return "opportunity_cost"
         if "risk" in text and "return" in text:
             return "risk_return"
@@ -986,15 +1117,24 @@ class VisualDirector:
             return "speculation_risk"
         if "diversification" in text or "diversify" in text or "asset classes" in text:
             return "diversification"
-        if "tax saving" in text or "tax" in text or "80c" in text:
+        # tax_saving: only when an explicit planning/saving action is present
+        if "80c" in text or ("tax" in text and any(token in text for token in ("save", "saving", "invest", "plan", "deduct", "exemption"))):
             return "tax_saving"
+        # tax_drain: informational tax mention (bracket, GST, income tax, etc.)
+        if "tax" in text:
+            return "tax_drain"
         if "budget" in text or "allocate" in text:
             return "budgeting"
-        if "savings rate" in text or ("save" in text and "income" in text):
+        # savings_rate: require specific phrasing, not just "save" + "income"
+        if "savings rate" in text or re.search(r"save\s+\d+\s*%\s*(?:of|from)?\s*income", text):
             return "savings_rate"
-        if "loan" in text and ("cost" in text or "interest" in text):
-            return "loan_cost"
-        if "net worth" in text or "wealth" in text:
+        # net_worth_growth: only when growth/building direction is explicit
+        negative_wealth_context = any(token in text for token in ("destroy", "debt", "lose", "loss", "erode", "hurt", "trap"))
+        if "net worth" in text or (
+            "wealth" in text
+            and not negative_wealth_context
+            and any(token in text for token in ("build", "grow", "create", "compound", "increase"))
+        ):
             return "net_worth_growth"
         return str(director_input.concept_type or director_input.idea_type or "definition").strip() or "definition"
 
@@ -1010,6 +1150,7 @@ class VisualDirector:
             "loan_cost": "Loan Cost",
             "compounding": "Compounding",
             "net_worth_growth": "Net Worth Growth",
+            "recap_system": "Money System Recap",
             "inflation_erosion": "Inflation Erosion",
             "inflation_loss": "Inflation Loss",
             "real_return": "Real Return",
@@ -1019,6 +1160,7 @@ class VisualDirector:
             "risk_return": "Risk vs Return",
             "diversification": "Diversification",
             "tax_saving": "Tax Saving",
+            "tax_drain": "Tax Drain",
             "speculation_risk": "Investing vs Speculation",
         }.get(concept_type, concept_type.replace("_", " ").title())
 
@@ -1029,6 +1171,8 @@ class VisualDirector:
             "budgeting": "Budget split",
             "savings_rate": "Income allocation",
             "emergency_fund": "Safety buffer",
+            "tax_drain": "Tax drain",
+            "rent_burden": "Rent burden",
         }.get(concept_type, "Money movement")
 
     def _money_mechanism_punch(self, flow_data: dict[str, Any], concept_type: str) -> str:
@@ -1143,6 +1287,22 @@ class VisualDirector:
             "rate_label": f"{rate:g}% for {years} years",
         }
 
+    def _inflation_items(self, start_amount: Any, end_amount: Any) -> list[dict[str, Any]]:
+        try:
+            start = float(start_amount or 0)
+            end = float(end_amount or 0)
+        except (TypeError, ValueError):
+            return []
+        if start <= 0 or end <= 0:
+            return []
+        ratio = max(0.12, min(end / start, 1.0))
+        base_items = [
+            {"name": "Groceries", "current": 5, "future": max(1, round(5 * ratio))},
+            {"name": "Fuel", "current": 4, "future": max(1, round(4 * ratio))},
+            {"name": "Bills", "current": 3, "future": max(1, round(3 * ratio))},
+        ]
+        return base_items
+
     def _comparison_data(self, director_input: VisualDirectorInput, concept_type: str) -> dict[str, Any]:
         amount = self._parse_rupee(director_input.narration_text)
         if concept_type == "risk_return":
@@ -1165,6 +1325,10 @@ class VisualDirector:
     def _money_mentions(self, text: str) -> list[dict[str, Any]]:
         pattern = re.compile(r"(?:₹\s*|Rs\.?\s*)?(\d[\d,]*(?:\.\d+)?)\s*(lakh|lakhs|crore|crores|k)?", re.IGNORECASE)
         mentions: list[dict[str, Any]] = []
+        finance_window_re = re.compile(
+            r"\b(?:rs|emi|rent|salary|sip|payment|balance|food|left|invest|loan|debt|interest|corpus|returns?|wealth|tax|income|savings?)\b",
+            re.IGNORECASE,
+        )
         for match in pattern.finditer(text):
             raw = match.group(0).strip()
             if text[match.end() : match.end() + 1] == "%":
@@ -1175,7 +1339,9 @@ class VisualDirector:
             before_text = text[max(0, match.start() - 12) : match.start()].lower()
             if "₹" not in raw and not raw.lower().startswith("rs") and re.search(r"(?:day|year|years|month|months)\s*$", before_text):
                 continue
-            if not raw or not ("₹" in raw or re.search(r"\b(?:rs|emi|rent|salary|sip|payment|balance|food|left|invest)", self._window(text, match.start(), match.end()).lower())):
+            if not raw:
+                continue
+            if "₹" not in raw and not raw.lower().startswith("rs") and not finance_window_re.search(self._window(text, match.start(), match.end(), radius=60)):
                 continue
             amount = float(match.group(1).replace(",", ""))
             unit = (match.group(2) or "").lower()
@@ -1289,6 +1455,8 @@ class VisualDirector:
             return "left"
         if "salary" in before or "salary" in after:
             return "Salary"
+        if "tax" in before or "tax" in after or "gst" in before or "gst" in after:
+            return "Tax"
         if "income" in before or "income" in after:
             return "Income"
         if "balance" in before or "balance" in after:
@@ -1363,6 +1531,8 @@ class VisualDirector:
             ("lifestyle", "Lifestyle"),
             ("shopping", "Shopping"),
             ("subscription", "Subscriptions"),
+            ("tax", "Tax"),
+            ("gst", "Tax"),
             ("salary", "Salary"),
             ("income", "Income"),
             ("sip", "SIP"),
@@ -1435,8 +1605,8 @@ class VisualDirector:
                 digits = digits[:-2]
         return f"{sign}₹{grouped}"
 
-    def _window(self, text: str, start: int, end: int) -> str:
-        return text[max(0, start - 36) : min(len(text), end + 36)]
+    def _window(self, text: str, start: int, end: int, radius: int = 36) -> str:
+        return text[max(0, start - radius) : min(len(text), end + radius)]
 
     def _short_phrase(self, text: str, fallback: str) -> str:
         words = [word.strip(" ,.-") for word in text.split() if word.strip(" ,.-")]

@@ -50,6 +50,47 @@ class VisualBeatExpanderTestCase(unittest.TestCase):
         self.assertNotIn("state changes", combined)
         self.assertIn("risk gets distributed", combined)
 
+    def test_debt_expansion_preserves_spiral_component(self) -> None:
+        debt_data = {
+            "principal": {"value": "₹1,00,000", "amount": 100000},
+            "monthly_interest": 3333,
+            "balances": [{"month": month, "balance": 100000 + month * 400, "interest": 3333, "principal_paid": -333} for month in range(1, 13)],
+        }
+        section = {
+            "text": (
+                "A ₹1,00,000 credit card balance does not look scary at first. "
+                "The bank says the minimum payment is only ₹3,000. "
+                "At 40% annual interest, the monthly interest itself is around ₹3,300. "
+                "The payment feels responsible. The interest is still winning."
+            ),
+            "concept_type": "debt_trap",
+            "story_state": {
+                "active_objects": ["debt_pressure"],
+                "visual_question": "Why does paying not reduce the balance?",
+                "visual_answer": "₹3,000 payment cannot beat ₹3,333 interest",
+                "state_change": {"money": {"from": "₹1,00,000", "to": "₹1,04,000", "change_label": "interest keeps winning"}},
+            },
+            "visual_plan": [
+                {
+                    "concept": {"concept": "Debt Trap", "type": "debt_trap"},
+                    "visual": {"pattern": "DebtSpiralVisualizer", "data": debt_data},
+                    "beats": {
+                        "beats": [
+                            {"component": "StatCard", "text": "₹1,00,000 outstanding"},
+                            {"component": "CalculationStrip", "text": "Interest cost", "data": {"steps": [{"label": "Interest", "value": "₹3,333"}]}},
+                            {"component": "DebtSpiralVisualizer", "text": "Debt trap closes", "data": debt_data},
+                        ]
+                    },
+                }
+            ],
+        }
+
+        result = self.expander.expand_section(section)
+        components = [beat.get("component") for beat in result["visual_plan"][0]["beats"]["beats"]]
+
+        self.assertIn("DebtSpiralVisualizer", components)
+        self.assertIn("CalculationStrip", components)
+
 
 if __name__ == "__main__":
     unittest.main()
