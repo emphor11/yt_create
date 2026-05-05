@@ -94,6 +94,40 @@ class VisualBeatExpanderTestCase(unittest.TestCase):
         self.assertIn("spiral", phases)
         self.assertTrue(all(component != "CalculationStrip" for component in components))
 
+    def test_phase_based_primary_mechanism_is_not_expanded_into_repeated_loops(self) -> None:
+        flow_data = {
+            "source": {"label": "Salary", "value": "₹50,000", "amount": 50000},
+            "flows": [{"label": "Rent", "value": "₹15,000", "amount": 15000, "color": "red", "order": 1}],
+            "remainder": {"value": "₹35,000", "amount": 35000, "is_dangerous": False},
+        }
+        section = {
+            "text": (
+                "You earn ₹50,000. Rent starts. EMI starts. Groceries start. "
+                "The money path becomes visible. Savings shrink slowly. Salary drain becomes clear."
+            ),
+            "concept_type": "salary_drain",
+            "story_state": {"active_objects": ["phone_account"]},
+            "visual_plan": [
+                {
+                    "concept": {"concept": "Salary Drain", "type": "salary_drain"},
+                    "visual": {"pattern": "MoneyFlowDiagram", "data": flow_data},
+                    "beats": {
+                        "beats": [
+                            {"component": "MoneyFlowDiagram", "text": "₹50,000", "beat_phase": "intro", "data": {**flow_data, "active_phase": "intro"}},
+                            {"component": "MoneyFlowDiagram", "text": "Where salary goes", "beat_phase": "drain", "data": {**flow_data, "active_phase": "drain"}},
+                            {"component": "MoneyFlowDiagram", "text": "₹35,000 left", "beat_phase": "remainder", "data": {**flow_data, "active_phase": "remainder"}},
+                        ]
+                    },
+                }
+            ],
+        }
+
+        result = self.expander.expand_section(section)
+        beats = result["visual_plan"][0]["beats"]["beats"]
+
+        self.assertEqual(len(beats), 3)
+        self.assertEqual([beat["beat_phase"] for beat in beats], ["intro", "drain", "remainder"])
+
 
 if __name__ == "__main__":
     unittest.main()

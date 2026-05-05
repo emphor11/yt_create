@@ -1,4 +1,5 @@
 import unittest
+from dataclasses import replace
 
 from youtube_ai_system.services.visual_director import DirectedBeat, VisualDirector, VisualDirectorInput
 from youtube_ai_system.services.story_pipeline import StoryPipeline
@@ -341,6 +342,26 @@ class VisualDirectorTestCase(unittest.TestCase):
         result = self.director._story_contextualized_beats([beat], story_state)
 
         self.assertEqual(result[0].text, "₹1,20,000 outstanding")
+
+    def test_stale_story_answer_does_not_overwrite_mechanism_result(self) -> None:
+        director_input = replace(
+            build_input(
+                "If ₹1,00,000 sits idle while prices rise at 7%, after 10 years buying power shrinks.",
+                "inflation_erosion",
+                percentage=7.0,
+                time_period="10 years",
+            ),
+            story_state={
+                "visual_answer": "₹1,00,000 today buys like 7%",
+                "state_change": {"money": {"from": "₹1,00,000", "to": "7%"}},
+                "active_objects": ["inflation_basket"],
+            },
+        )
+
+        result = self.director.direct(director_input)
+
+        self.assertEqual(result.beats[-1].component, "InflationErosionVisualizer")
+        self.assertEqual(result.beats[-1].text, "₹50,835 buying power")
 
     def test_money_mentions_accept_unprefixed_amount_with_wider_finance_context(self) -> None:
         narration = "The monthly EMI has already been scheduled by the bank, and the amount 18000 leaves before you choose anything."

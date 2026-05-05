@@ -49,6 +49,8 @@ class VisualBeatExpander:
 
         visual = item.get("visual") or {}
         pattern = str(visual.get("pattern") or "").strip()
+        if self._is_already_phase_based_primary_plan(pattern, beats):
+            return section
         concept = item.get("concept") or {}
         mechanism = str(section.get("concept_type") or (concept.get("type") if isinstance(concept, dict) else "") or "").strip()
         data = visual.get("data") if isinstance(visual.get("data"), dict) else {}
@@ -81,6 +83,21 @@ class VisualBeatExpander:
         updated_section = dict(section)
         updated_section["visual_plan"] = [updated_item, *visual_plan[1:]]
         return updated_section
+
+    def _is_already_phase_based_primary_plan(self, pattern: str, beats: list[dict[str, Any]]) -> bool:
+        """Primary mechanism components already carry their own visual phases.
+
+        Expanding these scenes into sentence-count beats repeats the same phase
+        multiple times, which restarts Remotion's frameWithinBeat animation and
+        makes the visual loop instead of progress. Keep the director's compact
+        phase plan and let SceneBuilder stretch phase durations to the audio.
+        """
+        if pattern not in self.PRIMARY_MECHANISM_COMPONENTS:
+            return False
+        primary_beats = [beat for beat in beats if beat.get("component") == pattern]
+        if len(primary_beats) < 2:
+            return False
+        return all(str(beat.get("beat_phase") or "").strip() for beat in primary_beats)
 
     def _beats_from_story_state(
         self,

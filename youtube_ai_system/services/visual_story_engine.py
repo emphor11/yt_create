@@ -545,6 +545,9 @@ class VisualStoryEngine:
                 intent = visual.get("cinematic_intent")
                 if isinstance(intent, dict):
                     active_objects = story_state.get("active_objects") or []
+                    visual_answer = str(story_state.get("visual_answer") or "").strip()
+                    if visual_answer:
+                        intent["overlay_text"] = visual_answer
                     intent["active_object"] = str(active_objects[0]) if active_objects else ""
                     intent["visual_question"] = str(story_state.get("visual_question") or "")
                     intent["protagonist_state"] = str(story_state.get("protagonist_state") or "")
@@ -561,6 +564,16 @@ class VisualStoryEngine:
                     data["story_state"] = story_state
                     if visual_story:
                         data["visual_story"] = visual_story
+        section_intent = section.get("cinematic_intent")
+        if isinstance(section_intent, dict):
+            visual_answer = str(story_state.get("visual_answer") or "").strip()
+            if visual_answer:
+                section_intent["overlay_text"] = visual_answer
+            active_objects = story_state.get("active_objects") or []
+            section_intent["active_object"] = str(active_objects[0]) if active_objects else ""
+            section_intent["visual_question"] = str(story_state.get("visual_question") or "")
+            section_intent["protagonist_state"] = str(story_state.get("protagonist_state") or "")
+            section_intent["scene_role"] = str(story_state.get("scene_role") or "")
 
     def _read_nested(self, data: dict[str, Any], path: str) -> Any:
         value: Any = data

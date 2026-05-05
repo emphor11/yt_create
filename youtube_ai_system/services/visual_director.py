@@ -320,13 +320,20 @@ class VisualDirector:
         if not beats:
             return beats
         updated: list[DirectedBeat] = []
+        mechanism_components = {
+            "MoneyFlowDiagram",
+            "DebtSpiralVisualizer",
+            "SIPGrowthEngine",
+            "InflationErosionVisualizer",
+            "LifestyleCreepVisualizer",
+        }
         for index, beat in enumerate(beats):
             data = dict(beat.data or {})
             data.update(story_data)
             text = beat.text
             if index == 0 and money.get("from") and self._story_money_matches_beat(money.get("from"), beat):
                 text = self._concept_label_for_amount(beat.component, str(money["from"]), active_objects)
-            if index == len(beats) - 1 and visual_answer:
+            if index == len(beats) - 1 and visual_answer and beat.component not in mechanism_components:
                 text = visual_answer
             subtext = beat.subtext
             updated.append(replace(beat, text=text, subtext=subtext, data=data))
@@ -1602,17 +1609,23 @@ class VisualDirector:
     def _label_for_amount(self, text: str, start: int, end: int) -> str:
         before = text[max(0, start - 24) : start].lower()
         after = text[end : min(len(text), end + 24)].lower()
+        if "salary" in before or "salary" in after:
+            return "Salary"
+        if ("tax" in before or "tax" in after or "gst" in before or "gst" in after) and any(
+            token in f"{before} {after}" for token in ("take", "takes", "taken", "cut", "deduct", "before money")
+        ):
+            return "Tax"
+        if "income" in before or "income" in after:
+            return "Income"
+        if "earn" in before or "earned" in before or "earning" in before:
+            return "Salary"
         immediate_category = self._nearest_expense_category(before, after)
         if immediate_category:
             return immediate_category
         if "left" in after or "left" in before or "remaining" in after:
             return "left"
-        if "salary" in before or "salary" in after:
-            return "Salary"
         if "tax" in before or "tax" in after or "gst" in before or "gst" in after:
             return "Tax"
-        if "income" in before or "income" in after:
-            return "Income"
         if "balance" in before or "balance" in after:
             return "Balance"
         if "payment" in before or "payment" in after:
