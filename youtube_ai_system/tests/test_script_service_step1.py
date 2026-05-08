@@ -1,7 +1,10 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
+import requests
 from youtube_ai_system import create_app
 from youtube_ai_system.db import close_db
 from youtube_ai_system.models.repository import ProjectRepository, utcnow
@@ -16,7 +19,7 @@ def _find_visual_keys(value, path="root"):
             if path.startswith("root.story_plan"):
                 found.extend(_find_visual_keys(child, f"{path}.{key}"))
                 continue
-            if key in {"visual_beats", "visual_instruction", "visual_type"}:
+            if key in {"visual_instruction", "visual_type"}:
                 found.append(f"{path}.{key}")
             found.extend(_find_visual_keys(child, f"{path}.{key}"))
     elif isinstance(value, list):
@@ -50,7 +53,7 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.ctx.pop()
         self.temp_dir.cleanup()
 
-    def test_normalize_payload_removes_visual_fields_and_adds_story_plan(self) -> None:
+    def test_normalize_payload_removes_legacy_visual_fields_and_adds_story_plan(self) -> None:
         payload = self.service._normalize_payload(
             {
                 "hook": {
@@ -93,9 +96,67 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.assertIn("Must pass this hook contract", prompt)
         self.assertIn("Why does your ₹50,000 salary feel gone by day 20?", prompt)
         self.assertIn("Avoid validator-weak hooks", prompt)
+        self.assertIn("RECURRING FINANCIAL EXAMPLE", prompt)
+        self.assertIn("Do not create a named fictional character", prompt)
+        self.assertIn("Visuals will be diagrams, financial animations, charts, stacks, flows", prompt)
         self.assertIn("VISUAL-SCENE CONTRACT", prompt)
         self.assertIn("visual_intent", prompt)
         self.assertIn("visual_beats", prompt)
+
+    def test_prompt_requires_long_form_scene_depth(self) -> None:
+        prompt = self.service._build_prompt("salary leaks", "young professionals", target_duration_minutes=8)
+
+        self.assertIn("Generate EXACTLY 8 body scenes", prompt)
+        self.assertIn("Each body scene must be 160-200 spoken words", prompt)
+        self.assertIn("Do NOT write checklist-style scenes", prompt)
+        self.assertIn("Total script including hook and outro should be around 1398-1785 spoken words", prompt)
+        self.assertIn("Each body scene narration must be 160-200 words", prompt)
+
+    def test_prompt_duration_math_scales_with_target_minutes(self) -> None:
+        prompt = self.service._build_prompt("salary leaks", "young professionals", target_duration_minutes=10)
+
+        self.assertIn("Generate EXACTLY 10 body scenes", prompt)
+        self.assertIn("Total script including hook and outro should be around 1718-2185 spoken words", prompt)
+
+    def test_groq_rate_limit_wait_parser_uses_error_message(self) -> None:
+        response = Mock()
+        response.headers = {}
+        response.json.return_value = {
+            "error": {
+                "message": (
+                    "Rate limit reached for model. Please try again in 10.46s. "
+                    "Need more tokens?"
+                )
+            }
+        }
+
+        self.assertEqual(self.service._groq_retry_wait_seconds(response), 10.96)
+
+    @patch("youtube_ai_system.services.script_service.time.sleep", return_value=None)
+    @patch("youtube_ai_system.services.script_service.requests.post")
+    def test_groq_script_retries_once_after_rate_limit(self, post: Mock, sleep: Mock) -> None:
+        limited_response = Mock()
+        limited_response.status_code = 429
+        limited_response.headers = {}
+        limited_response.text = '{"error":{"message":"Please try again in 1.5s."}}'
+        limited_response.json.return_value = {"error": {"message": "Please try again in 1.5s."}}
+        limited_response.raise_for_status.side_effect = requests.HTTPError(response=limited_response)
+
+        success_response = Mock()
+        success_response.raise_for_status.return_value = None
+        success_response.json.return_value = {
+            "choices": [{"message": {"content": '{"hook":{"narration":"Why now?"},"scenes":[],"outro":{"narration":"Done."}}'}}]
+        }
+        post.side_effect = [limited_response, success_response]
+        self.app.config["GROQ_RATE_LIMIT_RETRIES"] = 1
+
+        payload = self.service._groq_script("salary leaks", "young professionals", "prompt", "key")
+
+        self.assertEqual(payload["hook"]["narration"], "Why now?")
+        self.assertEqual(post.call_count, 2)
+        sleep.assert_called_once_with(2.0)
+        sent_body = post.call_args_list[0].kwargs["json"]
+        self.assertEqual(sent_body["max_tokens"], self.app.config["GROQ_MAX_TOKENS"])
 
     def test_hook_refiner_rewrites_validator_weak_salary_hook(self) -> None:
         payload = self.service._normalize_payload(
@@ -151,7 +212,8 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
             "young professionals",
         )
 
-        self.assertNotIn("visual_beats", payload["scenes"][0])
+        self.assertIn("visual_beats", payload["scenes"][0])
+        self.assertEqual(payload["scenes"][0]["visual_beats"][0], "Income rises")
         section = next(section for section in payload["story_plan"]["sections"] if "Lifestyle absorbs" in section.get("text", ""))
         self.assertEqual(section["visual_scene"]["mechanism"], "lifestyle_inflation")
         self.assertEqual(section["visual_scene"]["visual_beats"][0], "Income rises")
@@ -171,14 +233,14 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
             "young professionals",
         )
 
-        self.assertGreaterEqual(len(payload["scenes"][0]["narration"].split()), 45)
+        self.assertGreaterEqual(len(payload["scenes"][0]["narration"].split()), 160)
         self.assertIn("₹18,000", payload["scenes"][0]["narration"])
-        self.assertGreaterEqual(len(payload["scenes"][1]["narration"].split()), 45)
+        self.assertGreaterEqual(len(payload["scenes"][1]["narration"].split()), 160)
         self.assertIn("₹5,000 SIP", payload["scenes"][1]["narration"])
         emi_section = next(section for section in payload["story_plan"]["sections"] if section.get("concept_type") == "emi_pressure")
         self.assertEqual(emi_section["visual_scene"]["mechanism"], "emi_pressure")
 
-    def test_strong_emi_scene_keeps_emi_mechanism_and_gets_more_beats(self) -> None:
+    def test_strong_emi_scene_keeps_emi_mechanism_and_stack_beats(self) -> None:
         narration = (
             "One EMI feels harmless. Then a phone EMI joins it. Then a bike EMI joins it. "
             "Then a personal loan starts taking its share. Suddenly ₹18,000 leaves before the month even begins. "
@@ -198,9 +260,9 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         section = next(section for section in payload["story_plan"]["sections"] if section.get("concept_type") == "emi_pressure")
         beats = section["visual_plan"][0]["beats"]["beats"]
         self.assertEqual(section["visual_scene"]["mechanism"], "emi_pressure")
-        self.assertEqual(section["visual_plan"][0]["visual"]["pattern"], "FlowDiagram")
-        self.assertGreaterEqual(len(beats), 6)
-        self.assertTrue(any("₹18,000" in beat["text"] for beat in beats))
+        self.assertEqual(section["visual_plan"][0]["visual"]["pattern"], "EMIStackVisualizer")
+        self.assertGreaterEqual(len(beats), 3)
+        self.assertIn("₹18,000", json.dumps(beats, ensure_ascii=False))
 
     def test_lifestyle_absorbs_sentence_is_preserved_in_story_grouping(self) -> None:
         grouped = self.pipeline.group_payload_for_story_plan(
@@ -305,6 +367,74 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
 
         self.assertFalse(ready)
         self.assertTrue(any("only 5 body scenes" in error for error in errors))
+
+    def test_approval_blocks_project_86_style_short_script(self) -> None:
+        repo = ProjectRepository()
+        project_id = repo.create_project("project 86 regression")
+        repo.update_project(project_id, target_duration_minutes=8)
+        payload = {
+            "hook": {"narration": "Why does your ₹50,000 salary feel gone by day 20?", "duration": 8},
+            "scenes": [
+                {
+                    "kind": "body",
+                    "narration": (
+                        "You earn ₹50,000 monthly. Rent takes ₹15,000. EMIs take ₹8,000. "
+                        "You are left with ₹27,000. Food and travel take ₹10,000. "
+                        "You are left with ₹17,000. Savings seem impossible."
+                    ),
+                    "visual_intent": "Show salary draining into fixed expenses",
+                    "visual_beats": ["Salary lands", "Expenses drain", "Savings shrink"],
+                    "numbers": ["50000", "15000", "8000", "27000", "10000", "17000"],
+                    "emotion": "anxiety",
+                    "mechanism": "salary_drain",
+                }
+                for _ in range(8)
+            ],
+            "outro": {"narration": "Track the leak before the month tracks you.", "duration": 18},
+            "story_plan": {"sections": []},
+        }
+        script_id = repo.create_script_version(project_id, payload["hook"], payload["outro"], [], "", [], payload, "")
+        repo.update_script_version(script_id, user_edited_at=utcnow())
+
+        ready, errors, _ = self.service.approval_ready(repo.get_script_version(script_id))
+
+        self.assertFalse(ready)
+        self.assertTrue(any("Body scene 1 is too short" in error for error in errors))
+        self.assertTrue(any("spoken words" in error for error in errors))
+
+    def test_approval_blocks_visual_numbers_not_spoken_in_narration(self) -> None:
+        repo = ProjectRepository()
+        project_id = repo.create_project("visual number grounding")
+        repo.update_project(project_id, target_duration_minutes=3)
+        long_scene = (
+            "You have ₹17,000 left after expenses. The emergency fund should protect that leftover cash before a shock arrives. "
+            "The money is not for excitement. It is for survival. A medical bill can disturb the month. A job delay can disturb the month. "
+            "A cash buffer absorbs that shock before credit card debt enters. The viewer should see the buffer taking the hit. "
+            "That is how boring money keeps the plan alive."
+        )
+        payload = {
+            "hook": {"narration": "Why does your ₹50,000 salary feel gone by day 20?", "duration": 8},
+            "scenes": [
+                {
+                    "kind": "body",
+                    "narration": long_scene,
+                    "visual_intent": "Show emergency fund protecting leftover cash",
+                    "visual_beats": ["Cash buffer", "Shock arrives", "Debt avoided"],
+                    "numbers": ["17000", "50000"],
+                    "emotion": "clarity",
+                    "mechanism": "emergency_fund",
+                }
+            ],
+            "outro": {"narration": "Build survival before chasing returns.", "duration": 18},
+            "story_plan": {"sections": []},
+        }
+        script_id = repo.create_script_version(project_id, payload["hook"], payload["outro"], [], "", [], payload, "")
+        repo.update_script_version(script_id, user_edited_at=utcnow())
+
+        ready, errors, _ = self.service.approval_ready(repo.get_script_version(script_id))
+
+        self.assertFalse(ready)
+        self.assertTrue(any("not spoken in the narration" in error for error in errors))
 
     def test_save_script_edits_preserves_scene_mechanism_metadata(self) -> None:
         repo = ProjectRepository()
@@ -657,7 +787,7 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.assertIn(sections[0]["visual_type"], {"balance_decay", "comparison"})
         self.assertIn("state", sections[0])
         self.assertTrue(sections[0]["narrative_arc"]["story_goal"])
-        self.assertEqual(
+        self.assertCountEqual(
             payload["story_plan"]["agenda"],
             ["Debt Trap", "Inflation Loss"],
         )

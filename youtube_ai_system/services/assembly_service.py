@@ -98,7 +98,7 @@ class AssemblyService:
                 "-safe",
                 "0",
                 "-i",
-                str(concat_manifest),
+                concat_manifest.name,
                 "-c:v",
                 "libx264",
                 "-preset",
@@ -117,7 +117,7 @@ class AssemblyService:
                 "2",
                 "-movflags",
                 "+faststart",
-                str(assembled_path),
+                assembled_path.name,
             ],
             cwd=output_dir,
             timeout=180,
@@ -283,27 +283,32 @@ class AssemblyService:
         )
 
     def _has_audio_stream(self, path: Path) -> bool:
+        if not path.exists() or path.stat().st_size == 0:
+            return False
         ffprobe_bin = shutil.which("ffprobe")
         if not ffprobe_bin:
             return False
-        result = subprocess.run(
-            [
-                ffprobe_bin,
-                "-v",
-                "error",
-                "-select_streams",
-                "a",
-                "-show_entries",
-                "stream=index",
-                "-of",
-                "json",
-                str(path),
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
+        try:
+            result = subprocess.run(
+                [
+                    ffprobe_bin,
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "a",
+                    "-show_entries",
+                    "stream=index",
+                    "-of",
+                    "json",
+                    str(path),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            return False
         payload = json.loads(result.stdout or "{}")
         return bool(payload.get("streams"))
 

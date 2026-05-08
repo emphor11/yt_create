@@ -33,6 +33,8 @@ class Config:
     CLAUDE_MODEL = os.environ.get("CLAUDE_MODEL", "claude-3-5-sonnet-latest")
     GROQ_API_KEY = os.environ.get("GROQ_API_KEY") or os.environ.get("groq_api_key")
     GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+    GROQ_MAX_TOKENS = int(os.environ.get("GROQ_MAX_TOKENS", "4200"))
+    GROQ_RATE_LIMIT_RETRIES = int(os.environ.get("GROQ_RATE_LIMIT_RETRIES", "2"))
     YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
     YOUTUBE_CLIENT_SECRETS = os.environ.get("YOUTUBE_CLIENT_SECRETS")
     YOUTUBE_TOKEN_PATH = os.environ.get(
