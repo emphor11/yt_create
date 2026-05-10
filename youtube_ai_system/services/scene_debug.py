@@ -26,6 +26,8 @@ TRACE_FIELDS = (
     "visual_plan",
     "semantic_scene",
     "visual_action_graph",
+    "visual_state_sequence",
+    "visual_state",
     "pattern",
     "data",
     "beats",

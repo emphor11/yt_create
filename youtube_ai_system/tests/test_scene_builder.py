@@ -348,11 +348,14 @@ class SceneBuilderTestCase(unittest.TestCase):
             ]
         )
 
-        beats = result["scenes"][0]["beats"]
+        scene = result["scenes"][0]
+        beats = scene["beats"]
         durations = [round(beat["end_time"] - beat["start_time"], 2) for beat in beats]
 
         self.assertEqual([beat["data"]["active_action"]["action"] for beat in beats], ["salary_arrives", "expense_drains", "expense_drains", "balance_revealed"])
         self.assertTrue(all(beat["semantic_timing"]["engine"] == "semantic_timing" for beat in beats))
+        self.assertEqual([state["state_type"] for state in scene["visual_state_sequence"]["states"]], ["centered_focus", "pressure_cluster", "isolate_survivor"])
+        self.assertTrue(all(beat["visual_state"]["source_beat_indices"] for beat in beats))
         self.assertEqual(beats[1]["semantic_timing"]["pacing"], "overlap_intensify")
         self.assertEqual(beats[-1]["semantic_timing"]["pacing"], "reveal_hold")
         self.assertGreater(durations[-1], durations[1])
