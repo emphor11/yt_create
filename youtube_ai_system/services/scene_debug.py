@@ -24,6 +24,8 @@ TRACE_FIELDS = (
     "emotion",
     "concept_type",
     "visual_plan",
+    "semantic_scene",
+    "visual_action_graph",
     "pattern",
     "data",
     "beats",

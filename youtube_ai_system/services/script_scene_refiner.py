@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from .scene_debug import SceneDebugTrace
@@ -108,8 +109,7 @@ class ScriptSceneRefiner:
         return hits >= 2
 
     def _is_strong_enough(self, narration: str, mechanism: str) -> bool:
-        words = narration.split()
-        if len(words) < self.MIN_BODY_WORDS:
+        if self._word_count(narration) < self.MIN_BODY_WORDS:
             return False
         sentence_count = sum(1 for part in narration.replace("?", ".").replace("!", ".").split(".") if part.strip())
         if sentence_count < 4:
@@ -202,19 +202,40 @@ class ScriptSceneRefiner:
 
     def _ensure_min_words(self, narration: str, mechanism: str, topic: str, angle: str) -> str:
         text = " ".join(str(narration or "").split()).strip()
-        if len(text.split()) >= self.MIN_BODY_WORDS:
+        if self._word_count(text) >= self.MIN_BODY_WORDS:
             return text
 
         tails = self._expansion_tails(mechanism, topic, angle)
         used: list[str] = []
         for sentence in tails:
-            if len(text.split()) >= self.MIN_BODY_WORDS:
+            if self._word_count(text) >= self.MIN_BODY_WORDS:
                 break
             cleaned = " ".join(sentence.split()).strip()
             if cleaned and cleaned not in used:
                 used.append(cleaned)
                 text = f"{text} {cleaned}".strip()
+        for sentence in self._final_padding_tails(mechanism, topic, angle):
+            if self._word_count(text) >= self.MIN_BODY_WORDS:
+                break
+            cleaned = " ".join(sentence.split()).strip()
+            if cleaned and cleaned not in used and cleaned not in text:
+                used.append(cleaned)
+                text = f"{text} {cleaned}".strip()
         return text
+
+    def _word_count(self, text: str) -> int:
+        return len(re.findall(r"[A-Za-z0-9₹%]+(?:[.,][A-Za-z0-9]+)*", str(text or "")))
+
+    def _final_padding_tails(self, mechanism: str, topic: str, angle: str) -> list[str]:
+        mechanism_label = mechanism.replace("_", " ") if mechanism else "money habit"
+        context = topic or angle or "this money decision"
+        return [
+            f"That is why this {mechanism_label} needs one clear before-and-after moment.",
+            "The pressure, the number, and the consequence have to connect in the same breath.",
+            f"For {context}, the practical takeaway must feel specific rather than motivational.",
+            "The next idea can then build on this mechanism instead of repeating the same warning.",
+            "That extra clarity keeps the narration useful, grounded, and ready for approval.",
+        ]
 
     def _expansion_tails(self, mechanism: str, topic: str, angle: str) -> list[str]:
         common = self._non_repeating_common_tails(mechanism)

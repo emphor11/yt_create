@@ -312,6 +312,112 @@ class SceneBuilderTestCase(unittest.TestCase):
         first_beats = first["scenes"][0]["beats"]
         second_beats = second["scenes"][0]["beats"]
         self.assertEqual(first_beats, second_beats)
+
+    def test_semantic_timing_allocates_action_micro_beats_by_intent(self) -> None:
+        visual_data = {
+            "source": {"label": "Salary", "value": "₹50,000", "amount": 50000},
+            "flows": [
+                {"label": "EMI", "value": "₹18,000", "amount": 18000},
+                {"label": "Rent", "value": "₹12,000", "amount": 12000},
+            ],
+            "remainder": {"value": "₹20,000", "amount": 20000},
+        }
+        action_beats = [
+            self._action_beat("₹50,000 Salary lands", "intro", "salary_arrives", "credit_in", "establish_source", {"start_frame": 0, "end_frame": 30}, visual_data),
+            self._action_beat("₹18,000 EMI", "drain", "expense_drains", "collision_drain", "show_outflow", {"start_frame": 18, "end_frame": 52}, visual_data),
+            self._action_beat("₹12,000 rent", "drain", "expense_drains", "collision_drain", "show_outflow", {"start_frame": 36, "end_frame": 70}, visual_data),
+            self._action_beat("₹20,000 left", "remainder", "balance_revealed", "reveal_survivor", "show_consequence", {"start_frame": 78, "end_frame": 112}, visual_data),
+        ]
+
+        result = build_scenes(
+            [
+                {
+                    "text": "Salary lands. EMI drains. Rent drains. Balance survives.",
+                    "audio_file": "/tmp/phase5.wav",
+                    "audio_duration": 12.0,
+                    "direction": {"emotional_arc": {"opening": "comfort", "closing": "anxiety"}},
+                    "concept_type": "salary_drain",
+                    "visual_plan": [
+                        {
+                            "concept": {"concept": "Salary Drain", "type": "salary_drain"},
+                            "visual": {"pattern": "MoneyFlowDiagram", "data": visual_data},
+                            "beats": {"beats": action_beats},
+                        }
+                    ],
+                }
+            ]
+        )
+
+        beats = result["scenes"][0]["beats"]
+        durations = [round(beat["end_time"] - beat["start_time"], 2) for beat in beats]
+
+        self.assertEqual([beat["data"]["active_action"]["action"] for beat in beats], ["salary_arrives", "expense_drains", "expense_drains", "balance_revealed"])
+        self.assertTrue(all(beat["semantic_timing"]["engine"] == "semantic_timing" for beat in beats))
+        self.assertEqual(beats[1]["semantic_timing"]["pacing"], "overlap_intensify")
+        self.assertEqual(beats[-1]["semantic_timing"]["pacing"], "reveal_hold")
+        self.assertGreater(durations[-1], durations[1])
+        self.assertEqual(beats[-1]["end_time"], 12.8)
+
+    def test_non_action_beats_keep_existing_component_weighted_timing(self) -> None:
+        result = build_scenes(
+            [
+                {
+                    "text": "Money habits change slowly.",
+                    "audio_file": "/tmp/no-action.wav",
+                    "audio_duration": 6.0,
+                    "visual_plan": [
+                        {
+                            "beats": {
+                                "beats": [
+                                    {"component": "StatCard", "text": "Habit"},
+                                    {"component": "FlowBar", "text": "Change"},
+                                    {"component": "RiskCard", "text": "Result"},
+                                ]
+                            }
+                        }
+                    ],
+                }
+            ]
+        )
+
+        beats = result["scenes"][0]["beats"]
+
+        self.assertTrue(all("semantic_timing" not in beat for beat in beats))
+
+    def _action_beat(
+        self,
+        text: str,
+        phase: str,
+        action: str,
+        motion: str,
+        intent: str,
+        window: dict,
+        visual_data: dict,
+    ) -> dict:
+        return {
+            "component": "MoneyFlowDiagram",
+            "text": text,
+            "beat_phase": phase,
+            "data": {
+                **visual_data,
+                "active_phase": phase,
+                "active_action": {
+                    "id": f"act:{action}:{text}",
+                    "action": action,
+                    "semantic_role": action,
+                    "motion": motion,
+                    "intent": intent,
+                    "sequence_index": 0,
+                    "value": {"display_value": text.split()[0]},
+                },
+                "action_choreography": {
+                    "unit": "relative_frames",
+                    "window": window,
+                    "motion": motion,
+                    "overlap_group": "overlapping_outflows" if action == "expense_drains" else "salary_drain",
+                },
+            },
+        }
         self.assertEqual(first_beats[-1]["end_time"], first["scenes"][0]["duration"])
 
     def test_sentence_aligned_beats_follow_sentence_word_timing(self) -> None:

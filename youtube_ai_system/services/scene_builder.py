@@ -9,6 +9,7 @@ from flask import current_app
 
 from .scene_mapper import map_pattern_to_component
 from .scene_debug import SceneDebugTrace, renderer_sequence
+from .semantic_timing_engine import SemanticTimingEngine
 from .voice_service import VoiceService
 
 MIN_BEAT_DURATION = 1.2
@@ -123,6 +124,7 @@ PHASE_WEIGHT_MULTIPLIERS = {
 class SceneBuilder:
     def __init__(self) -> None:
         self.voice_service = VoiceService()
+        self.semantic_timing_engine = SemanticTimingEngine()
 
     def build_scenes(self, sections: list[dict[str, Any]], debug_trace: SceneDebugTrace | None = None) -> dict[str, list[dict[str, Any]]]:
         scenes: list[dict[str, Any]] = []
@@ -262,6 +264,14 @@ class SceneBuilder:
         beats = self._merge_for_min_duration(beats, audio_duration, min_duration)
         if not beats:
             return []
+        semantic_timing = self.semantic_timing_engine.allocate(beats, audio_duration, min_duration=min_duration)
+        if semantic_timing is not None:
+            timed_input = self._beats_with_semantic_timing(beats, semantic_timing.metadata)
+            timeline = self._timeline_from_spans(timed_input, semantic_timing.spans)
+            if debug_trace:
+                debug_trace.snapshot("scene_builder_timeline_decision", semantic_timing.to_debug_dict() | {"timeline": timeline}, owner="semantic_timing_engine")
+                debug_trace.ownership("timed_beats", "semantic_timing_engine", timeline, "audio-aware semantic timeline allocation from action micro-beats")
+            return timeline
         dominant_component = self._dominant_component(section, beats)
         if dominant_component:
             durations = self._dominant_component_durations(beats, audio_duration, dominant_component, min_duration)
@@ -312,7 +322,7 @@ class SceneBuilder:
                 "emphasis": str(beat.get("emphasis") or self._beat_emphasis(index, len(beats))),
                 "beat_role": str(beat.get("beat_role") or self._beat_role(beat, index, len(beats))),
             }
-            for key in ("subtext", "steps", "props", "data", "source_text", "sentence_index", "beat_phase"):
+            for key in ("subtext", "steps", "props", "data", "source_text", "sentence_index", "beat_phase", "semantic_timing"):
                 if key in beat:
                     timed_beat[key] = beat[key]
             timeline.append(timed_beat)
@@ -340,11 +350,22 @@ class SceneBuilder:
                 "emphasis": str(beat.get("emphasis") or self._beat_emphasis(index, len(beats))),
                 "beat_role": str(beat.get("beat_role") or self._beat_role(beat, index, len(beats))),
             }
-            for key in ("subtext", "steps", "props", "data", "source_text", "sentence_index", "beat_phase"):
+            for key in ("subtext", "steps", "props", "data", "source_text", "sentence_index", "beat_phase", "semantic_timing"):
                 if key in beat:
                     timed_beat[key] = beat[key]
             timeline.append(timed_beat)
         return timeline
+
+    def _beats_with_semantic_timing(self, beats: list[dict[str, Any]], metadata: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        enriched: list[dict[str, Any]] = []
+        for beat, timing in zip(beats, metadata):
+            next_beat = dict(beat)
+            next_beat["semantic_timing"] = dict(timing)
+            data = next_beat.get("data")
+            if isinstance(data, dict):
+                next_beat["data"] = {**data, "semantic_timing": dict(timing)}
+            enriched.append(next_beat)
+        return enriched
 
     def _audio_root(self) -> Path:
         storage_root = Path(current_app.config["STORAGE_ROOT"]).expanduser().resolve()

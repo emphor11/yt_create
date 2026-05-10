@@ -7,7 +7,9 @@ from .finance_concept_extractor import FinanceConceptExtractor
 from .financial_governance import apply_concept_policy, scene_density_report
 from .idea_grouper import IdeaGrouper
 from .run_log import RunLogger
+from .semantic_scene_contract import SemanticSceneContractExtractor
 from .story_intelligence_engine import StoryIntelligenceEngine
+from .visual_action_graph import VisualActionGraphBuilder
 from .visual_logic_engine import map_concept_to_visual
 from .visual_beat_expander import VisualBeatExpander
 from .visual_director import VisualDirector, visual_director_input_from_section
@@ -56,6 +58,8 @@ class StoryPipeline:
         visual_scene_normalizer: VisualSceneNormalizer | None = None,
         visual_beat_expander: VisualBeatExpander | None = None,
         visual_story_engine: VisualStoryEngine | None = None,
+        semantic_contract_extractor: SemanticSceneContractExtractor | None = None,
+        visual_action_graph_builder: VisualActionGraphBuilder | None = None,
         logger: RunLogger | None = None,
     ) -> None:
         self.story_intelligence = story_intelligence or StoryIntelligenceEngine()
@@ -65,6 +69,8 @@ class StoryPipeline:
         self.visual_scene_normalizer = visual_scene_normalizer or VisualSceneNormalizer()
         self.visual_beat_expander = visual_beat_expander or VisualBeatExpander()
         self.visual_story_engine = visual_story_engine or VisualStoryEngine()
+        self.semantic_contract_extractor = semantic_contract_extractor or SemanticSceneContractExtractor()
+        self.visual_action_graph_builder = visual_action_graph_builder or VisualActionGraphBuilder()
         self.logger = logger or RunLogger()
 
     def build_story_plan(self, payload: dict[str, Any], debug_trace: SceneDebugTrace | None = None) -> dict[str, Any]:
@@ -295,7 +301,7 @@ class StoryPipeline:
 
     def attach_section_concepts(self, story_plan: dict[str, Any], debug_trace: SceneDebugTrace | None = None) -> dict[str, Any]:
         sections = story_plan.get("sections") or []
-        for section in sections:
+        for section_index, section in enumerate(sections):
             concepts: list[dict[str, str]] = []
             seen: set[tuple[str, str]] = set()
             finance_concept = self.finance_concept_extractor.extract(
@@ -320,6 +326,12 @@ class StoryPipeline:
                 "numeric_facts": finance_concept.numeric_facts or [],
                 "concept_policy": finance_concept.concept_policy or {},
             }
+            section["semantic_scene"] = self.semantic_contract_extractor.extract_dict(
+                section,
+                section["finance_concept"],
+                scene_id=str(section.get("idea_group_id") or f"section_{section_index}"),
+            )
+            section["visual_action_graph"] = self.visual_action_graph_builder.build_dict(section["semantic_scene"])
             concept = finance_concept.concept_name if finance_concept.concept_name != "Unknown" else None
             concept_type = finance_concept.concept_type
             if concept:
@@ -339,6 +351,10 @@ class StoryPipeline:
                 score, reasons = confidence_for_finance_concept(section["finance_concept"])
                 concept_id = f"concept:{section.get('idea_group_id') or len(debug_trace.data.get('confidence') or [])}:{finance_concept.concept_type}"
                 debug_trace.snapshot("story_pipeline_post_classification", section, owner="story_pipeline")
+                debug_trace.snapshot("semantic_scene_contract", section["semantic_scene"], owner="semantic_scene_contract")
+                debug_trace.snapshot("visual_action_graph", section["visual_action_graph"], owner="visual_action_graph")
+                debug_trace.ownership("semantic_scene", "semantic_scene_contract", section["semantic_scene"], "central semantic contract extracted from narration and finance concept")
+                debug_trace.ownership("visual_action_graph", "visual_action_graph", section["visual_action_graph"], "action graph derived from SemanticSceneContract")
                 debug_trace.ownership("concept_type", "story_pipeline", finance_concept.concept_type, "finance concept extraction")
                 debug_trace.confidence("story_pipeline", "concept_type", finance_concept.concept_type, score, reasons)
                 debug_trace.lineage_node(

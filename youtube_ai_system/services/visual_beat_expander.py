@@ -3,11 +3,15 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .action_beat_engine import ActionBeatEngine
 from .scene_debug import SceneDebugTrace
 
 
 class VisualBeatExpander:
     """Adds enough visual beats for longer narration without changing the scene concept."""
+
+    def __init__(self, action_beat_engine: ActionBeatEngine | None = None) -> None:
+        self.action_beat_engine = action_beat_engine or ActionBeatEngine()
 
     PRIMARY_MECHANISM_COMPONENTS = {
         "MoneyFlowDiagram",
@@ -53,6 +57,18 @@ class VisualBeatExpander:
 
         item = visual_plan[0]
         beats = list(((item.get("beats") or {}).get("beats") or []))
+        action_beats = self.action_beat_engine.beats_from_section(section, item, beats)
+        if action_beats and len(action_beats) > len(beats):
+            return self._updated_section_with_expanded_beats(
+                section=section,
+                visual_plan=visual_plan,
+                item=item,
+                before_beats=beats,
+                expanded=action_beats,
+                strategy="visual_action_graph",
+                confidence=0.86,
+                debug_trace=debug_trace,
+            )
         text = str(section.get("text") or "")
         sentences = self._sentences(text)
         target = self._target_beat_count(text, sentences)
@@ -101,27 +117,56 @@ class VisualBeatExpander:
                 debug_trace.determinism("beat_expansion", {"section": section, "target": target}, section)
             return section
 
+        return self._updated_section_with_expanded_beats(
+            section=section,
+            visual_plan=visual_plan,
+            item=item,
+            before_beats=beats,
+            expanded=expanded,
+            strategy=strategy,
+            confidence=0.8 if strategy == "story_state" else 0.68,
+            debug_trace=debug_trace,
+            target=target,
+        )
+
+    def _updated_section_with_expanded_beats(
+        self,
+        *,
+        section: dict[str, Any],
+        visual_plan: list[dict[str, Any]],
+        item: dict[str, Any],
+        before_beats: list[dict[str, Any]],
+        expanded: list[dict[str, Any]],
+        strategy: str,
+        confidence: float,
+        debug_trace: SceneDebugTrace | None,
+        target: int | None = None,
+    ) -> dict[str, Any]:
         updated_item = dict(item)
         updated_item["beats"] = {"beats": expanded}
         updated_section = dict(section)
         updated_section["visual_plan"] = [updated_item, *visual_plan[1:]]
         if debug_trace:
+            pattern = str((item.get("visual") or {}).get("pattern") or "").strip()
             debug_trace.snapshot(
                 "beat_expansion_post",
                 {
-                    "target": target,
+                    "target": target or len(expanded),
                     "strategy": strategy,
-                    "before_beats": beats,
+                    "before_beats": before_beats,
                     "after_beats": expanded,
                     "section": updated_section,
                 },
                 owner="visual_beat_expander",
             )
             debug_trace.ownership("beats", "visual_beat_expander", expanded, f"expanded beats using {strategy} strategy")
-            debug_trace.confidence("beat_expansion", "beats", f"{len(expanded)} beats", 0.8 if strategy == "story_state" else 0.68, [f"{strategy} expansion"])
+            debug_trace.confidence("beat_expansion", "beats", f"{len(expanded)} beats", confidence, [f"{strategy} expansion"])
             for index, beat in enumerate(expanded):
                 beat_id = f"beat:{index}:{str(beat.get('component') or 'component')}"
                 source_ids = [f"director_plan:0:{pattern}"]
+                active_action = ((beat.get("data") or {}).get("active_action") or {}) if isinstance(beat.get("data"), dict) else {}
+                if active_action.get("id"):
+                    source_ids.append(str(active_action["id"]))
                 debug_trace.lineage_node(
                     beat_id,
                     "beat",
@@ -129,11 +174,13 @@ class VisualBeatExpander:
                     str(beat.get("text") or beat.get("component") or f"Beat {index + 1}"),
                     beat,
                     owner="visual_beat_expander",
-                    confidence=0.8 if strategy == "story_state" else 0.68,
+                    confidence=confidence,
                     source_ids=source_ids,
                 )
                 debug_trace.lineage_edge(source_ids[0], beat_id, "beat_generated_from_director_plan")
-            debug_trace.determinism("beat_expansion", {"section": section, "target": target}, updated_section)
+                if len(source_ids) > 1:
+                    debug_trace.lineage_edge(source_ids[1], beat_id, "micro_beat_from_visual_action")
+            debug_trace.determinism("beat_expansion", {"section": section, "target": target or len(expanded)}, updated_section)
         return updated_section
 
     def _is_already_phase_based_primary_plan(self, pattern: str, beats: list[dict[str, Any]]) -> bool:

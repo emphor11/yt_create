@@ -233,12 +233,32 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
             "young professionals",
         )
 
-        self.assertGreaterEqual(len(payload["scenes"][0]["narration"].split()), 160)
+        self.assertGreaterEqual(self.service._word_count(payload["scenes"][0]["narration"]), 160)
         self.assertIn("₹18,000", payload["scenes"][0]["narration"])
-        self.assertGreaterEqual(len(payload["scenes"][1]["narration"].split()), 160)
+        self.assertGreaterEqual(self.service._word_count(payload["scenes"][1]["narration"]), 160)
         self.assertIn("₹5,000 SIP", payload["scenes"][1]["narration"])
         emi_section = next(section for section in payload["story_plan"]["sections"] if section.get("concept_type") == "emi_pressure")
         self.assertEqual(emi_section["visual_scene"]["mechanism"], "emi_pressure")
+
+    def test_refiner_templates_satisfy_approval_word_counter(self) -> None:
+        mechanisms = [
+            "salary_drain",
+            "lifestyle_inflation",
+            "emi_pressure",
+            "debt_trap",
+            "inflation_erosion",
+            "sip_growth",
+            "compounding",
+            "risk_return",
+            "diversification",
+            "speculation_risk",
+            "emergency_fund",
+        ]
+
+        for mechanism in mechanisms:
+            with self.subTest(mechanism=mechanism):
+                narration = self.service.scene_refiner._template_for(mechanism, "", "salary mistakes", "young professionals")
+                self.assertGreaterEqual(self.service._word_count(narration), 160)
 
     def test_strong_emi_scene_keeps_emi_mechanism_and_stack_beats(self) -> None:
         narration = (

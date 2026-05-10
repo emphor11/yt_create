@@ -59,6 +59,23 @@ class FinanceConceptExtractorTestCase(unittest.TestCase):
         self.assertEqual(result.concept_name, "SIP Growth")
         self.assertEqual(result.concept_type, "growth")
 
+    def test_sip_growth_numeric_evidence_resists_salary_left_phrase(self) -> None:
+        result = self.extractor.extract(
+            {
+                "combined_text": (
+                    "A ₹5,000 SIP looks boring in the first month. At 12% annual return over 20 years, "
+                    "you invest about ₹12 lakh from your pocket and compounding can turn it into nearly ₹50 lakh. "
+                    "It survives mood, market noise, and salary stress. That is the transition from saving what is left "
+                    "to investing by design."
+                ),
+                "dominant_entity": "salary",
+                "idea_type": "comparison",
+            }
+        )
+
+        self.assertEqual(result.concept_name, "SIP Growth")
+        self.assertEqual(result.concept_type, "growth")
+
     def test_sip_with_interest_language_does_not_become_debt_trap(self) -> None:
         result = self.extractor.extract(
             {

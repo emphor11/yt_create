@@ -293,6 +293,9 @@ class FinanceConceptExtractor:
                     matches[concept_key] = matches.get(concept_key, 0) + 1
 
         if matches:
+            numbers = self._extract_numbers(text)
+            numeric_roles = numeric_role_map(text, scene_id="finance_concept")
+            facts = list(numeric_roles.get("facts") or [])
             concept_key = max(
                 matches,
                 key=lambda key: (
@@ -301,10 +304,8 @@ class FinanceConceptExtractor:
                     matches[key],
                 ),
             )
+            concept_key = self._governed_concept_key(concept_key, matches, facts, text)
             config = CONCEPT_TAXONOMY[concept_key]
-            numbers = self._extract_numbers(text)
-            numeric_roles = numeric_role_map(text, scene_id="finance_concept")
-            facts = list(numeric_roles.get("facts") or [])
             concept_name = self._display_name(concept_key)
             concept_type = self._normalize_type(config["type"])
             if concept_key == "risk_return":
@@ -336,6 +337,30 @@ class FinanceConceptExtractor:
             action=self._extract_action(text),
             confidence=0.1,
         )
+
+    def _governed_concept_key(
+        self,
+        selected_key: str,
+        matches: dict[str, int],
+        facts: list[dict[str, Any]],
+        text: str,
+    ) -> str:
+        roles = {str(fact.get("role") or "") for fact in facts}
+        lowered = text.lower()
+        has_sip_evidence = (
+            "sip_growth" in matches
+            and "monthly_sip" in roles
+            and (
+                "target_value" in roles
+                or "total_contribution" in roles
+                or "corpus" in lowered
+                or "annual return" in lowered
+                or "compounding" in lowered
+            )
+        )
+        if has_sip_evidence:
+            return "sip_growth"
+        return selected_key
 
     def _numeric_pattern_extract(self, text: str, idea_group: Any) -> FinanceConcept:
         numbers = self._extract_numbers(text)

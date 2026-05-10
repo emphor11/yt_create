@@ -5,7 +5,13 @@ from youtube_ai_system.services.visual_director import DirectedBeat, VisualDirec
 from youtube_ai_system.services.story_pipeline import StoryPipeline
 
 
-def build_input(narration: str, concept_type: str = "definition", percentage: float | None = None, time_period: str | None = None) -> VisualDirectorInput:
+def build_input(
+    narration: str,
+    concept_type: str = "definition",
+    percentage: float | None = None,
+    time_period: str | None = None,
+    semantic_scene: dict | None = None,
+) -> VisualDirectorInput:
     return VisualDirectorInput(
         concept_type=concept_type,
         concept_name=concept_type.replace("_", " ").title(),
@@ -21,12 +27,120 @@ def build_input(narration: str, concept_type: str = "definition", percentage: fl
         has_numbers=True,
         section_position="middle",
         preceding_concept_type=None,
+        semantic_scene=semantic_scene or {},
     )
 
 
 class VisualDirectorTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.director = VisualDirector()
+
+    def _semantic_scene(self, concept_key: str, entities: list[dict]) -> dict:
+        return {
+            "source": "semantic_scene_contract_v1",
+            "scene_id": "test_scene",
+            "narration": "semantic contract narration",
+            "primary_concept": {"key": concept_key, "name": concept_key.replace("_", " ").title(), "confidence": 0.92},
+            "entities": entities,
+            "relationships": [],
+            "derived_values": [],
+            "spoken_values": [str(entity.get("display_value") or "") for entity in entities],
+            "warnings": [],
+            "confidence": 0.92,
+        }
+
+    def _entity(self, role: str, value: float, display_value: str, *, kind: str = "money", source_text: str = "") -> dict:
+        return {
+            "id": f"ent:{role}:{value}",
+            "label": role.replace("_", " ").title(),
+            "kind": kind,
+            "role": role,
+            "value": value,
+            "display_value": display_value,
+            "unit": "INR" if kind == "money" else "",
+            "direction": "",
+            "source_text": source_text,
+            "sentence_index": 0,
+            "confidence": 0.95,
+            "provenance": {"source_number_id": f"num:{role}"},
+            "attributes": {"derived": False},
+        }
+
+    def test_visual_director_prefers_semantic_contract_concept_over_narration_reparse(self) -> None:
+        semantic_scene = self._semantic_scene(
+            "sip_growth",
+            [
+                self._entity("monthly_sip", 5000, "₹5,000"),
+                self._entity("annual_return_rate", 12, "12%", kind="rate"),
+                self._entity("time_period", 20, "20 years", kind="duration"),
+                self._entity("total_contribution", 1200000, "₹12 lakh"),
+                self._entity("target_corpus", 5000000, "₹50 lakh"),
+            ],
+        )
+        result = self.director.direct(
+            build_input(
+                "My ₹50,000 salary disappears and only ₹6,000 is left before month-end.",
+                "salary_drain",
+                semantic_scene=semantic_scene,
+            )
+        )
+
+        self.assertEqual(result.concept_type, "sip_growth")
+        self.assertEqual(result.pattern, "SIPGrowthEngine")
+        self.assertEqual(result.data["semantic_source"], "semantic_scene_contract")
+
+    def test_visual_director_uses_semantic_values_instead_of_misleading_narration_numbers(self) -> None:
+        semantic_scene = self._semantic_scene(
+            "sip_growth",
+            [
+                self._entity("monthly_sip", 5000, "₹5,000"),
+                self._entity("annual_return_rate", 12, "12%", kind="rate"),
+                self._entity("time_period", 20, "20 years", kind="duration"),
+                self._entity("total_contribution", 1200000, "₹12 lakh"),
+                self._entity("target_corpus", 5000000, "₹50 lakh"),
+            ],
+        )
+
+        result = self.director.direct(
+            build_input(
+                "Your ₹50,000 salary arrives. EMI takes ₹18,000 and only ₹6,000 survives.",
+                "definition",
+                semantic_scene=semantic_scene,
+            )
+        )
+
+        self.assertEqual(result.pattern, "SIPGrowthEngine")
+        self.assertEqual(result.data["monthly_sip"]["amount"], 5000)
+        self.assertEqual(result.data["final_corpus"], 5000000)
+        self.assertEqual(result.data["total_invested"], 1200000)
+
+    def test_visual_director_builds_money_flow_from_semantic_contract(self) -> None:
+        semantic_scene = self._semantic_scene(
+            "salary_drain",
+            [
+                self._entity("salary_income", 50000, "₹50,000"),
+                self._entity("emi_payment", 18000, "₹18,000", source_text="EMI takes ₹18,000."),
+                self._entity("rent_expense", 12000, "₹12,000", source_text="Rent takes ₹12,000."),
+                self._entity("living_expense", 14000, "₹14,000", source_text="Food and travel take ₹14,000."),
+                self._entity("remaining_balance", 6000, "₹6,000"),
+            ],
+        )
+
+        result = self.director.direct(
+            build_input(
+                "The salary pressure is visible without needing narration parsing.",
+                "definition",
+                semantic_scene=semantic_scene,
+            )
+        )
+
+        self.assertEqual(result.concept_type, "salary_drain")
+        self.assertEqual(result.pattern, "MoneyFlowDiagram")
+        self.assertEqual(result.data["source"]["amount"], 50000)
+        self.assertEqual(result.data["remainder"]["amount"], 6000)
+        self.assertEqual([flow["amount"] for flow in result.data["flows"]], [18000, 14000, 12000])
+        self.assertEqual([flow["label"] for flow in result.data["flows"]], ["EMI", "Food + travel", "Rent"])
+        self.assertEqual(result.data["semantic_source"], "semantic_scene_contract")
 
     def test_money_flow_diagram_data_correctness(self) -> None:
         narration = (

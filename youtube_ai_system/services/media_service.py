@@ -276,6 +276,8 @@ class MediaService:
             "audio_file": str(audio_path),
             "audio_duration": float(audio_duration),
             "finance_concept": intelligence.get("finance_concept") or {},
+            "semantic_scene": intelligence.get("semantic_scene") or {},
+            "visual_action_graph": intelligence.get("visual_action_graph") or {},
             "narrative_arc": intelligence.get("narrative_arc") or {},
             "visual_story": intelligence.get("visual_story") or {},
             "story_state": intelligence.get("story_state") or {},

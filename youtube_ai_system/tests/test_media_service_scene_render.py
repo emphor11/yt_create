@@ -47,6 +47,8 @@ class MediaServiceSceneRenderTestCase(unittest.TestCase):
         self.assertTrue(section["has_numbers"])
         self.assertTrue(section["has_causation"])
         self.assertEqual(section["finance_concept"]["concept_name"], "Debt Trap")
+        self.assertEqual(section["semantic_scene"]["primary_concept"]["key"], "debt_trap")
+        self.assertTrue(section["semantic_scene"]["entities"])
         self.assertEqual(section["narrative_arc"]["visual_type"], "balance_decay")
         self.assertEqual(section["state"]["money_out"], "40%")
         self.assertEqual(section["visual_plan"][0]["visual"]["pattern"], "DebtSpiralVisualizer")
@@ -75,6 +77,7 @@ class MediaServiceSceneRenderTestCase(unittest.TestCase):
 
         self.assertEqual(section["visual_scene"]["mechanism"], "lifestyle_inflation")
         self.assertEqual(section["concept_type"], "lifestyle_inflation")
+        self.assertEqual(section["semantic_scene"]["primary_concept"]["key"], "lifestyle_inflation")
         self.assertNotEqual(section["visual_plan"][0]["beats"]["beats"][0]["text"], "Old stale plan")
         self.assertTrue(section["story_state"])
 
@@ -87,6 +90,7 @@ class MediaServiceSceneRenderTestCase(unittest.TestCase):
         self.assertEqual(section["dominant_entity"], "salary")
         self.assertEqual(section["idea_type"], "decay")
         self.assertEqual(section["finance_concept"]["concept_name"], "Salary Drain")
+        self.assertEqual(section["semantic_scene"]["primary_concept"]["key"], "salary_drain")
         self.assertTrue(section["narrative_arc"])
         self.assertTrue(section["visual_plan"])
         self.assertTrue(section["visual_story"])
