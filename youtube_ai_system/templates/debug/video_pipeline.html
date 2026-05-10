@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+{% block title %}Visual Pipeline Debug{% endblock %}
+{% block content %}
+<style>
+  .debug-grid { display: grid; grid-template-columns: 260px minmax(0, 1fr) 420px; gap: 16px; align-items: start; }
+  .debug-panel { background: #12121f; border: 1px solid rgba(255,255,255,.16); border-radius: 8px; }
+  .debug-sidebar { position: sticky; top: 16px; max-height: 82vh; overflow: auto; }
+  .debug-scene { width: 100%; text-align: left; border: 0; border-bottom: 1px solid rgba(255,255,255,.08); background: transparent; color: #fff; padding: 12px; }
+  .debug-scene.active { background: rgba(46,196,182,.16); }
+  .debug-badge { display: inline-block; min-width: 22px; padding: 1px 6px; border-radius: 999px; font-size: 12px; }
+  .debug-badge.warn { background: #ff9f1c; color: #121212; }
+  .debug-badge.err { background: #e63946; color: white; }
+  .debug-badge.ok { background: #2ec4b6; color: #081311; }
+  .debug-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px; border-bottom: 1px solid rgba(255,255,255,.12); }
+  .debug-tab { border: 1px solid rgba(255,255,255,.18); background: transparent; color: #ddd; border-radius: 6px; padding: 5px 8px; font-size: 12px; }
+  .debug-tab.active { background: #2ec4b6; color: #071110; border-color: #2ec4b6; }
+  .json-tree { white-space: pre-wrap; word-break: break-word; font-size: 12px; max-height: 64vh; overflow: auto; padding: 12px; color: #d8dee9; }
+  .timeline { height: 56px; position: relative; border-radius: 6px; background: rgba(255,255,255,.08); overflow: hidden; }
+  .beat-segment { position: absolute; top: 0; bottom: 0; border-right: 1px solid rgba(0,0,0,.35); padding: 6px; overflow: hidden; font-size: 11px; }
+  .lineage-path { font-size: 12px; color: #cfd8dc; }
+  @media (max-width: 1100px) { .debug-grid { grid-template-columns: 1fr; } .debug-sidebar { position: static; max-height: none; } }
+</style>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <div class="section-label mb-2">Developer Debug</div>
+    <h1 class="h3 mb-1">Visual Pipeline Inspector</h1>
+    <p class="text-secondary mb-0">Project {{ project.id }} · sidecar traces from <code>{{ storage_root }}/debug_traces</code></p>
+  </div>
+  <a class="btn btn-outline-light btn-sm" href="{{ url_for('media.scene_review', project_id=project.id) }}">Scene Review</a>
+</div>
+
+<div class="debug-grid">
+  <aside class="debug-panel debug-sidebar">
+    {% for scene in scenes %}
+      {% set trace = scene.debug_trace %}
+      <button class="debug-scene" data-scene-order="{{ scene.scene_order }}">
+        <div class="d-flex justify-content-between align-items-center">
+          <strong>Scene {{ scene.scene_order }}</strong>
+          <span>
+            {% if trace %}
+              <span class="debug-badge {{ 'err' if trace.errors else ('warn' if trace.warnings else 'ok') }}">{{ trace.health }}</span>
+            {% else %}
+              <span class="debug-badge warn">no trace</span>
+            {% endif %}
+          </span>
+        </div>
+        <div class="small text-secondary mt-1">{{ scene.visual_type or "derived" }}</div>
+        {% if trace and trace.components %}
+          <div class="small text-secondary">{{ trace.components|join(" → ") }}</div>
+        {% endif %}
+      </button>
+    {% endfor %}
+  </aside>
+
+  <main class="debug-panel p-3">
+    <div id="emptyState" class="text-secondary">Select a scene to inspect the visual compiler trace.</div>
+    <div id="sceneView" class="d-none">
+      <div class="mb-3">
+        <div class="section-label mb-2">Narration</div>
+        <p id="narrationText" class="mb-0"></p>
+      </div>
+      <div id="previewWrap" class="mb-3"></div>
+      <div class="mb-3">
+        <div class="d-flex justify-content-between">
+          <div class="section-label mb-2">Beat Timeline</div>
+          <div id="activeComponent" class="small text-secondary"></div>
+        </div>
+        <div id="beatTimeline" class="timeline"></div>
+        <input id="frameScrubber" type="range" class="form-range mt-3" min="0" value="0" step="1">
+      </div>
+      <div class="mb-2">
+        <div class="section-label mb-2">Current Frame Lineage</div>
+        <div id="lineagePath" class="lineage-path"></div>
+      </div>
+    </div>
+  </main>
+
+  <section class="debug-panel">
+    <div id="tabs" class="debug-tabs"></div>
+    <pre id="tabContent" class="json-tree mb-0">{}</pre>
+  </section>
+</div>
+
+<script>
+const projectId = {{ project.id }};
+const scenes = {{ scenes|tojson }};
+const tabs = [
+  ['groq', 'Groq'], ['scene_refiner', 'Refiner'], ['normalizer', 'Normalizer'],
+  ['story_pipeline', 'StoryPipeline'], ['visual_director', 'VisualDirector'],
+  ['beat_expansion', 'BeatExpansion'], ['scene_builder', 'SceneBuilder'],
+  ['renderer', 'Renderer'], ['ownership_graph', 'Ownership'], ['lineage_graph', 'Lineage'],
+  ['diffs', 'Diffs'], ['confidence', 'Confidence'], ['validation', 'Validation'],
+  ['numeric_provenance', 'Numbers'], ['concept_policy', 'ConceptPolicy'],
+  ['repetition', 'Repetition'], ['scene_density', 'Density'],
+  ['narrative_progression', 'Arc'], ['educational_integrity', 'Integrity'],
+  ['invalidation', 'Invalidation'], ['determinism', 'Determinism'], ['metrics', 'Metrics'],
+  ['warnings', 'Warnings'], ['errors', 'Errors'], ['frame_debug', 'Frames']
+];
+let activeTrace = null;
+let activeTab = 'ownership_graph';
+
+function renderTabs() {
+  const wrap = document.getElementById('tabs');
+  wrap.innerHTML = '';
+  tabs.forEach(([key, label]) => {
+    const button = document.createElement('button');
+    button.className = 'debug-tab' + (key === activeTab ? ' active' : '');
+    button.textContent = label;
+    button.onclick = () => { activeTab = key; renderTabs(); renderTabContent(); };
+    wrap.appendChild(button);
+  });
+}
+
+function renderTabContent() {
+  const value = activeTrace ? activeTrace[activeTab] : {};
+  document.getElementById('tabContent').textContent = JSON.stringify(value ?? {}, null, 2);
+}
+
+function latestSceneSnapshot(trace) {
+  const snapshots = trace.snapshots || [];
+  for (let i = snapshots.length - 1; i >= 0; i--) {
+    const state = snapshots[i].full_scene_state;
+    if (state && Array.isArray(state.beats)) return state;
+    if (state && state.section && Array.isArray(state.section.beats)) return state.section;
+  }
+  return null;
+}
+
+function renderTimeline(sceneState) {
+  const timeline = document.getElementById('beatTimeline');
+  timeline.innerHTML = '';
+  const beats = sceneState?.beats || [];
+  const duration = Number(sceneState?.duration || sceneState?.total_duration || 0) || Math.max(...beats.map(b => Number(b.end_time || 0)), 1);
+  beats.forEach((beat, index) => {
+    const start = Number(beat.start_time || 0);
+    const end = Number(beat.end_time || start);
+    const segment = document.createElement('div');
+    segment.className = 'beat-segment';
+    segment.style.left = `${Math.max(start / duration * 100, 0)}%`;
+    segment.style.width = `${Math.max((end - start) / duration * 100, 1)}%`;
+    segment.style.background = index % 2 ? 'rgba(67,97,238,.45)' : 'rgba(46,196,182,.45)';
+    segment.textContent = `${index}: ${beat.component}`;
+    timeline.appendChild(segment);
+  });
+  const scrubber = document.getElementById('frameScrubber');
+  scrubber.max = Math.max(Math.round(duration * 30), 1);
+  scrubber.oninput = () => renderFrame(Number(scrubber.value));
+  renderFrame(Number(scrubber.value || 0));
+}
+
+function renderFrame(frame) {
+  if (!activeTrace) return;
+  const probes = activeTrace.frame_debug || [];
+  const probe = probes.reduce((best, item) => {
+    if (!best) return item;
+    return Math.abs(item.frame - frame) < Math.abs(best.frame - frame) ? item : best;
+  }, null);
+  document.getElementById('activeComponent').textContent = probe ? `Frame ${probe.frame} · ${probe.active_component || 'none'} · ${probe.transition_state}` : '';
+  const nodes = activeTrace.lineage_graph?.nodes || [];
+  const node = probe ? nodes.find(n => n.id === probe.component_lineage_id) : null;
+  const sources = node ? (node.source_ids || []).join(' → ') : '';
+  document.getElementById('lineagePath').textContent = probe ? `${sources} → ${probe.component_lineage_id || probe.active_component}` : 'No frame probe captured.';
+}
+
+async function selectScene(order) {
+  document.querySelectorAll('.debug-scene').forEach(button => button.classList.toggle('active', Number(button.dataset.sceneOrder) === order));
+  const response = await fetch(`/debug/video-pipeline/projects/${projectId}/scene/${order}.json`);
+  if (!response.ok) return;
+  activeTrace = await response.json();
+  document.getElementById('emptyState').classList.add('d-none');
+  document.getElementById('sceneView').classList.remove('d-none');
+  document.getElementById('narrationText').textContent = activeTrace.narration || '';
+  const scene = scenes.find(item => Number(item.scene_order) === order) || {};
+  const preview = document.getElementById('previewWrap');
+  preview.innerHTML = '';
+  if (scene.visual_path) {
+    const video = document.createElement('video');
+    video.className = 'w-100 rounded border';
+    video.controls = true;
+    video.muted = true;
+    video.preload = 'metadata';
+    video.src = `/local-file?file_path=${encodeURIComponent(scene.visual_path)}`;
+    preview.appendChild(video);
+  }
+  renderTimeline(latestSceneSnapshot(activeTrace));
+  renderTabContent();
+}
+
+renderTabs();
+renderTabContent();
+document.querySelectorAll('.debug-scene').forEach(button => {
+  button.addEventListener('click', () => selectScene(Number(button.dataset.sceneOrder)));
+});
+</script>
+{% endblock %}

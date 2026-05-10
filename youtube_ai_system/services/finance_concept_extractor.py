@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass
 from typing import Any, List, Optional
 import re
 
+from .financial_governance import apply_concept_policy, first_fact, numeric_role_map
+
 
 @dataclass
 class FinanceConcept:
@@ -18,6 +20,8 @@ class FinanceConcept:
     agent: Optional[str] = None
     victim: Optional[str] = None
     confidence: float = 1.0
+    numeric_facts: list[dict[str, Any]] | None = None
+    concept_policy: dict[str, Any] | None = None
 
 
 CONCEPT_TAXONOMY: dict[str, dict[str, Any]] = {
@@ -299,24 +303,30 @@ class FinanceConceptExtractor:
             )
             config = CONCEPT_TAXONOMY[concept_key]
             numbers = self._extract_numbers(text)
+            numeric_roles = numeric_role_map(text, scene_id="finance_concept")
+            facts = list(numeric_roles.get("facts") or [])
             concept_name = self._display_name(concept_key)
             concept_type = self._normalize_type(config["type"])
             if concept_key == "risk_return":
                 comparison_name = self._extract_comparison_name(text)
                 if comparison_name:
                     concept_name = comparison_name
+            start_value, end_value = self._governed_start_end(concept_key, facts, numbers)
+            policy = apply_concept_policy(concept_key, text, {"concept_name": concept_name, "concept_type": concept_type})
             return FinanceConcept(
                 concept_name=concept_name,
                 concept_type=concept_type,
                 primary_entity=self._group_entity(idea_group),
                 action=self._extract_action(text),
-                start_value=numbers[0] if numbers else None,
-                end_value=numbers[-1] if len(numbers) > 1 else None,
+                start_value=start_value,
+                end_value=end_value,
                 percentage=self._extract_percentage(text),
                 time_period=self._extract_time_period(text),
-                agent=self._extract_agent(text),
+                agent=self._extract_agent(text, concept_key),
                 victim=self._extract_victim(text, self._group_entity(idea_group)),
-                confidence=0.9,
+                confidence=0.82 if policy.get("contaminations") else 0.9,
+                numeric_facts=facts,
+                concept_policy=policy,
             )
 
         return FinanceConcept(
@@ -354,36 +364,46 @@ class FinanceConceptExtractor:
                 pass
 
         entity = self._group_entity(idea_group)
+        numeric_roles = numeric_role_map(text, scene_id="finance_numeric")
+        facts = list(numeric_roles.get("facts") or [])
+        start_value, end_value = self._governed_start_end("", facts, numbers)
         return FinanceConcept(
             concept_name=f"{entity.title()} Change",
             concept_type=self._normalize_type(concept_type),
             primary_entity=entity,
             action="changes over time",
-            start_value=numbers[0] if numbers else None,
-            end_value=numbers[-1] if len(numbers) > 1 else None,
+            start_value=start_value,
+            end_value=end_value,
             percentage=percentage,
             time_period=time,
             agent=self._extract_agent(text),
             victim=self._extract_victim(text, entity),
             confidence=0.6,
+            numeric_facts=facts,
+            concept_policy=apply_concept_policy(concept_type, text),
         )
 
     def _llm_extract(self, text: str, idea_group: Any) -> FinanceConcept:
         # Structured fallback kept deterministic for now.
         entity = self._group_entity(idea_group)
         numbers = self._extract_numbers(text)
+        numeric_roles = numeric_role_map(text, scene_id="finance_llm")
+        facts = list(numeric_roles.get("facts") or [])
+        start_value, end_value = self._governed_start_end("", facts, numbers)
         return FinanceConcept(
             concept_name=self._manual_concept_name(text, entity),
             concept_type=self._normalize_type(self._group_idea_type(idea_group)),
             primary_entity=entity,
             action=self._extract_action(text),
-            start_value=numbers[0] if numbers else None,
-            end_value=numbers[-1] if len(numbers) > 1 else None,
+            start_value=start_value,
+            end_value=end_value,
             percentage=self._extract_percentage(text),
             time_period=self._extract_time_period(text),
             agent=self._extract_agent(text),
             victim=self._extract_victim(text, entity),
             confidence=0.7,
+            numeric_facts=facts,
+            concept_policy=apply_concept_policy(self._group_idea_type(idea_group), text),
         )
 
     def _display_name(self, concept_key: str) -> str:
@@ -538,10 +558,14 @@ class FinanceConceptExtractor:
                 return action
         return "changes"
 
-    def _extract_agent(self, text: str) -> Optional[str]:
+    def _extract_agent(self, text: str, concept_key: str = "") -> Optional[str]:
         lowered = text.lower()
         if "interest" in lowered:
             return "interest"
+        if concept_key == "lifestyle_inflation":
+            if any(token in lowered for token in ("spending", "expenses", "expense", "lifestyle", "upgrade", "raise")):
+                return "lifestyle"
+            return None
         if "inflation" in lowered:
             return "inflation"
         if "spending" in lowered or "expenses" in lowered:
@@ -549,6 +573,29 @@ class FinanceConceptExtractor:
         if "tax" in lowered:
             return "tax"
         return None
+
+    def _governed_start_end(self, concept_key: str, facts: list[dict[str, Any]], numbers: list[str]) -> tuple[Optional[str], Optional[str]]:
+        concept = str(concept_key or "").strip().lower()
+        if concept == "lifestyle_inflation":
+            start = first_fact(facts, "start_income", "income")
+            end = first_fact(facts, "end_income")
+            return (str(start.get("raw")) if start else (numbers[0] if numbers else None), str(end.get("raw")) if end else None)
+        if concept == "sip_growth":
+            start = first_fact(facts, "monthly_sip")
+            targets = [fact for fact in facts if fact.get("role") == "target_value"]
+            end = max(targets, key=lambda fact: float(fact.get("amount") or 0), default=None)
+            return (str(start.get("raw")) if start else (numbers[0] if numbers else None), str(end.get("raw")) if end else None)
+        if concept in {"inflation_erosion", "compound_growth"}:
+            start = first_fact(facts, "principal", "monthly_sip", "money_amount")
+            end = first_fact(facts, "target_value")
+            return (str(start.get("raw")) if start else (numbers[0] if numbers else None), str(end.get("raw")) if end else None)
+        if concept == "emergency_fund":
+            return (None, None)
+        safe_numbers = [number for number in numbers if "%" not in number and not re.search(r"\byears?|months?|days?\b", number, re.I)]
+        return (
+            safe_numbers[0] if safe_numbers else None,
+            safe_numbers[-1] if len(safe_numbers) > 1 else None,
+        )
 
     def _extract_victim(self, text: str, primary_entity: str) -> Optional[str]:
         lowered = text.lower()

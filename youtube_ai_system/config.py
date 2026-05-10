@@ -63,6 +63,7 @@ class Config:
     VISUAL_BEAT_MAX_SEC = float(os.environ.get("VISUAL_BEAT_MAX_SEC", "4.0"))
     VISUAL_BEAT_MIN_SEC = float(os.environ.get("VISUAL_BEAT_MIN_SEC", "2.5"))
     VISUAL_DEBUG = os.environ.get("VISUAL_DEBUG", "false").lower() == "true"
+    DEBUG_VIDEO_PIPELINE = os.environ.get("DEBUG_VIDEO_PIPELINE", "false").lower() == "true"
     MEME_ASSET_DIR = os.environ.get("MEME_ASSET_DIR", "")
 
     CAPTIONS_ENABLED = os.environ.get(

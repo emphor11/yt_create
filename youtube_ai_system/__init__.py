@@ -5,6 +5,7 @@ from flask import Flask, abort, request, send_file
 from .config import Config
 from .db import close_db, init_app
 from .routes.analytics import analytics_bp
+from .routes.debug import debug_bp
 from .routes.media import media_bp
 from .routes.projects import projects_bp
 from .routes.publish import publish_bp
@@ -33,6 +34,7 @@ def create_app(test_config: dict | None = None) -> Flask:
     app.register_blueprint(media_bp)
     app.register_blueprint(publish_bp)
     app.register_blueprint(analytics_bp)
+    app.register_blueprint(debug_bp)
 
     @app.route("/health")
     def health() -> dict[str, str]:

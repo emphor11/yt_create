@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from .scene_debug import SceneDebugTrace
+
 
 class VisualBeatExpander:
     """Adds enough visual beats for longer narration without changing the scene concept."""
@@ -42,9 +44,11 @@ class VisualBeatExpander:
         "emergency_buffer": "Safety net absorbs the shock",
     }
 
-    def expand_section(self, section: dict[str, Any]) -> dict[str, Any]:
+    def expand_section(self, section: dict[str, Any], debug_trace: SceneDebugTrace | None = None) -> dict[str, Any]:
         visual_plan = section.get("visual_plan") or []
         if not visual_plan:
+            if debug_trace:
+                debug_trace.snapshot("beat_expansion_post", section, owner="visual_beat_expander", note="no visual plan")
             return section
 
         item = visual_plan[0]
@@ -53,11 +57,17 @@ class VisualBeatExpander:
         sentences = self._sentences(text)
         target = self._target_beat_count(text, sentences)
         if len(beats) >= target or target <= 3:
+            if debug_trace:
+                debug_trace.snapshot("beat_expansion_post", section, owner="visual_beat_expander", note="unchanged; enough beats")
+                debug_trace.determinism("beat_expansion", {"section": section, "target": target}, section)
             return section
 
         visual = item.get("visual") or {}
         pattern = str(visual.get("pattern") or "").strip()
         if self._is_already_phase_based_primary_plan(pattern, beats):
+            if debug_trace:
+                debug_trace.snapshot("beat_expansion_post", section, owner="visual_beat_expander", note="unchanged; primary phase plan")
+                debug_trace.determinism("beat_expansion", {"section": section, "target": target}, section)
             return section
         concept = item.get("concept") or {}
         mechanism = str(section.get("concept_type") or (concept.get("type") if isinstance(concept, dict) else "") or "").strip()
@@ -73,6 +83,7 @@ class VisualBeatExpander:
         )
         if story_beats:
             expanded = story_beats
+            strategy = "story_state"
         else:
             expanded = self._beats_from_sentences(
                 sentences=sentences,
@@ -82,14 +93,47 @@ class VisualBeatExpander:
                 target=target,
                 fallback_beats=beats,
             )
+            strategy = "sentence"
         expanded = self._preserve_directed_beats(expanded, beats, pattern, mechanism)
         if len(expanded) <= len(beats):
+            if debug_trace:
+                debug_trace.snapshot("beat_expansion_post", section, owner="visual_beat_expander", note="unchanged; expansion not longer")
+                debug_trace.determinism("beat_expansion", {"section": section, "target": target}, section)
             return section
 
         updated_item = dict(item)
         updated_item["beats"] = {"beats": expanded}
         updated_section = dict(section)
         updated_section["visual_plan"] = [updated_item, *visual_plan[1:]]
+        if debug_trace:
+            debug_trace.snapshot(
+                "beat_expansion_post",
+                {
+                    "target": target,
+                    "strategy": strategy,
+                    "before_beats": beats,
+                    "after_beats": expanded,
+                    "section": updated_section,
+                },
+                owner="visual_beat_expander",
+            )
+            debug_trace.ownership("beats", "visual_beat_expander", expanded, f"expanded beats using {strategy} strategy")
+            debug_trace.confidence("beat_expansion", "beats", f"{len(expanded)} beats", 0.8 if strategy == "story_state" else 0.68, [f"{strategy} expansion"])
+            for index, beat in enumerate(expanded):
+                beat_id = f"beat:{index}:{str(beat.get('component') or 'component')}"
+                source_ids = [f"director_plan:0:{pattern}"]
+                debug_trace.lineage_node(
+                    beat_id,
+                    "beat",
+                    "beat_expansion",
+                    str(beat.get("text") or beat.get("component") or f"Beat {index + 1}"),
+                    beat,
+                    owner="visual_beat_expander",
+                    confidence=0.8 if strategy == "story_state" else 0.68,
+                    source_ids=source_ids,
+                )
+                debug_trace.lineage_edge(source_ids[0], beat_id, "beat_generated_from_director_plan")
+            debug_trace.determinism("beat_expansion", {"section": section, "target": target}, updated_section)
         return updated_section
 
     def _is_already_phase_based_primary_plan(self, pattern: str, beats: list[dict[str, Any]]) -> bool:

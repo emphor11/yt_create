@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from .finance_concept_extractor import FinanceConceptExtractor
+from .financial_governance import apply_concept_policy, scene_density_report
 from .idea_grouper import IdeaGrouper
 from .run_log import RunLogger
 from .story_intelligence_engine import StoryIntelligenceEngine
@@ -12,6 +13,7 @@ from .visual_beat_expander import VisualBeatExpander
 from .visual_director import VisualDirector, visual_director_input_from_section
 from .visual_scene_normalizer import VisualSceneNormalizer
 from .visual_story_engine import VisualStoryEngine
+from .scene_debug import SceneDebugTrace, confidence_for_finance_concept, stable_hash
 
 CONCEPT_PRIORITY = {
     "numeric": 5,
@@ -65,14 +67,14 @@ class StoryPipeline:
         self.visual_story_engine = visual_story_engine or VisualStoryEngine()
         self.logger = logger or RunLogger()
 
-    def build_story_plan(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def build_story_plan(self, payload: dict[str, Any], debug_trace: SceneDebugTrace | None = None) -> dict[str, Any]:
         planning_payload = self.group_payload_for_story_plan(payload)
         story_plan = self.story_plan_from_idea_groups(planning_payload)
-        story_plan = self.attach_visual_scene_contract(story_plan)
-        story_plan = self.attach_section_concepts(story_plan)
-        story_plan = self.attach_section_narrative_arc(story_plan)
+        story_plan = self.attach_visual_scene_contract(story_plan, debug_trace=debug_trace)
+        story_plan = self.attach_section_concepts(story_plan, debug_trace=debug_trace)
+        story_plan = self.attach_section_narrative_arc(story_plan, debug_trace=debug_trace)
         story_plan = self.attach_visual_story(story_plan)
-        story_plan = self.attach_section_visual_plan(story_plan)
+        story_plan = self.attach_section_visual_plan(story_plan, debug_trace=debug_trace)
         return story_plan
 
     def group_sentences_into_sections(self, sentences: list[str]) -> list[str]:
@@ -283,15 +285,15 @@ class StoryPipeline:
             "sections": sections,
         }
 
-    def attach_visual_scene_contract(self, story_plan: dict[str, Any]) -> dict[str, Any]:
+    def attach_visual_scene_contract(self, story_plan: dict[str, Any], debug_trace: SceneDebugTrace | None = None) -> dict[str, Any]:
         sections = story_plan.get("sections") or []
         story_plan["sections"] = [
-            self.visual_scene_normalizer.inject_into_section(section, index)
+            self.visual_scene_normalizer.inject_into_section(section, index, debug_trace=debug_trace)
             for index, section in enumerate(sections)
         ]
         return story_plan
 
-    def attach_section_concepts(self, story_plan: dict[str, Any]) -> dict[str, Any]:
+    def attach_section_concepts(self, story_plan: dict[str, Any], debug_trace: SceneDebugTrace | None = None) -> dict[str, Any]:
         sections = story_plan.get("sections") or []
         for section in sections:
             concepts: list[dict[str, str]] = []
@@ -315,6 +317,8 @@ class StoryPipeline:
                 "agent": finance_concept.agent,
                 "victim": finance_concept.victim,
                 "confidence": finance_concept.confidence,
+                "numeric_facts": finance_concept.numeric_facts or [],
+                "concept_policy": finance_concept.concept_policy or {},
             }
             concept = finance_concept.concept_name if finance_concept.concept_name != "Unknown" else None
             concept_type = finance_concept.concept_type
@@ -331,22 +335,49 @@ class StoryPipeline:
                 reverse=True,
             )
             section["concepts"] = concepts
+            if debug_trace:
+                score, reasons = confidence_for_finance_concept(section["finance_concept"])
+                concept_id = f"concept:{section.get('idea_group_id') or len(debug_trace.data.get('confidence') or [])}:{finance_concept.concept_type}"
+                debug_trace.snapshot("story_pipeline_post_classification", section, owner="story_pipeline")
+                debug_trace.ownership("concept_type", "story_pipeline", finance_concept.concept_type, "finance concept extraction")
+                debug_trace.confidence("story_pipeline", "concept_type", finance_concept.concept_type, score, reasons)
+                debug_trace.lineage_node(
+                    concept_id,
+                    "concept",
+                    "story_pipeline",
+                    finance_concept.concept_name,
+                    section["finance_concept"],
+                    owner="story_pipeline",
+                    confidence=score,
+                    source_ids=[f"mechanism:0:{section.get('mechanism') or section.get('idea_type') or ''}"],
+                )
+                debug_trace.lineage_edge(
+                    f"mechanism:0:{section.get('mechanism') or section.get('idea_type') or ''}",
+                    concept_id,
+                    "concept_selected_from_finance_extractor",
+                )
+                debug_trace.determinism("story_pipeline_classification", section.get("text"), section["finance_concept"])
         story_plan["agenda"] = self.agenda_from_top_concepts(sections)
         return story_plan
 
-    def attach_section_narrative_arc(self, story_plan: dict[str, Any]) -> dict[str, Any]:
+    def attach_section_narrative_arc(self, story_plan: dict[str, Any], debug_trace: SceneDebugTrace | None = None) -> dict[str, Any]:
         sections = story_plan.get("sections") or []
         for section in sections:
             arc = self._narrative_arc_for_section(section)
             section["narrative_arc"] = arc
             section["visual_type"] = arc.get("visual_type") or "concept"
             section["state"] = self._state_from_narrative_arc(arc)
+            if debug_trace:
+                policy = apply_concept_policy(str(section.get("concept_type") or (section.get("visual_scene") or {}).get("mechanism") or ""), str(section.get("text") or ""), section.get("finance_concept") or {})
+                debug_trace.data["concept_policy"] = policy
+                debug_trace.data["scene_density"] = scene_density_report(section)
+                debug_trace.snapshot("story_pipeline_post_narrative_arc", section, owner="story_pipeline")
         return story_plan
 
     def attach_visual_story(self, story_plan: dict[str, Any]) -> dict[str, Any]:
         return self.visual_story_engine.attach_visual_story(story_plan)
 
-    def attach_section_visual_plan(self, story_plan: dict[str, Any]) -> dict[str, Any]:
+    def attach_section_visual_plan(self, story_plan: dict[str, Any], debug_trace: SceneDebugTrace | None = None) -> dict[str, Any]:
         sections = story_plan.get("sections") or []
         preceding_concept_type: str | None = None
         total_sections = max(len(sections), 1)
@@ -355,11 +386,20 @@ class StoryPipeline:
                 section["narrative_arc"] = self._narrative_arc_for_section(section)
             section_position = self._section_position(index, total_sections)
             director_input = visual_director_input_from_section(section, section_position, preceding_concept_type)
+            if debug_trace:
+                debug_trace.snapshot("visual_director_pre", {"section": section, "director_input": director_input}, owner="story_pipeline")
+                debug_trace.event(
+                    "visual_director",
+                    "starting",
+                    {"input_hash": stable_hash(director_input), "concept_type": director_input.concept_type},
+                )
             directed_plan = None
             try:
                 directed_plan = self.visual_director.direct(director_input)
             except Exception as exc:
                 self._log_visual_director("failed", str(exc))
+                if debug_trace:
+                    debug_trace.error("visual_director", str(exc), {"director_input": director_input})
 
             if directed_plan and directed_plan.is_valid() and not directed_plan.fallback_reason:
                 section["visual_plan"] = [directed_plan.to_visual_plan_item()]
@@ -375,9 +415,19 @@ class StoryPipeline:
             else:
                 if directed_plan and directed_plan.fallback_reason:
                     self._log_visual_director("fallback", directed_plan.fallback_reason)
+                    if debug_trace:
+                        debug_trace.fallback(
+                            "visual_director",
+                            "DirectedPlan.fallback_reason",
+                            directed_plan.fallback_reason,
+                            director_input,
+                            directed_plan.to_visual_plan_item(),
+                        )
                 old_plan = self._old_visual_plan(section)
                 if old_plan:
                     section["visual_plan"] = [old_plan]
+                    if debug_trace:
+                        debug_trace.fallback("visual_director", "old_visual_plan", "director invalid or fallback plan", director_input, old_plan)
                 else:
                     fallback_text = self._short_visual_text(str(section.get("text") or "Core message"))
                     section["visual_plan"] = [
@@ -387,16 +437,48 @@ class StoryPipeline:
                             "beats": {"beats": [{"component": "StatCard", "text": fallback_text}]},
                         }
                     ]
+                    if debug_trace:
+                        debug_trace.fallback("visual_director", "stat_card_definition", "director invalid and no old visual plan", director_input, section["visual_plan"][0])
                 section["direction"] = None
                 section["theme"] = {}
                 section["concept_type"] = str(section.get("idea_type") or "emphasis")
                 section.pop("visual_mode", None)
                 section.pop("cinematic_intent", None)
+            if debug_trace and directed_plan:
+                plan_item = directed_plan.to_visual_plan_item()
+                debug_trace.snapshot("visual_director_post", {"section": section, "directed_plan": plan_item}, owner="visual_director")
+                debug_trace.ownership("visual_plan", "visual_director", section.get("visual_plan"), "director selected visual plan")
+                debug_trace.ownership("pattern", "visual_director", plan_item.get("visual", {}).get("pattern"), "director selected pattern")
+                debug_trace.ownership("data", "visual_director", plan_item.get("visual", {}).get("data"), "director generated component data")
+                debug_trace.ownership("beats", "visual_director", plan_item.get("beats", {}).get("beats"), "director generated beats")
+                debug_trace.confidence(
+                    "visual_director",
+                    "concept_type",
+                    directed_plan.concept_type,
+                    0.45 if directed_plan.fallback_reason else min(max(float(director_input.confidence or 0.65), 0.55), 0.98),
+                    ["director fallback"] if directed_plan.fallback_reason else ["director input confidence", "valid directed plan"],
+                )
+                plan_id = f"director_plan:{index}:{directed_plan.pattern}"
+                debug_trace.lineage_node(
+                    plan_id,
+                    "director_plan",
+                    "visual_director",
+                    directed_plan.pattern,
+                    plan_item,
+                    owner="visual_director",
+                    confidence=None if directed_plan.fallback_reason else min(max(float(director_input.confidence or 0.65), 0.55), 0.98),
+                    source_ids=[f"concept:{section.get('idea_group_id') or index}:{directed_plan.concept_type}"],
+                )
+                debug_trace.lineage_edge(f"concept:{section.get('idea_group_id') or index}:{directed_plan.concept_type}", plan_id, "visual_director_plan_from_concept")
+                debug_trace.determinism("visual_director", director_input, plan_item)
             self.visual_story_engine.enrich_section_from_visual_plan(
                 section,
                 dict(story_plan.get("visual_story") or section.get("visual_story") or {}),
             )
-            sections[index] = self.visual_beat_expander.expand_section(section)
+            before_expansion = dict(section)
+            sections[index] = self.visual_beat_expander.expand_section(section, debug_trace=debug_trace)
+            if debug_trace:
+                debug_trace.diff("beat_expansion", before_expansion, sections[index])
             preceding_concept_type = directed_plan.concept_type if directed_plan else director_input.concept_type
         return story_plan
 
@@ -1005,7 +1087,15 @@ class StoryPipeline:
 
     def _arc_process(self, finance_concept: dict[str, Any], text: str, rate: str) -> str:
         action = str(finance_concept.get("action") or "").strip()
+        concept_name = str(finance_concept.get("concept_name") or "").lower()
+        concept_key = str(finance_concept.get("concept_key") or finance_concept.get("concept_type") or "").lower()
         lowered = text.lower()
+        if "lifestyle inflation" in concept_name or "lifestyle_inflation" in concept_key or "lifestyle inflation" in lowered:
+            return "Lifestyle absorbs raise"
+        if "sip growth" in concept_name or "sip" in lowered:
+            return "SIP compounds"
+        if "fomo" in concept_name or "fomo" in lowered:
+            return "Late entry crashes"
         if "salary" in lowered and any(token in lowered for token in ("vanish", "disappear", "gone", "drain", "left")):
             return "Salary drains"
         if "emi" in lowered:
@@ -1032,6 +1122,8 @@ class StoryPipeline:
 
     def _arc_punch(self, text: str, concept_name: str) -> str:
         lowered = text.lower()
+        if "lifestyle inflation" in lowered or "lifestyle inflation" in concept_name.lower():
+            return "Raise gets absorbed"
         if "debt" in lowered and "interest" in lowered:
             return "Paying to be broke"
         if "salary" in lowered and any(token in lowered for token in ("gone", "vanish", "disappear", "leak")):

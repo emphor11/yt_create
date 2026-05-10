@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 import re
 from typing import Any
 
+from .scene_debug import SceneDebugTrace, confidence_for_mechanism, split_sentences
+
 
 KNOWN_MECHANISMS = {
     "salary_drain",
@@ -101,14 +103,14 @@ class VisualScene:
 class VisualSceneNormalizer:
     """Turns narration sections into visual-ready contracts without an LLM call."""
 
-    def normalize(self, section: dict[str, Any], index: int = 0) -> VisualScene:
+    def normalize(self, section: dict[str, Any], index: int = 0, debug_trace: SceneDebugTrace | None = None) -> VisualScene:
         narration = self._extract_narration(section)
         mechanism = self._infer_mechanism(section, narration)
         numbers = self._extract_numbers(narration)
         emotion = self._infer_emotion(section, mechanism)
         beats = self._extract_beats(section, narration, mechanism)
         intent = self._build_visual_intent(section, mechanism, beats, narration)
-        return VisualScene(
+        scene = VisualScene(
             scene_id=str(section.get("scene_id") or f"scene_{index + 1}"),
             narration=narration,
             visual_intent=intent,
@@ -118,15 +120,43 @@ class VisualSceneNormalizer:
             mechanism=mechanism,
             raw_section=section,
         )
+        if debug_trace:
+            output = scene.to_dict()
+            score, reasons = confidence_for_mechanism(section, mechanism)
+            debug_trace.snapshot("normalizer_post", output, owner="visual_scene_normalizer")
+            debug_trace.ownership("mechanism", "visual_scene_normalizer", mechanism, self._mechanism_reason(section, narration, mechanism))
+            debug_trace.ownership("visual_intent", "visual_scene_normalizer", intent, "visual intent explicit or generated from beats")
+            debug_trace.ownership("visual_beats", "visual_scene_normalizer", beats, "explicit beats, visual plan beats, or mechanism defaults")
+            debug_trace.ownership("numbers", "visual_scene_normalizer", numbers, "numbers extracted from narration")
+            debug_trace.ownership("emotion", "visual_scene_normalizer", emotion, "explicit emotion or mechanism emotion map")
+            debug_trace.confidence("normalizer", "mechanism", mechanism, score, reasons)
+            mechanism_id = f"mechanism:{index}:{mechanism}"
+            debug_trace.lineage_node(
+                mechanism_id,
+                "mechanism",
+                "normalizer",
+                mechanism,
+                output,
+                owner="visual_scene_normalizer",
+                confidence=score,
+                source_ids=[f"sentence:{index + 1}:all"],
+            )
+            for sentence_index, _sentence in enumerate(split_sentences(narration)):
+                debug_trace.lineage_edge(f"sentence:{index + 1}:{sentence_index}", mechanism_id, "sentence_contains_keyword_or_explicit_visual_scene")
+            debug_trace.determinism("normalizer", section, output)
+        return scene
 
-    def inject_into_section(self, section: dict[str, Any], index: int = 0) -> dict[str, Any]:
-        scene = self.normalize(section, index)
+    def inject_into_section(self, section: dict[str, Any], index: int = 0, debug_trace: SceneDebugTrace | None = None) -> dict[str, Any]:
+        before = dict(section)
+        scene = self.normalize(section, index, debug_trace=debug_trace)
         enriched = dict(section)
         enriched["visual_scene"] = scene.to_dict()
         enriched["mechanism"] = scene.mechanism
         enriched["emotion"] = scene.emotion
         if not enriched.get("has_numbers"):
             enriched["has_numbers"] = bool(scene.numbers)
+        if debug_trace:
+            debug_trace.diff("normalizer_inject", before, enriched)
         return enriched
 
     def _extract_narration(self, section: dict[str, Any]) -> str:
@@ -155,6 +185,18 @@ class VisualSceneNormalizer:
             if any(keyword in text for keyword in keywords):
                 return candidate
         return "definition"
+
+    def _mechanism_reason(self, section: dict[str, Any], narration: str, mechanism: str) -> str:
+        for key in ("mechanism", "concept_type", "idea_type"):
+            if self._canonical_mechanism(section.get(key)) == mechanism:
+                return f"explicit section {key}"
+        visual_scene = section.get("visual_scene") or {}
+        if self._canonical_mechanism(visual_scene.get("mechanism")) == mechanism:
+            return "explicit visual_scene mechanism"
+        finance_concept = section.get("finance_concept") or {}
+        if self._canonical_mechanism(finance_concept.get("concept_type")) == mechanism:
+            return "finance concept mechanism"
+        return "keyword inference override" if mechanism != "definition" else "definition fallback"
 
     def _canonical_mechanism(self, value: Any) -> str:
         mechanism = str(value or "").strip().lower()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .scene_debug import SceneDebugTrace
 from .visual_scene_normalizer import VisualSceneNormalizer
 
 
@@ -21,24 +22,30 @@ class ScriptSceneRefiner:
         index: int,
         topic: str,
         angle: str,
+        debug_trace: SceneDebugTrace | None = None,
     ) -> dict[str, Any]:
         source = dict(scene)
         source["narration"] = narration
-        visual_scene = self.normalizer.normalize(source, index - 1)
-        if self._has_multiple_mechanisms(narration):
-            return {
+        visual_scene = self.normalizer.normalize(source, index - 1, debug_trace=debug_trace)
+        has_multiple_mechanisms = self._has_multiple_mechanisms(narration)
+        if has_multiple_mechanisms and self._is_strong_enough(narration, visual_scene.mechanism):
+            result = {
                 "narration": narration,
                 "visual_scene": visual_scene.to_dict(),
                 "refined": False,
                 "allow_grouping": True,
             }
+            self._trace_result(debug_trace, index, scene, result, "multiple mechanisms; grouping allowed")
+            return result
         if self._is_strong_enough(narration, visual_scene.mechanism):
-            return {
+            result = {
                 "narration": narration,
                 "visual_scene": visual_scene.to_dict(),
                 "refined": False,
                 "allow_grouping": False,
             }
+            self._trace_result(debug_trace, index, scene, result, "narration strong enough")
+            return result
 
         refined = self._template_for(visual_scene.mechanism, narration, topic, angle)
         refined_scene = self.normalizer.normalize(
@@ -49,13 +56,41 @@ class ScriptSceneRefiner:
                 "emotion": visual_scene.emotion,
             },
             index - 1,
+            debug_trace=debug_trace,
         )
-        return {
+        result = {
             "narration": refined,
             "visual_scene": refined_scene.to_dict(),
             "refined": True,
-            "allow_grouping": False,
+            "allow_grouping": has_multiple_mechanisms,
         }
+        self._trace_result(debug_trace, index, scene, result, "weak scene expanded from mechanism template")
+        return result
+
+    def _trace_result(
+        self,
+        debug_trace: SceneDebugTrace | None,
+        index: int,
+        source_scene: dict[str, Any],
+        result: dict[str, Any],
+        reason: str,
+    ) -> None:
+        if not debug_trace:
+            return
+        debug_trace.snapshot("refiner_post", result, owner="script_scene_refiner", note=reason)
+        debug_trace.diff("refiner_post", source_scene, result)
+        debug_trace.ownership("narration", "script_scene_refiner", result.get("narration"), reason)
+        debug_trace.ownership("visual_scene", "script_scene_refiner", result.get("visual_scene"), reason)
+        debug_trace.event(
+            "scene_refiner",
+            "completed",
+            {
+                "scene_index": index,
+                "refined": bool(result.get("refined")),
+                "allow_grouping": bool(result.get("allow_grouping")),
+                "reason": reason,
+            },
+        )
 
     def _has_multiple_mechanisms(self, narration: str) -> bool:
         lowered = narration.lower()
@@ -182,11 +217,7 @@ class ScriptSceneRefiner:
         return text
 
     def _expansion_tails(self, mechanism: str, topic: str, angle: str) -> list[str]:
-        common = [
-            "The important part is that the viewer can see the money system, not just hear generic advice.",
-            "Every rupee has a job before the month starts, and the scene should make that job visible.",
-            "That is why the next step is not motivation, it is changing the default path of the money.",
-        ]
+        common = self._non_repeating_common_tails(mechanism)
         tails = {
             "salary_drain": [
                 "Notice the order of damage.",
@@ -215,7 +246,7 @@ class ScriptSceneRefiner:
                 "Then the third fixed payment arrives, and suddenly flexibility disappears.",
                 "The trap is that each payment was approved separately, but the salary faces them together.",
                 "This is why EMI pressure is a cash-flow problem before it becomes a debt problem.",
-                "The viewer should see payments stacking before any spending choice begins.",
+                "Payments stack before any flexible spending choice begins.",
                 "Once fixed payments cross a line, discipline cannot rescue the month by itself.",
                 *common,
             ],
@@ -224,7 +255,7 @@ class ScriptSceneRefiner:
                 "It gives the feeling of progress without attacking the real balance.",
                 "Interest keeps working quietly in the background.",
                 "That means the borrower can pay every month and still feel stuck.",
-                "The visual should make the balance look stubborn while interest keeps adding pressure.",
+                "The balance stays stubborn while interest keeps adding pressure.",
                 "This is the moment where the viewer understands that debt is not only an amount.",
                 "It is a machine that charges rent on delay.",
                 *common,
@@ -233,7 +264,7 @@ class ScriptSceneRefiner:
                 "Inflation is hard to fear because the bank balance does not visibly fall.",
                 "The number on the screen can stay the same while the shopping basket gets smaller.",
                 "That is what makes it dangerous.",
-                "The viewer should see value shrinking, not just hear a percentage.",
+                "The value shrinks even while the account number looks calm.",
                 "A fixed deposit can feel safe and still fail if returns do not beat price rise.",
                 "The lesson is not to hate safety.",
                 "The lesson is to understand real return after inflation.",
@@ -245,7 +276,7 @@ class ScriptSceneRefiner:
                 "The monthly SIP is not supposed to look dramatic on day one.",
                 "It is supposed to create a repeatable habit that survives mood, market noise, and salary stress.",
                 "Over time, contributions become the base and returns start adding their own returns.",
-                "The viewer should see a slow engine becoming powerful because it keeps running.",
+                "The slow engine becomes powerful because it keeps running.",
                 "That is the transition from saving what is left to investing by design.",
                 *common,
             ],
@@ -254,7 +285,7 @@ class ScriptSceneRefiner:
                 "That is why people underestimate it.",
                 "The early years build the base quietly.",
                 "Later, returns begin to earn returns, and the curve bends upward.",
-                "The viewer should not see magic.",
+                "This is not magic.",
                 "They should see time doing mechanical work on repeated contributions.",
                 "The point is simple: starting early gives the engine more road.",
                 *common,
@@ -264,7 +295,7 @@ class ScriptSceneRefiner:
                 "Unclear risk is the real problem.",
                 "A calm product usually gives calmer returns.",
                 "A volatile product may create more growth, but it demands emotional strength.",
-                "The viewer should see that every return has a price.",
+                "Every return has a price.",
                 "Sometimes that price is low growth.",
                 "Sometimes that price is market volatility.",
                 "The goal is to choose risk deliberately instead of reacting later.",
@@ -274,7 +305,7 @@ class ScriptSceneRefiner:
                 "One winner can feel genius until it becomes the only thing holding the future.",
                 "That is concentration risk.",
                 "Diversification is less exciting, but it makes one mistake less powerful.",
-                "The viewer should see risk moving from one fragile point into several buckets.",
+                "Risk moves from one fragile point into several buckets.",
                 "Equity, debt, cash, and emergency money do different jobs.",
                 "None of them needs to be the hero in every situation.",
                 "The portfolio becomes stronger because every rupee is not exposed to the same shock.",
@@ -285,7 +316,7 @@ class ScriptSceneRefiner:
                 "But popularity is not a thesis.",
                 "When the price rises first and thinking comes later, the viewer is no longer investing.",
                 "They are buying emotional relief.",
-                "The visual should show excitement turning into a drop, then panic turning into a bad exit.",
+                "Excitement turns into a drop, then panic turns into a bad exit.",
                 "The lesson is not to avoid markets.",
                 "The lesson is to avoid entering without understanding what can go wrong.",
                 *common,
@@ -296,7 +327,7 @@ class ScriptSceneRefiner:
                 "It protects the plan when life interrupts the spreadsheet.",
                 "A medical bill, job delay, or family emergency can force a person into expensive debt.",
                 "Cash buffer stops that shock from becoming a credit card problem.",
-                "The viewer should see the emergency hitting the system and the buffer absorbing it.",
+                "The emergency hits the plan, and the buffer absorbs the shock.",
                 "That is why boring money can be the most powerful money in the room.",
                 *common,
             ],
@@ -304,9 +335,73 @@ class ScriptSceneRefiner:
         return tails.get(mechanism, [
             f"The topic is {topic or 'money'}, but the scene still needs one concrete mechanism.",
             f"The angle is {angle or 'the hidden money mistake'}, so the example should show a visible before-and-after.",
-            "The viewer should see what changes, which number moves, and why that movement matters.",
-            "A generic lesson is not enough for this format.",
+            "The narration should name what changes, which number moves, and why that movement matters.",
+            "A broad lesson is not enough for this format.",
             "The scene needs a system, a pressure point, and a consequence.",
             "Only then can the next scene build on the same money journey.",
             *common,
+        ])
+
+    def _non_repeating_common_tails(self, mechanism: str) -> list[str]:
+        tails = {
+            "salary_drain": [
+                "A salary problem becomes solvable only after the fixed claims are named.",
+                "The next choice is to separate automatic costs from flexible spending.",
+                "That turns a mysterious month-end shortage into a map.",
+            ],
+            "lifestyle_inflation": [
+                "The raise has to be protected at the moment it arrives.",
+                "Otherwise comfort quietly converts new income into permanent bills.",
+                "The useful move is to decide the savings jump before the lifestyle jump.",
+            ],
+            "emi_pressure": [
+                "The next step is to judge EMIs together, not one by one.",
+                "A payment that looks small alone can still weaken the whole month.",
+                "Cash flow improves when fixed promises stop expanding silently.",
+            ],
+            "debt_trap": [
+                "The first repair is to attack the balance, not the feeling of progress.",
+                "A debt plan has to beat the interest engine directly.",
+                "Minimum comfort is expensive when the principal refuses to move.",
+            ],
+            "inflation_erosion": [
+                "The decision is not between safety and risk.",
+                "The decision is whether the money keeps real buying power.",
+                "A safe-looking balance still needs a real-return check.",
+            ],
+            "sip_growth": [
+                "The habit matters because it starts before motivation is needed.",
+                "A fixed contribution turns investing into a system instead of a mood.",
+                "The payoff comes from repetition surviving boring months.",
+            ],
+            "compounding": [
+                "The practical lesson is to give time more months to work.",
+                "A small base becomes useful only when it is left alone long enough.",
+                "Stopping early interrupts the part of the curve that matters.",
+            ],
+            "risk_return": [
+                "The next step is to choose volatility before volatility chooses your behavior.",
+                "A product is not good or bad without the risk a person can actually tolerate.",
+                "The right return is the one the investor can stay with.",
+            ],
+            "diversification": [
+                "The portfolio becomes a team instead of a single bet.",
+                "That makes one bad event less powerful.",
+                "The goal is not excitement; it is survival across different market moods.",
+            ],
+            "speculation_risk": [
+                "The safer move is to separate price excitement from investment logic.",
+                "If the reason to buy is only noise, the reason to sell will also become noise.",
+                "A thesis has to exist before the chart turns red.",
+            ],
+            "emergency_fund": [
+                "The buffer is not idle; it is insurance against forced borrowing.",
+                "That cash buys time when the plan is under stress.",
+                "The next financial move becomes easier when one emergency cannot break everything.",
+            ],
+        }
+        return tails.get(mechanism, [
+            "The next step is to name the pressure clearly.",
+            "Then the narration can explain what changed and why it matters.",
+            "That keeps the scene tied to one practical financial mechanism.",
         ])

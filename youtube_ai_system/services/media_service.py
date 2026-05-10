@@ -23,6 +23,7 @@ from .render_spec_service import RenderSpec
 from .render_spec_service import RenderSpecService
 from .run_log import RunLogger
 from .scene_builder import build_scenes
+from .scene_debug import SceneDebugStore, SceneDebugTrace, debug_video_pipeline_enabled, elapsed_ms, new_trace_for_scene, stable_hash, stage_timer
 from .story_pipeline import StoryPipeline
 from .voice_service import VoiceService
 
@@ -184,12 +185,17 @@ class MediaService:
         visual_pattern = str(scene.get("visual_type") or "")
         visual_concept = str(scene.get("visual_instruction") or "")
         scene_section: dict[str, object] = {"visual_plan": self._scene_visual_plan(scene)}
+        debug_trace = new_trace_for_scene(project_id, scene)
         try:
-            scene_section = self._section_for_scene_render(scene, duration, audio_path)
+            started = stage_timer()
+            scene_section = self._section_for_scene_render(scene, duration, audio_path, debug_trace=debug_trace)
+            if debug_trace:
+                debug_trace.event("story_pipeline", "completed", {"output_hash": stable_hash(scene_section)}, duration_ms=elapsed_ms(started))
             visual_path, visual_source, visual_pattern, visual_concept = self._render_scene_with_scene_builder(
                 image_root,
                 scene["scene_order"],
                 scene_section,
+                debug_trace=debug_trace,
             )
             visual_status = "completed"
             self.logger.log(
@@ -203,9 +209,14 @@ class MediaService:
                 f"Visual generation failed for scene {scene['scene_order']}: {exc}",
                 project_id,
             )
+            if debug_trace:
+                debug_trace.error("visual_generation", str(exc), {"scene_order": scene["scene_order"]})
             visual_path = None
             visual_source = "remotion_failed"
             visual_status = "failed"
+        finally:
+            if debug_trace:
+                SceneDebugStore().save(debug_trace)
 
         scene_status = "generated" if (audio_status == "completed" and visual_status == "completed") else "failed"
         self.repo.update_scene(
@@ -233,13 +244,23 @@ class MediaService:
         )
         return dynamic_count / len(scenes), scenes
 
-    def _section_for_scene_render(self, scene: dict, audio_duration: float, audio_path: Path) -> dict:
+    def _section_for_scene_render(
+        self,
+        scene: dict,
+        audio_duration: float,
+        audio_path: Path,
+        debug_trace: SceneDebugTrace | None = None,
+    ) -> dict:
         narration = str(scene.get("narration_text") or "")
         kind = str(scene.get("kind") or "body")
         # Pass any stored visual_scene forward so the story pipeline fast-path
         # can use Groq-generated mechanism/beats rather than rebuilding from text.
         stored_visual_scene = self._json_dict_from_scene_field(scene.get("visual_scene_json"))
-        intelligence = self._section_intelligence_from_narration(narration, kind, visual_scene=stored_visual_scene)
+        if debug_trace:
+            debug_trace.snapshot("stored_visual_scene", stored_visual_scene, owner="scene_db")
+            if stored_visual_scene:
+                debug_trace.ownership("visual_scene", "scene_db", stored_visual_scene, "stored visual_scene_json")
+        intelligence = self._section_intelligence_from_narration(narration, kind, visual_scene=stored_visual_scene, debug_trace=debug_trace)
         stored_finance_concept = self._json_dict_from_scene_field(scene.get("finance_concept_json"))
         if stored_finance_concept:
             intelligence["finance_concept"] = stored_finance_concept
@@ -247,7 +268,7 @@ class MediaService:
         # Prefer the freshly computed visual plan — it reflects all pipeline
         # improvements. Only fall back to the stored plan if nothing was computed.
         visual_plan = list(intelligence.get("visual_plan") or []) or self._scene_visual_plan(scene)
-        return {
+        section = {
             "text": narration,
             "kind": kind,
             "weight": self._weight_for_scene_kind(kind),
@@ -272,6 +293,10 @@ class MediaService:
             "has_causation": bool(intelligence.get("has_causation")),
             "visual_scene": stored_visual_scene or intelligence.get("visual_scene") or {},
         }
+        if debug_trace:
+            debug_trace.snapshot("story_pipeline_section_for_render", section, owner="media_service")
+            debug_trace.ownership("visual_plan", "media_service", visual_plan, "fresh intelligence visual plan preferred over stored plan")
+        return section
 
 
     def _scene_visual_plan(self, scene: dict) -> list[dict]:
@@ -290,7 +315,13 @@ class MediaService:
         section = self._section_intelligence_from_narration(narration, kind)
         return list(section.get("visual_plan") or [])
 
-    def _section_intelligence_from_narration(self, narration: str, kind: str, visual_scene: dict | None = None) -> dict:
+    def _section_intelligence_from_narration(
+        self,
+        narration: str,
+        kind: str,
+        visual_scene: dict | None = None,
+        debug_trace: SceneDebugTrace | None = None,
+    ) -> dict:
         if kind == "outro":
             return self._outro_section_intelligence(narration)
 
@@ -306,8 +337,11 @@ class MediaService:
         if visual_scene:
             section["visual_scene"] = visual_scene
         story_plan = {"hook": narration[:60], "agenda": [], "sections": [section]}
-        story_plan = self.story_pipeline.attach_section_concepts(story_plan)
-        story_plan = self.story_pipeline.attach_section_narrative_arc(story_plan)
+        if debug_trace:
+            debug_trace.snapshot("story_pipeline_pre_visual_plan", story_plan, owner="media_service")
+            self.story_pipeline.visual_scene_normalizer.normalize(section, 0, debug_trace=debug_trace)
+        story_plan = self.story_pipeline.attach_section_concepts(story_plan, debug_trace=debug_trace)
+        story_plan = self.story_pipeline.attach_section_narrative_arc(story_plan, debug_trace=debug_trace)
         # Seed a concept-aware visual_story so _recurring_objects() picks the right objects
         # instead of always defaulting to ["phone_account", "salary_balance"].
         sections_after_concepts = story_plan.get("sections") or [{}]
@@ -325,7 +359,7 @@ class MediaService:
                 "recurring_objects": list(seed_objects),
             }
         story_plan = self.story_pipeline.attach_visual_story(story_plan)
-        story_plan = self.story_pipeline.attach_section_visual_plan(story_plan)
+        story_plan = self.story_pipeline.attach_section_visual_plan(story_plan, debug_trace=debug_trace)
         return dict((story_plan.get("sections") or [{}])[0])
 
     def _outro_section_intelligence(self, narration: str) -> dict:
@@ -461,8 +495,9 @@ class MediaService:
         image_root: Path,
         scene_order: int,
         section: dict,
+        debug_trace: SceneDebugTrace | None = None,
     ) -> tuple[Path, str, str, str]:
-        scene_result = build_scenes([section])["scenes"][0]
+        scene_result = build_scenes([section], debug_trace=debug_trace)["scenes"][0]
         output_path = image_root / f"scene-{scene_order:02d}.mp4"
         spec = RenderSpec(
             composition="VideoRenderer",
@@ -470,6 +505,14 @@ class MediaService:
             duration_sec=float(scene_result.get("duration") or 0),
             source="remotion_scene_builder",
         )
+        if debug_trace:
+            debug_trace.snapshot(
+                "render_spec_pre",
+                {"composition": spec.composition, "props": spec.props, "duration_sec": spec.duration_sec, "source": spec.source, "output_path": output_path},
+                owner="render_spec_service",
+            )
+            debug_trace.ownership("component", "render_spec_service", spec.composition, "VideoRenderer RenderSpec selected")
+            debug_trace.determinism("render_spec", scene_result, {"composition": spec.composition, "duration_sec": spec.duration_sec, "source": spec.source})
         self.remotion.render_video(spec, output_path)
         return (
             output_path,

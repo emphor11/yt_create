@@ -23,7 +23,7 @@ import {StoryWorldOverlay} from './components/StoryWorldOverlay';
 import {Beat, Scene} from './types';
 import {timeToFrame} from './utils/timing';
 
-const COMPONENT_MAP = {
+export const COMPONENT_MAP = {
 	StatCard,
 	CalculationStrip,
 	ConceptCard,
@@ -56,10 +56,28 @@ type Props = {
 	scene: Scene;
 };
 
-const beatFrameRange = (beat: Beat, fps: number) => ({
+export const beatFrameRange = (beat: Beat, fps: number) => ({
 	startFrame: timeToFrame(beat.start_time, fps),
 	endFrame: timeToFrame(beat.end_time, fps),
 });
+
+export const resolveActiveBeat = (scene: Scene, frame: number, fps: number) => {
+	const activeBeatIndex = scene.beats.findIndex((beat) => {
+		const range = beatFrameRange(beat, fps);
+		return range.startFrame <= frame && frame < range.endFrame;
+	});
+	const activeBeat = activeBeatIndex >= 0 ? scene.beats[activeBeatIndex] : undefined;
+	return {activeBeatIndex, activeBeat};
+};
+
+export const resolveSceneComponent = (component: string) => {
+	const Component = COMPONENT_MAP[component as keyof typeof COMPONENT_MAP] ?? ConceptCard;
+	return {
+		Component,
+		resolvedComponent: COMPONENT_MAP[component as keyof typeof COMPONENT_MAP] ? component : 'ConceptCard',
+		fallbackUsed: !COMPONENT_MAP[component as keyof typeof COMPONENT_MAP],
+	};
+};
 
 const DATA_HEAVY_COMPONENTS = new Set([
 	'MoneyFlowDiagram',
@@ -109,11 +127,7 @@ export const SceneRenderer: React.FC<Props> = ({scene}) => {
 	const frame = useCurrentFrame();
 	const {fps} = useVideoConfig();
 
-	const activeBeatIndex = scene.beats.findIndex((beat) => {
-		const range = beatFrameRange(beat, fps);
-		return range.startFrame <= frame && frame < range.endFrame;
-	});
-	const activeBeat = activeBeatIndex >= 0 ? scene.beats[activeBeatIndex] : undefined;
+	const {activeBeatIndex, activeBeat} = resolveActiveBeat(scene, frame, fps);
 
 	if (!activeBeat) {
 		return null;
@@ -125,7 +139,7 @@ export const SceneRenderer: React.FC<Props> = ({scene}) => {
 	const hasStoryState =
 		scene.story_state && Object.keys(scene.story_state).length > 0;
 	const cinematicTextBeat = activeBeat.component === 'CinematicScene';
-	const Component = COMPONENT_MAP[activeBeat.component as keyof typeof COMPONENT_MAP] ?? ConceptCard;
+		const {Component} = resolveSceneComponent(activeBeat.component);
 	const shouldOverlayStoryWorld =
 		hasStoryState &&
 		!cinematicTextBeat &&

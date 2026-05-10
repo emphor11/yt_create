@@ -14,6 +14,8 @@ from ..models.repository import ProjectRepository, utcnow
 from .narration_refiner import refine as refine_narration
 from .run_log import RunLogger
 from .script_scene_refiner import ScriptSceneRefiner
+from .scene_debug import SceneDebugStore, SceneDebugTrace, debug_video_pipeline_enabled
+from .financial_governance import narrative_progression_report, repetition_report
 from .story_pipeline import StoryPipeline
 from .visual_scene_normalizer import KNOWN_MECHANISMS, visual_script_prompt_contract
 
@@ -102,7 +104,7 @@ class ScriptService:
         tone: str | None = None,
     ) -> int:
         prompt = self._build_prompt(topic, angle, target_duration_minutes, niche, tone)
-        payload, source = self._generate_payload(topic, angle, prompt)
+        payload, source = self._generate_payload(project_id, topic, angle, prompt)
         script_version_id = self.repo.create_script_version(
             project_id=project_id,
             hook_json=payload["hook"],
@@ -132,6 +134,7 @@ class ScriptService:
             payload,
             str(project.get("topic") or ""),
             str(project.get("angle") or ""),
+            project_id=project_id,
         )
         self.repo.update_script_version(
             script_version_id,
@@ -202,6 +205,7 @@ class ScriptService:
         errors.extend(self._validate_long_form_depth(script_version, payload, body_scenes))
         errors.extend(self._validate_visual_scene_contract(payload, body_scenes))
         errors.extend(self._validate_duplicate_body_scenes(body_scenes))
+        errors.extend(self._validate_script_governance(body_scenes))
         return (not errors, errors, payload)
 
     def _validate_body_scene_count(self, script_version: dict[str, Any], body_scenes: list[dict[str, Any]]) -> list[str]:
@@ -353,6 +357,26 @@ class ScriptService:
                     )
         return errors
 
+    def _validate_script_governance(self, body_scenes: list[dict[str, Any]]) -> list[str]:
+        report = repetition_report(body_scenes)
+        errors: list[str] = []
+        for item in report.get("repeated_phrases") or []:
+            if int(item.get("count") or 0) >= 3:
+                errors.append(
+                    (
+                        f"Repeated narration theme {item.get('phrase')!r} appears in "
+                        f"{item.get('count')} body scenes. Rewrite repeated philosophy before approval."
+                    )
+                )
+        for leak in report.get("meta_visual_leaks") or []:
+            errors.append(
+                (
+                    f"Body scene {leak.get('scene_index')} contains meta-visual narration "
+                    f"{leak.get('phrase')!r}. Keep narration spoken-only."
+                )
+            )
+        return errors
+
     def _duplicate_signature(self, narration: str) -> str:
         text = narration.lower()
         text = re.sub(r"₹\s*", "rs ", text)
@@ -405,7 +429,7 @@ class ScriptService:
                 return dict(visual_scene)
         return {}
 
-    def _generate_payload(self, topic: str, angle: str, prompt: str) -> tuple[dict[str, Any], str]:
+    def _generate_payload(self, project_id: int, topic: str, angle: str, prompt: str) -> tuple[dict[str, Any], str]:
         provider = current_app.config.get("LLM_PROVIDER", "auto")
         self.logger.log(
             "script_generation",
@@ -423,7 +447,7 @@ class ScriptService:
 
         try:
             payload = self._groq_script(topic, angle, prompt, current_app.config["GROQ_API_KEY"])
-            payload = self._normalize_payload(payload, topic, angle)
+            payload = self._normalize_payload(payload, topic, angle, project_id=project_id)
             payload.setdefault("meta", {})["source"] = "live_groq"
             self.logger.log("script_generation", "completed", "Script source selected: live_groq.")
             return payload, "live Groq API"
@@ -524,6 +548,7 @@ class ScriptService:
             f"* Each body scene must be {body_min_words}-{body_max_words} spoken words across 8-12 short sentences\n"
             "* Do NOT write checklist-style scenes. Each scene is one chapter in the same money system\n"
             "* Each body scene must focus on one finance mechanism only\n"
+            "* Do not let adjacent finance concepts contaminate the scene. Example: lifestyle inflation is spending expansion after a raise, not macro inflation or CPI erosion\n"
             "* Each body scene must include these five elements in natural narration order, without labeling them:\n"
             "  1. SETUP: Restate where the ₹50,000/month money system is now\n"
             "  2. EXAMPLE: Use a concrete Indian finance situation with a specific rupee number\n"
@@ -548,7 +573,9 @@ class ScriptService:
             f"* Outro: {outro_min_words}-{outro_max_words} spoken words\n"
             f"* Total script including hook and outro should be around {total_min_words}-{total_max_words} spoken words\n"
             f"* If any body scene is under {body_min_words} words, expand it before returning JSON\n\n"
-            "* Generate visual planning fields for body scenes, but keep narration fields spoken-only\n"
+            "* Generate semantic visual planning fields for body scenes, but keep narration fields spoken-only\n"
+            "* Do NOT write meta-visual narration like \"the viewer should see\", \"the scene should show\", \"not just hear generic advice\", or repeated philosophy like \"every rupee has a job\"\n"
+            "* Visual planning must not invent numbers. numbers[] must contain only values spoken in narration; derived calculations belong to the deterministic renderer later\n"
             "* Do NOT add extra fields in the JSON apart from the exact ones listed in the OUTPUT FORMAT below\n"
             "* Do NOT invent fake factual claims, guaranteed returns, or predictions (no \"guaranteed 25% returns\", no \"XYZ stock will go to 1000\")\n"
             "* You may use simple hypothetical numbers only when clearly framed as examples\n"
@@ -688,7 +715,7 @@ class ScriptService:
         if not isinstance(payload["outro"], dict) or not payload["outro"].get("narration"):
             raise ValueError("Outro must be an object with narration.")
 
-    def _normalize_payload(self, payload: dict[str, Any], topic: str, angle: str) -> dict[str, Any]:
+    def _normalize_payload(self, payload: dict[str, Any], topic: str, angle: str, project_id: int | None = None) -> dict[str, Any]:
         hook = payload.get("hook") or {}
         scenes = payload.get("scenes") or []
         outro = payload.get("outro") or {}
@@ -723,6 +750,7 @@ class ScriptService:
         for index, scene in enumerate(scenes, start=1):
             if not isinstance(scene, dict):
                 continue
+            debug_trace = self._script_debug_trace(project_id, index, scene)
             narration = self._refined_narration(
                 str(
                     scene.get("narration")
@@ -731,12 +759,20 @@ class ScriptService:
                     or self._fallback_scene(index, topic)
                 )
             )
+            original_narration = narration
+            if debug_trace:
+                debug_trace.snapshot("groq_post_parse", scene, owner="groq")
+                debug_trace.ownership("narration", "groq", scene.get("narration") or scene.get("narration_text") or scene.get("content"), "Groq generated narration")
+                for key in ("mechanism", "visual_intent", "visual_beats", "numbers", "emotion"):
+                    if key in scene:
+                        debug_trace.ownership(key, "groq", scene.get(key), f"Groq generated {key}")
             refined_scene = self.scene_refiner.refine_scene(
                 scene,
                 narration,
                 index=index,
                 topic=topic,
                 angle=angle,
+                debug_trace=debug_trace,
             )
             narration = str(refined_scene["narration"])
             normalized_scene = {
@@ -745,18 +781,36 @@ class ScriptService:
                 "narration": narration,
                 "duration": self._coerce_duration(scene.get("duration", scene.get("estimated_duration_sec")), 45),
             }
+            visual_scene = dict(refined_scene.get("visual_scene") or self._visual_scene_from_raw_scene(scene, narration))
             for key in ("visual_intent", "visual_beats", "numbers", "emotion", "mechanism"):
-                if key in scene:
+                if key in visual_scene:
+                    normalized_scene[key] = visual_scene[key]
+                elif key in scene:
                     normalized_scene[key] = scene[key]
             normalized["scenes"].append(normalized_scene)
-            planning_scene = dict(normalized_scene)
-            visual_scene = dict(refined_scene.get("visual_scene") or self._visual_scene_from_raw_scene(scene, narration))
+            if refined_scene.get("allow_grouping"):
+                planning_scene = {
+                    "kind": "body",
+                    "scene_index": index,
+                    "narration": original_narration,
+                    "duration": normalized_scene["duration"],
+                }
+            else:
+                planning_scene = dict(normalized_scene)
             if visual_scene and not refined_scene.get("allow_grouping"):
                 planning_scene["visual_scene"] = visual_scene
             planning_scenes.append(planning_scene)
+            if debug_trace:
+                debug_trace.snapshot("script_normalized_scene", planning_scene, owner="script_service")
+                SceneDebugStore().save(debug_trace)
 
         if not normalized["scenes"]:
             normalized["scenes"] = self._demo_script(topic, angle)["scenes"]
+
+        normalized["meta"]["script_governance"] = repetition_report(normalized["scenes"])
+        normalized["meta"]["narrative_progression"] = narrative_progression_report(
+            [*normalized["scenes"], normalized["outro"]]
+        )
 
         planning_payload = dict(normalized)
         planning_payload["scenes"] = planning_scenes or list(normalized["scenes"])
@@ -772,6 +826,16 @@ class ScriptService:
 
         self._validate_payload_shape(normalized)
         return normalized
+
+    def _script_debug_trace(self, project_id: int | None, index: int, scene: dict[str, Any]) -> SceneDebugTrace | None:
+        if project_id is None or not debug_video_pipeline_enabled():
+            return None
+        return SceneDebugTrace(
+            scene_id=f"scene_{index}",
+            project_id=int(project_id),
+            scene_order=index,
+            narration=str(scene.get("narration") or scene.get("narration_text") or scene.get("content") or ""),
+        )
 
     def _normalize_titles(self, titles: Any, topic: str, angle: str) -> list[str]:
         if isinstance(titles, str):
