@@ -3,6 +3,7 @@ import {AbsoluteFill, interpolate, spring, useVideoConfig} from 'remotion';
 import {BODY_FONT_FAMILY, DISPLAY_FONT_FAMILY, FONT_FACES} from '../fonts';
 import {BeatComponentProps} from './types';
 import {COLORS, SPACING, TYPE_SCALE, getBeatData, getBeatProgress} from './visualUtils';
+import {resolveVisualEvent} from './visualEvents';
 
 type InflationItem = {
 	name?: string;
@@ -46,10 +47,11 @@ const buildUnits = (count: number, activeCount: number, color: string, progress:
 		);
 	});
 
-export const InflationErosionVisualizer: React.FC<BeatComponentProps> = ({beat, frameWithinBeat, durationFrames}) => {
+export const InflationErosionVisualizer: React.FC<BeatComponentProps> = ({beat, scene, frameWithinBeat, durationFrames}) => {
 	const {fps} = useVideoConfig();
 	const data = getBeatData<Record<string, unknown>>(beat) ?? {};
 	const phase = String(beat.beat_phase ?? data.active_phase ?? 'erosion');
+	const event = resolveVisualEvent(beat, scene, 'InflationErosionVisualizer');
 	const start = asText(data.start, '₹100');
 	const end = asText(data.end, 'Less buying power');
 	const rate = asText(data.rate, '');
@@ -57,7 +59,7 @@ export const InflationErosionVisualizer: React.FC<BeatComponentProps> = ({beat, 
 	const rawItems = Array.isArray(data.items) ? (data.items as InflationItem[]) : [];
 	const items = rawItems.length > 0 ? rawItems : [{name: 'Basket', current: 10, future: 5}];
 	const rawProgress = Math.min(getBeatProgress(frameWithinBeat, Math.floor(durationFrames * 0.75)), 1);
-	const progress = phase === 'today' ? 0 : phase === 'future' ? 1 : rawProgress;
+	const progress = event.kind === 'today_anchor' ? 0 : event.kind === 'future_loss_reveal' ? 1 : rawProgress;
 	const reveal = spring({frame: Math.min(frameWithinBeat, 20), fps, config: {stiffness: 190, damping: 18, mass: 0.8}, durationInFrames: 20});
 	const melt = interpolate(progress, [0.18, 0.86], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
 	const accent = COLORS.danger;
@@ -66,6 +68,9 @@ export const InflationErosionVisualizer: React.FC<BeatComponentProps> = ({beat, 
 	const valueRatio = Math.max(0.12, Math.min(totalFuture / totalCurrent, 1));
 	const activeFuture = Math.max(1, Math.round(totalCurrent * (1 - melt + valueRatio * melt)));
 	const moneyScale = interpolate(melt, [0, 1], [1, 0.62]);
+	const basketDominance = event.kind === 'basket_shrink' || event.kind === 'future_loss_reveal' ? 1.12 : 0.74;
+	const moneyDominance = event.kind === 'today_anchor' ? 1.18 : event.kind === 'silent_erosion' ? 0.9 : 0.58;
+	const dim = event.kind === 'future_loss_reveal' ? 0.32 : event.kind === 'silent_erosion' ? 0.14 : 0.04;
 
 	return (
 		<AbsoluteFill
@@ -78,6 +83,7 @@ export const InflationErosionVisualizer: React.FC<BeatComponentProps> = ({beat, 
 			}}
 		>
 			<style>{FONT_FACES}</style>
+			<div style={{position: 'absolute', inset: 0, background: 'black', opacity: dim}} />
 			<div
 				style={{
 					position: 'absolute',
@@ -88,7 +94,13 @@ export const InflationErosionVisualizer: React.FC<BeatComponentProps> = ({beat, 
 			/>
 			<div style={{position: 'absolute', inset: 0, left: 0, width: 8, background: accent}} />
 			<div style={{position: 'relative', zIndex: 2, fontSize: TYPE_SCALE.label.size, fontWeight: 900, color: COLORS.text_secondary}}>
-				{phase === 'today' ? 'Buying power today' : phase === 'future' ? 'Buying power later' : 'Purchasing power erosion'}
+				{event.kind === 'today_anchor'
+					? 'Buying power today'
+					: event.kind === 'future_loss_reveal'
+						? 'Buying power later'
+						: event.kind === 'basket_shrink'
+							? 'Basket shrinks'
+							: 'Silent erosion'}
 			</div>
 
 			<div
@@ -97,7 +109,8 @@ export const InflationErosionVisualizer: React.FC<BeatComponentProps> = ({beat, 
 					left: SPACING.safe,
 					top: 235,
 					width: 560,
-					transform: `scale(${interpolate(reveal, [0, 1], [0.94, 1])})`,
+					opacity: moneyDominance,
+					transform: `scale(${interpolate(reveal, [0, 1], [0.94, 1]) * moneyDominance})`,
 					zIndex: 2,
 				}}
 			>
@@ -149,6 +162,8 @@ export const InflationErosionVisualizer: React.FC<BeatComponentProps> = ({beat, 
 					border: `1px solid ${COLORS.stroke}`,
 					background: 'rgba(255,255,255,0.055)',
 					padding: 44,
+					transform: `scale(${basketDominance}) translateX(${event.kind === 'future_loss_reveal' ? -70 : 0}px)`,
+					transformOrigin: 'right center',
 					zIndex: 2,
 				}}
 			>
@@ -193,7 +208,7 @@ export const InflationErosionVisualizer: React.FC<BeatComponentProps> = ({beat, 
 					fontSize: 82,
 					lineHeight: 0.92,
 					color: accent,
-					opacity: phase === 'today' ? 0 : interpolate(progress, [0.66, 1], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
+					opacity: event.kind === 'today_anchor' ? 0 : interpolate(progress, [0.66, 1], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
 				}}
 			>
 				Same money. Less power.

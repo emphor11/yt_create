@@ -3,6 +3,7 @@ import {AbsoluteFill, interpolate, spring, useVideoConfig} from 'remotion';
 import {BODY_FONT_FAMILY, DISPLAY_FONT_FAMILY, FONT_FACES} from '../fonts';
 import {BeatComponentProps} from './types';
 import {COLORS, SPACING, SPRINGS, TYPE_SCALE, formatIndianRupee, getBeatData, getBeatProgress} from './visualUtils';
+import {ResolvedVisualEvent, resolveVisualEvent} from './visualEvents';
 
 type VisualState = {
 	state_type?: string;
@@ -365,6 +366,70 @@ const layoutForShot = (base: GrowthLayout, shot: Shot | null): GrowthLayout => {
 	return base;
 };
 
+const layoutForEvent = (base: GrowthLayout, event: ResolvedVisualEvent): GrowthLayout => {
+	if (event.kind === 'small_seed') {
+		return {
+			...base,
+			seedX: 265,
+			seedY: 350,
+			seedScale: 1.14,
+			barsLeft: 1000,
+			barGap: base.barGap * 1.18,
+			investedOpacity: 0.42,
+			corpusOpacity: 0.36,
+			glowIntensity: 0.08,
+			negativeSpace: Math.max(base.negativeSpace, 0.34),
+			motionVelocity: 0.66,
+		};
+	}
+	if (event.kind === 'momentum_lift') {
+		return {
+			...base,
+			upwardShift: base.upwardShift + 110,
+			corpusScale: base.corpusScale * 1.22,
+			corpusDominance: base.corpusDominance * 1.18,
+			glowIntensity: Math.min(0.86, base.glowIntensity + 0.24),
+			motionVelocity: base.motionVelocity * 1.32,
+			ratioScale: base.ratioScale * 1.16,
+		};
+	}
+	if (event.kind === 'compounding_layer') {
+		return {
+			...base,
+			barsLeft: 650,
+			barGap: base.barGap * 0.7,
+			investedOpacity: base.investedOpacity * 0.62,
+			corpusWidth: base.corpusWidth + 90,
+			corpusScale: base.corpusScale * 1.28,
+			hierarchyContrast: base.hierarchyContrast * 1.24,
+			glowIntensity: Math.min(0.9, base.glowIntensity + 0.2),
+			negativeSpace: Math.min(base.negativeSpace, -0.05),
+		};
+	}
+	if (event.kind === 'corpus_hero_reveal') {
+		return {
+			...base,
+			seedOpacity: base.seedOpacity * 0.24,
+			investedOpacity: base.investedOpacity * 0.28,
+			barsLeft: 1010,
+			corpusWidth: base.corpusWidth + 130,
+			corpusScale: base.corpusScale * 1.22,
+			corpusDominance: base.corpusDominance * 1.28,
+			glowIntensity: 0.92,
+			rewardIsolation: 1,
+			negativeSpace: Math.max(base.negativeSpace, 0.48),
+			motionVelocity: base.motionVelocity * 0.74,
+			ratioX: 140,
+			ratioY: 690,
+			ratioScale: 0.92,
+			returnsX: 130,
+			returnsY: 835,
+			returnsScale: 0.98,
+		};
+	}
+	return base;
+};
+
 const mix = (from: number, to: number, amount: number) =>
 	interpolate(amount, [0, 1], [from, to]);
 
@@ -400,88 +465,16 @@ const mixedLayout = (target: GrowthLayout, amount: number): GrowthLayout => ({
 	backgroundLift: mix(DEFAULT_LAYOUT.backgroundLift, target.backgroundLift, amount),
 });
 
-const roundDebug = (value: number) => Math.round(value * 1000) / 1000;
-
-const sipLayoutDebug = (layout: GrowthLayout) => ({
-	profile: layout.profile,
-	seedScale: roundDebug(layout.seedScale),
-	barGap: roundDebug(layout.barGap),
-	corpusWidth: roundDebug(layout.corpusWidth),
-	corpusScale: roundDebug(layout.corpusScale),
-	corpusDominance: roundDebug(layout.corpusDominance),
-	upwardShift: roundDebug(layout.upwardShift),
-	glowIntensity: roundDebug(layout.glowIntensity),
-	rewardIsolation: roundDebug(layout.rewardIsolation),
-	motionVelocity: roundDebug(layout.motionVelocity),
-});
-
-let lastSIPDebugKey = '';
-
-const SIPDebugOverlay: React.FC<{
-	currentFrame: number;
-	beatLabel: string;
-	shot: Shot | null;
-	visualState: VisualState | null;
-	layoutValues: ReturnType<typeof sipLayoutDebug>;
-}> = ({currentFrame, beatLabel, shot, visualState, layoutValues}) => (
-	<div
-		style={{
-			position: 'absolute',
-			left: 24,
-			bottom: 24,
-			zIndex: 9998,
-			width: 620,
-			padding: '18px 20px',
-			borderRadius: 8,
-			background: 'rgba(2, 6, 23, 0.82)',
-			border: '1px solid rgba(46,196,182,0.48)',
-			color: 'white',
-			fontFamily: 'monospace',
-			fontSize: 21,
-			lineHeight: 1.35,
-			pointerEvents: 'none',
-		}}
-	>
-		<div>SIPGrowthEngine debug</div>
-		<div>frame: {currentFrame}</div>
-		<div>beat: {beatLabel}</div>
-		<div>shot: {shot?.shot_type ?? 'none'}</div>
-		<div>focus: {shot?.focus_target ?? 'none'}</div>
-		<div>visual_state: {visualState?.state_type ?? 'none'}</div>
-		<div>layout: {JSON.stringify(layoutValues)}</div>
-	</div>
-);
-
 export const SIPGrowthEngine: React.FC<BeatComponentProps> = ({beat, scene, frameWithinBeat, durationFrames}) => {
 	const {fps} = useVideoConfig();
 	const data = getBeatData<Record<string, unknown>>(beat) ?? {};
 	const phase = String(beat.beat_phase ?? data.active_phase ?? 'growth');
+	const event = resolveVisualEvent(beat, scene, 'SIPGrowthEngine');
 	const visualState = resolveVisualState(beat, scene);
 	const activeShot = resolveShot(beat, scene);
-	const layoutTarget = layoutForShot(layoutForState(visualState), activeShot);
+	const layoutTarget = layoutForEvent(layoutForShot(layoutForState(visualState), activeShot), event);
 	const layoutMix = spring({frame: Math.min(frameWithinBeat, 24), fps, config: SPRINGS.entry, durationInFrames: 24});
 	const layout = mixedLayout(layoutTarget, layoutMix);
-	const currentFrame = Math.floor(Number(beat.start_time ?? 0) * fps + frameWithinBeat);
-	const layoutDebug = sipLayoutDebug(layout);
-	const targetLayoutDebug = sipLayoutDebug(layoutTarget);
-	const debugKey = [
-		beat.text,
-		activeShot?.shot_type ?? 'none',
-		activeShot?.focus_target ?? 'none',
-		visualState?.state_type ?? 'none',
-		layoutTarget.profile,
-	].join('|');
-	if (debugKey !== lastSIPDebugKey) {
-		lastSIPDebugKey = debugKey;
-		console.info('[ShotDebug:SIPGrowthEngine] metadata change', {
-			frame: currentFrame,
-			beatLabel: beat.text,
-			activeShot: activeShot ?? null,
-			visualState: visualState ?? null,
-			layoutTarget: targetLayoutDebug,
-			layoutCurrent: layoutDebug,
-		});
-	}
 	const sip = data.monthly_sip as {value?: string; amount?: number} | undefined;
 	const totalInvested = Number(data.total_invested ?? 0);
 	const finalCorpus = Number(data.final_corpus ?? 0);
@@ -525,6 +518,7 @@ export const SIPGrowthEngine: React.FC<BeatComponentProps> = ({beat, scene, fram
 			data-shot-type={shotType}
 			data-focus-target={focusTarget}
 			data-framing-profile={framingProfile}
+			data-visual-event={event.kind}
 			style={{
 				background: backgroundGlow,
 				color: COLORS.text_primary,
@@ -545,7 +539,13 @@ export const SIPGrowthEngine: React.FC<BeatComponentProps> = ({beat, scene, fram
 				}}
 			/>
 			<div style={{fontSize: TYPE_SCALE.label.size, fontWeight: 800, color: COLORS.text_secondary}}>
-				{phase === 'contribution' ? 'Contribution starts' : phase === 'corpus' ? 'Corpus lands' : 'Compounding engine'}
+				{event.kind === 'small_seed'
+					? 'Small seed starts'
+					: event.kind === 'momentum_lift'
+						? 'Momentum takes over'
+						: event.kind === 'compounding_layer'
+							? 'Compounding stacks'
+							: 'Corpus lands'}
 			</div>
 			<div
 				style={{
@@ -649,7 +649,7 @@ export const SIPGrowthEngine: React.FC<BeatComponentProps> = ({beat, scene, fram
 					borderRadius: 8,
 					background: COLORS.bg_surface,
 					border: `1px solid ${COLORS.stroke}`,
-					opacity: phase === 'contribution' ? 0 : interpolate(progress, [0.72, 1], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
+					opacity: event.kind === 'small_seed' ? 0 : interpolate(progress, [0.72, 1], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
 					transform: `scale(${layout.returnsScale})`,
 					transformOrigin: 'left center',
 					boxShadow: layout.rewardIsolation ? `0 0 82px rgba(46,196,182,${layout.glowIntensity * 0.5})` : 'none',
@@ -660,13 +660,6 @@ export const SIPGrowthEngine: React.FC<BeatComponentProps> = ({beat, scene, fram
 					{formatIndianRupee(returnsEarned)}
 				</div>
 			</div>
-			<SIPDebugOverlay
-				currentFrame={currentFrame}
-				beatLabel={String(beat.text ?? '')}
-				shot={activeShot}
-				visualState={visualState}
-				layoutValues={layoutDebug}
-			/>
 		</AbsoluteFill>
 	);
 };

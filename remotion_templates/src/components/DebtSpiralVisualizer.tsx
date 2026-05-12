@@ -3,6 +3,7 @@ import {AbsoluteFill, interpolate, spring, useVideoConfig} from 'remotion';
 import {BODY_FONT_FAMILY, DISPLAY_FONT_FAMILY, FONT_FACES} from '../fonts';
 import {BeatComponentProps} from './types';
 import {COLORS, SPACING, SPRINGS, TYPE_SCALE, formatIndianRupee, getBeatData, getBeatProgress} from './visualUtils';
+import {resolveVisualEvent} from './visualEvents';
 
 type BalancePoint = {month: number; balance: number; interest: number; principal_paid: number};
 
@@ -20,10 +21,11 @@ const spiralPoints = (count: number, progress: number) => {
 	return points.join(' ');
 };
 
-export const DebtSpiralVisualizer: React.FC<BeatComponentProps> = ({beat, frameWithinBeat, durationFrames}) => {
+export const DebtSpiralVisualizer: React.FC<BeatComponentProps> = ({beat, scene, frameWithinBeat, durationFrames}) => {
 	const {fps} = useVideoConfig();
 	const data = getBeatData<Record<string, unknown>>(beat) ?? {};
 	const phase = String(beat.beat_phase ?? data.active_phase ?? 'spiral');
+	const event = resolveVisualEvent(beat, scene, 'DebtSpiralVisualizer');
 	const principal = data.principal as {value?: string; amount?: number} | undefined;
 	const balances = Array.isArray(data.balances) ? (data.balances as BalancePoint[]) : [];
 	const monthlyInterest = Number(data.monthly_interest ?? 0);
@@ -31,13 +33,24 @@ export const DebtSpiralVisualizer: React.FC<BeatComponentProps> = ({beat, frameW
 	const month12Balance = Number(data.month_12_balance ?? balances[balances.length - 1]?.balance ?? principal?.amount ?? 0);
 	const isTrap = Boolean(data.is_trap);
 	const rawProgress = Math.min(getBeatProgress(frameWithinBeat, Math.floor(durationFrames * 0.75)), 1);
-	const progress = phase === 'principal' ? 0 : phase === 'consequence' ? 1 : rawProgress;
+	const progress = event.kind === 'principal_anchor' ? 0 : event.kind === 'trap_consequence' ? 1 : rawProgress;
 	const reveal = spring({frame: Math.min(frameWithinBeat, 18), fps, config: SPRINGS.impact, durationInFrames: 18});
 	const pulse = spring({frame: frameWithinBeat % 30, fps, config: {stiffness: 220, damping: 11, mass: 0.6}, durationInFrames: 18});
 	const trapScale = isTrap ? 1 + pulse * 0.05 : 1;
 	const accent = isTrap ? COLORS.danger : COLORS.warning;
 	const path = spiralPoints(Math.max(balances.length, 12), progress);
 	const monthlyGap = Math.max(monthlyInterest - minimumPayment, 0);
+	const spiralDominance = event.kind === 'spiral_acceleration' ? 1.18 : event.kind === 'trap_consequence' ? 0.72 : 0.88;
+	const principalDominance =
+		event.kind === 'principal_anchor'
+			? 1.24
+			: event.kind === 'interest_attachment'
+				? 0.92
+				: event.kind === 'trap_consequence'
+					? 0.18
+					: 0.42;
+	const sidePanelDominance = event.kind === 'interest_attachment' ? 1.16 : event.kind === 'trap_consequence' ? 0.72 : 0.9;
+	const dim = event.kind === 'trap_consequence' ? 0.34 : event.kind === 'spiral_acceleration' ? 0.16 : 0.05;
 
 	return (
 		<AbsoluteFill
@@ -49,13 +62,20 @@ export const DebtSpiralVisualizer: React.FC<BeatComponentProps> = ({beat, frameW
 			}}
 		>
 			<style>{FONT_FACES}</style>
+			<div style={{position: 'absolute', inset: 0, background: 'black', opacity: dim}} />
 			<div style={{position: 'absolute', inset: 0, left: 0, width: 8, background: accent}} />
 			<div style={{fontSize: TYPE_SCALE.label.size, fontWeight: 800, color: COLORS.text_secondary}}>
-				{phase === 'principal' ? 'Debt enters the month' : phase === 'consequence' ? 'Debt after the trap' : 'Minimum payment trap'}
+				{event.kind === 'principal_anchor'
+					? 'Debt enters the month'
+					: event.kind === 'interest_attachment'
+						? 'Interest attaches'
+						: event.kind === 'trap_consequence'
+							? 'Debt after the trap'
+							: 'Minimum payment spiral'}
 			</div>
-			<svg viewBox="0 0 1920 1080" style={{position: 'absolute', inset: 0}}>
+			<svg viewBox="0 0 1920 1080" style={{position: 'absolute', inset: 0, transform: `scale(${spiralDominance})`, transformOrigin: '40% 50%', opacity: event.kind === 'principal_anchor' ? 0.42 : 1}}>
 				<circle cx="760" cy="540" r="328" fill="rgba(230,57,70,0.035)" stroke="rgba(255,255,255,0.08)" />
-				{phase !== 'principal' ? (
+				{event.kind !== 'principal_anchor' ? (
 					<>
 						<polyline points={path} fill="none" stroke={accent} strokeWidth="26" strokeLinecap="round" strokeLinejoin="round" />
 						<polyline points={path} fill="none" stroke="rgba(255,255,255,0.36)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
@@ -69,7 +89,7 @@ export const DebtSpiralVisualizer: React.FC<BeatComponentProps> = ({beat, frameW
 					stroke={accent}
 					strokeWidth={isTrap ? 8 : 5}
 				/>
-				{isTrap && phase !== 'principal' ? (
+				{isTrap && event.kind !== 'principal_anchor' ? (
 					<text
 						x="760"
 						y="565"
@@ -90,7 +110,8 @@ export const DebtSpiralVisualizer: React.FC<BeatComponentProps> = ({beat, frameW
 					top: 442,
 					width: 920,
 					textAlign: 'center',
-					transform: `scale(${interpolate(reveal, [0, 1], [0.96, 1])})`,
+					opacity: principalDominance,
+					transform: `scale(${interpolate(reveal, [0, 1], [0.96, 1]) * principalDominance})`,
 				}}
 			>
 				<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 700}}>Starting balance</div>
@@ -98,7 +119,7 @@ export const DebtSpiralVisualizer: React.FC<BeatComponentProps> = ({beat, frameW
 					{principal?.value ?? formatIndianRupee(Number(principal?.amount ?? 0))}
 				</div>
 			</div>
-			{isTrap && monthlyGap > 0 && phase !== 'principal' ? (
+			{isTrap && monthlyGap > 0 && event.kind !== 'principal_anchor' ? (
 				<div
 					style={{
 						position: 'absolute',
@@ -109,7 +130,7 @@ export const DebtSpiralVisualizer: React.FC<BeatComponentProps> = ({beat, frameW
 						borderRadius: 8,
 						background: 'rgba(230,57,70,0.16)',
 						border: `2px solid ${COLORS.danger}`,
-						opacity: interpolate(progress, [0.52, 0.78], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
+						opacity: event.kind === 'trap_consequence' ? 1 : interpolate(progress, [0.52, 0.78], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
 						boxShadow: '0 0 46px rgba(230,57,70,0.18)',
 					}}
 				>
@@ -129,9 +150,12 @@ export const DebtSpiralVisualizer: React.FC<BeatComponentProps> = ({beat, frameW
 					width: 470,
 					display: 'grid',
 					gap: SPACING.md,
+					opacity: sidePanelDominance,
+					transform: `scale(${sidePanelDominance})`,
+					transformOrigin: 'right top',
 				}}
 			>
-				{phase !== 'principal' ? [
+				{event.kind !== 'principal_anchor' ? [
 					['Monthly interest', formatIndianRupee(monthlyInterest), COLORS.danger],
 					['Minimum payment', minimumPayment ? formatIndianRupee(minimumPayment) : 'not enough', COLORS.warning],
 					['Month 12 balance', formatIndianRupee(month12Balance), accent],
@@ -165,7 +189,7 @@ export const DebtSpiralVisualizer: React.FC<BeatComponentProps> = ({beat, frameW
 					fontSize: 76,
 					lineHeight: 0.95,
 					color: accent,
-					opacity: phase === 'principal' ? 0 : interpolate(progress, [0.78, 1], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
+					opacity: event.kind === 'principal_anchor' ? 0 : interpolate(progress, [0.78, 1], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
 				}}
 			>
 				{isTrap ? 'You owe more.' : 'Interest is still heavy.'}

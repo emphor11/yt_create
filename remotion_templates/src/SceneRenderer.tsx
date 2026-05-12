@@ -62,15 +62,6 @@ type Props = {
 	scene: Scene;
 };
 
-type VisualStateDebug = {
-	state_type?: string;
-	focus_entity?: string;
-	emotional_posture?: string;
-	composition_density?: string;
-	framing?: string;
-	transition_behavior?: string;
-};
-
 export const beatFrameRange = (beat: Beat, fps: number) => ({
 	startFrame: timeToFrame(beat.start_time, fps),
 	endFrame: timeToFrame(beat.end_time, fps),
@@ -121,13 +112,6 @@ const asShot = (value: unknown): Shot | null => {
 	return value as Shot;
 };
 
-const asVisualState = (value: unknown): VisualStateDebug | null => {
-	if (!value || typeof value !== 'object') {
-		return null;
-	}
-	return value as VisualStateDebug;
-};
-
 export const resolveActiveShot = (
 	beat: Beat,
 	scene: Scene,
@@ -155,10 +139,6 @@ export const resolveActiveShot = (
 	);
 };
 
-const resolveBeatVisualState = (beat: Beat): VisualStateDebug | null =>
-	asVisualState((beat as Beat & {visual_state?: unknown}).visual_state) ??
-	asVisualState(beat.data?.visual_state);
-
 const clampAttention = (value: unknown) => {
 	const numeric = Number(value);
 	if (!Number.isFinite(numeric)) {
@@ -166,10 +146,6 @@ const clampAttention = (value: unknown) => {
 	}
 	return Math.min(1, Math.max(0.45, numeric));
 };
-
-const roundDebug = (value: number) => Math.round(value * 1000) / 1000;
-
-let lastSceneRendererDebugKey = '';
 
 const ShotFrame: React.FC<{
 	shot: Shot | null;
@@ -219,54 +195,6 @@ const ShotFrame: React.FC<{
 				{children}
 			</AbsoluteFill>
 		</AbsoluteFill>
-	);
-};
-
-const SceneDebugOverlay: React.FC<{
-	frame: number;
-	beat: Beat;
-	beatIndex: number;
-	shot: Shot | null;
-	visualState: VisualStateDebug | null;
-	shotFrameProfile: (typeof SHOT_FRAME_PROFILES)[string] | null;
-}> = ({frame, beat, beatIndex, shot, visualState, shotFrameProfile}) => {
-	const layoutValues = shotFrameProfile
-		? {
-			scale: shotFrameProfile.scale,
-			x: shotFrameProfile.x,
-			y: shotFrameProfile.y,
-			opacity: shotFrameProfile.opacity,
-			origin: shotFrameProfile.origin,
-		}
-		: {};
-	return (
-		<div
-			style={{
-				position: 'absolute',
-				top: 24,
-				right: 24,
-				zIndex: 9999,
-				width: 520,
-				padding: '18px 20px',
-				borderRadius: 8,
-				background: 'rgba(0,0,0,0.78)',
-				border: '1px solid rgba(255,255,255,0.28)',
-				color: 'white',
-				fontFamily: 'monospace',
-				fontSize: 22,
-				lineHeight: 1.35,
-				pointerEvents: 'none',
-			}}
-		>
-			<div>SceneRenderer debug</div>
-			<div>frame: {frame}</div>
-			<div>beat: #{beatIndex} {beat.text}</div>
-			<div>component: {beat.component}</div>
-			<div>shot: {shot?.shot_type ?? 'none'}</div>
-			<div>focus: {shot?.focus_target ?? 'none'}</div>
-			<div>visual_state: {visualState?.state_type ?? 'none'}</div>
-			<div>layout: {JSON.stringify(layoutValues)}</div>
-		</div>
 	);
 };
 
@@ -332,38 +260,6 @@ export const SceneRenderer: React.FC<Props> = ({scene}) => {
 	const cinematicTextBeat = activeBeat.component === 'CinematicScene';
 	const {Component} = resolveSceneComponent(activeBeat.component);
 	const activeShot = resolveActiveShot(activeBeat, scene, fps);
-	const activeVisualState = resolveBeatVisualState(activeBeat);
-	const shotFrameProfile =
-		activeShot?.shot_type ? SHOT_FRAME_PROFILES[activeShot.shot_type] ?? SHOT_FRAME_PROFILES.wide_context : null;
-	const debugKey = [
-		activeBeatIndex,
-		activeBeat.component,
-		activeBeat.text,
-		activeShot?.shot_type ?? 'none',
-		activeShot?.focus_target ?? 'none',
-		activeVisualState?.state_type ?? 'none',
-	].join('|');
-	if (debugKey !== lastSceneRendererDebugKey) {
-		lastSceneRendererDebugKey = debugKey;
-		console.info('[ShotDebug:SceneRenderer] metadata change', {
-			frame,
-			beatIndex: activeBeatIndex,
-			beatLabel: activeBeat.text,
-			component: activeBeat.component,
-			shotType: activeShot?.shot_type ?? null,
-			focusTarget: activeShot?.focus_target ?? null,
-			visualState: activeVisualState?.state_type ?? null,
-			shotFrameLayout: shotFrameProfile
-				? {
-					scale: shotFrameProfile.scale,
-					x: shotFrameProfile.x,
-					y: shotFrameProfile.y,
-					opacity: shotFrameProfile.opacity,
-					origin: shotFrameProfile.origin,
-				}
-				: null,
-		});
-	}
 	const shouldOverlayStoryWorld =
 		hasStoryState &&
 		!cinematicTextBeat &&
@@ -392,14 +288,6 @@ export const SceneRenderer: React.FC<Props> = ({scene}) => {
 					durationFrames={durationFrames}
 				/>
 			) : null}
-			<SceneDebugOverlay
-				frame={frame}
-				beat={activeBeat}
-				beatIndex={activeBeatIndex}
-				shot={activeShot}
-				visualState={activeVisualState}
-				shotFrameProfile={shotFrameProfile}
-			/>
 		</>
 	);
 };

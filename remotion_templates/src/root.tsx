@@ -3,6 +3,7 @@ import {Composition} from 'remotion';
 import {EndCard, IntroCard, SceneTransition, ThumbnailFrame} from './templates';
 import {VideoRenderer} from './VideoRenderer';
 import {calculateTotalFrames} from './utils/timing';
+import {visualEventFixtureScenes} from './visualEventFixtures';
 
 const FPS = 30;
 
@@ -17,6 +18,18 @@ export const Root: React.FC = () => {
 				fps={FPS}
 				durationInFrames={FPS}
 				defaultProps={{scenes: []}}
+				calculateMetadata={({props}) => ({
+					durationInFrames: Math.max(calculateTotalFrames(props.scenes, FPS), 1),
+				})}
+			/>
+			<Composition
+				id="VisualEventFixtures"
+				component={VideoRenderer}
+				width={1920}
+				height={1080}
+				fps={FPS}
+				durationInFrames={FPS}
+				defaultProps={{scenes: visualEventFixtureScenes}}
 				calculateMetadata={({props}) => ({
 					durationInFrames: Math.max(calculateTotalFrames(props.scenes, FPS), 1),
 				})}

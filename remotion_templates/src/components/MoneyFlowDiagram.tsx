@@ -3,6 +3,7 @@ import {AbsoluteFill, interpolate, spring, useVideoConfig} from 'remotion';
 import {BODY_FONT_FAMILY, DISPLAY_FONT_FAMILY, FONT_FACES} from '../fonts';
 import {BeatComponentProps} from './types';
 import {COLORS, SPACING, SPRINGS, TYPE_SCALE, formatIndianRupee, getBeatData, getBeatProgress} from './visualUtils';
+import {ResolvedVisualEvent, resolveVisualEvent} from './visualEvents';
 
 type Flow = {
 	label: string;
@@ -344,6 +345,63 @@ const layoutForShot = (base: LayoutProfile, shot: Shot | null): LayoutProfile =>
 	return base;
 };
 
+const layoutForEvent = (base: LayoutProfile, event: ResolvedVisualEvent): LayoutProfile => {
+	if (event.kind === 'salary_hero') {
+		return {
+			...base,
+			sourceX: 960,
+			sourceY: 500,
+			sourceScale: 1.32,
+			pipeStartX: 900,
+			pipeEndX: 1260,
+			flowOpacity: 0.08,
+			labelOpacity: 0,
+			remainderOpacityBoost: 0,
+			backgroundDim: 0.04,
+		};
+	}
+	if (event.kind === 'drain_attack') {
+		return {
+			...base,
+			sourceX: 250,
+			sourceScale: 0.9,
+			pipeEndX: 1040,
+			rowGap: base.rowGap * 1.06,
+			flowWidthScale: base.flowWidthScale * 1.22,
+			labelScale: base.labelScale * 1.08,
+			backgroundDim: Math.max(base.backgroundDim, 0.14),
+			progressPower: base.progressPower * 0.72,
+		};
+	}
+	if (event.kind === 'pressure_compression') {
+		return {
+			...base,
+			sourceX: 205,
+			sourceScale: 0.78,
+			rowGap: base.rowGap * 0.72,
+			rowOverlap: base.rowOverlap + 18,
+			pipeEndX: 980,
+			flowWidthScale: base.flowWidthScale * 1.4,
+			backgroundDim: Math.max(base.backgroundDim, 0.22),
+			progressPower: base.progressPower * 0.64,
+		};
+	}
+	if (event.kind === 'survivor_isolation') {
+		return {
+			...base,
+			sourceOpacity: base.sourceOpacity * 0.34,
+			flowOpacity: base.flowOpacity * 0.18,
+			labelOpacity: base.labelOpacity * 0.16,
+			remainderX: 960,
+			remainderY: 540,
+			remainderScale: base.remainderScale * 1.42,
+			remainderOpacityBoost: Math.max(base.remainderOpacityBoost, 0.54),
+			backgroundDim: Math.max(base.backgroundDim, 0.36),
+		};
+	}
+	return base;
+};
+
 const mix = (from: number, to: number, amount: number) =>
 	interpolate(amount, [0, 1], [from, to]);
 
@@ -373,92 +431,30 @@ const mixedLayout = (target: LayoutProfile, amount: number): LayoutProfile => ({
 	backgroundDim: mix(DEFAULT_LAYOUT.backgroundDim, target.backgroundDim, amount),
 });
 
-const roundDebug = (value: number) => Math.round(value * 1000) / 1000;
-
-const moneyLayoutDebug = (layout: LayoutProfile) => ({
-	profile: layout.profile,
-	sourceX: roundDebug(layout.sourceX),
-	pipeEndX: roundDebug(layout.pipeEndX),
-	rowGap: roundDebug(layout.rowGap),
-	rowOverlap: roundDebug(layout.rowOverlap),
-	labelOpacity: roundDebug(layout.labelOpacity),
-	flowOpacity: roundDebug(layout.flowOpacity),
-	flowWidthScale: roundDebug(layout.flowWidthScale),
-	remainderX: roundDebug(layout.remainderX),
-	remainderY: roundDebug(layout.remainderY),
-	remainderScale: roundDebug(layout.remainderScale),
-	backgroundDim: roundDebug(layout.backgroundDim),
-	progressPower: roundDebug(layout.progressPower),
-});
-
-let lastMoneyFlowDebugKey = '';
-
-const MoneyFlowDebugOverlay: React.FC<{
-	currentFrame: number;
-	beatLabel: string;
-	shot: Shot | null;
-	visualState: VisualState | null;
-	layoutValues: ReturnType<typeof moneyLayoutDebug>;
-}> = ({currentFrame, beatLabel, shot, visualState, layoutValues}) => (
-	<div
-		style={{
-			position: 'absolute',
-			left: 24,
-			bottom: 24,
-			zIndex: 9998,
-			width: 650,
-			padding: '18px 20px',
-			borderRadius: 8,
-			background: 'rgba(2, 6, 23, 0.82)',
-			border: '1px solid rgba(255,159,28,0.55)',
-			color: 'white',
-			fontFamily: 'monospace',
-			fontSize: 21,
-			lineHeight: 1.35,
-			pointerEvents: 'none',
-		}}
-	>
-		<div>MoneyFlowDiagram debug</div>
-		<div>frame: {currentFrame}</div>
-		<div>beat: {beatLabel}</div>
-		<div>shot: {shot?.shot_type ?? 'none'}</div>
-		<div>focus: {shot?.focus_target ?? 'none'}</div>
-		<div>visual_state: {visualState?.state_type ?? 'none'}</div>
-		<div>layout: {JSON.stringify(layoutValues)}</div>
-	</div>
-);
+const activeFlowIndex = (flows: Flow[], event: ResolvedVisualEvent) => {
+	const role = event.semanticRole.toLowerCase();
+	const roleMatch = flows.findIndex((flow) => role && role.split('_').some((token) => token.length > 2 && flow.label.toLowerCase().includes(token)));
+	if (roleMatch >= 0) {
+		return roleMatch;
+	}
+	if (event.actionName === 'expense_drains' && event.sequenceIndex > 0) {
+		return Math.min(flows.length - 1, event.sequenceIndex - 1);
+	}
+	return -1;
+};
 
 export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, scene, frameWithinBeat, durationFrames}) => {
 	const {fps} = useVideoConfig();
 	const rawData = getBeatData<Record<string, unknown>>(beat) ?? {};
 	const phase = String(beat.beat_phase ?? rawData.active_phase ?? 'drain');
+	const event = resolveVisualEvent(beat, scene, 'MoneyFlowDiagram');
 	const visualState = resolveVisualState(beat, scene);
 	const activeShot = resolveShot(beat, scene);
-	const layoutTarget = layoutForShot(layoutForState(visualState), activeShot);
+	const {source, flows, remainder} = moneyFlowData(beat);
+	const focusFlow = activeFlowIndex(flows, event);
+	const layoutTarget = layoutForEvent(layoutForShot(layoutForState(visualState), activeShot), event);
 	const layoutMix = spring({frame: Math.min(frameWithinBeat, 22), fps, config: SPRINGS.entry, durationInFrames: 22});
 	const layout = mixedLayout(layoutTarget, layoutMix);
-	const currentFrame = Math.floor(Number(beat.start_time ?? 0) * fps + frameWithinBeat);
-	const layoutDebug = moneyLayoutDebug(layout);
-	const targetLayoutDebug = moneyLayoutDebug(layoutTarget);
-	const debugKey = [
-		beat.text,
-		activeShot?.shot_type ?? 'none',
-		activeShot?.focus_target ?? 'none',
-		visualState?.state_type ?? 'none',
-		layoutTarget.profile,
-	].join('|');
-	if (debugKey !== lastMoneyFlowDebugKey) {
-		lastMoneyFlowDebugKey = debugKey;
-		console.info('[ShotDebug:MoneyFlowDiagram] metadata change', {
-			frame: currentFrame,
-			beatLabel: beat.text,
-			activeShot: activeShot ?? null,
-			visualState: visualState ?? null,
-			layoutTarget: targetLayoutDebug,
-			layoutCurrent: layoutDebug,
-		});
-	}
-	const {source, flows, remainder} = moneyFlowData(beat);
 	const total = Math.max(source.amount, 1);
 	const rawProgress = Math.min(getBeatProgress(frameWithinBeat, Math.floor(durationFrames * layout.motionWindowShare)) / 1, 1);
 	const actionProgress = Math.pow(rawProgress, layout.progressPower);
@@ -488,6 +484,7 @@ export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, scene, fra
 			data-shot-type={shotType}
 			data-focus-target={focusTarget}
 			data-framing-profile={framingProfile}
+			data-visual-event={event.kind}
 			style={{
 				background: COLORS.bg_deep,
 				color: COLORS.text_primary,
@@ -501,7 +498,12 @@ export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, scene, fra
 				style={{
 					position: 'absolute',
 					inset: 0,
-					background: 'black',
+					background:
+						event.kind === 'drain_attack'
+							? 'radial-gradient(circle at 52% 45%, rgba(230,57,70,0.24), transparent 32%), black'
+							: event.kind === 'salary_hero'
+								? 'radial-gradient(circle at 50% 46%, rgba(255,159,28,0.16), transparent 31%), black'
+								: 'black',
 					opacity: layout.backgroundDim,
 					pointerEvents: 'none',
 				}}
@@ -524,7 +526,7 @@ export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, scene, fra
 					alignItems: 'center',
 					justifyContent: 'center',
 					opacity: opacity * layout.sourceOpacity,
-					transform: `scale(${interpolate(reveal, [0, 1], [0.94, 1]) * layout.sourceScale})`,
+					transform: `scale(${interpolate(reveal, [0, 1], [0.94, 1]) * layout.sourceScale * (event.kind === 'salary_hero' ? 1.08 : 1)})`,
 					boxShadow: layout.profile === 'centered_focus' ? '0 0 80px rgba(255,159,28,0.12)' : 'none',
 				}}
 			>
@@ -538,9 +540,17 @@ export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, scene, fra
 			<svg viewBox="0 0 1920 1080" style={{position: 'absolute', inset: 0}}>
 				{phase !== 'intro' ? flows.map((flow, index) => {
 					const y = layout.rowStartY + index * layout.rowGap - (index % 2) * layout.rowOverlap;
-					const width = Math.max(10, Math.min(86, (flow.amount / total) * 120 * layout.flowWidthScale));
+					const isFocus = index === focusFlow;
+					const focusBoost = event.kind === 'drain_attack' && isFocus ? 1.75 : event.kind === 'pressure_compression' ? 1.22 : 1;
+					const width = Math.max(10, Math.min(112, (flow.amount / total) * 120 * layout.flowWidthScale * focusBoost));
 					const color = flow.color === 'red' ? COLORS.danger : flow.color === 'teal' ? COLORS.positive : COLORS.warning;
 					const drawX = layout.pipeStartX + (layout.pipeEndX - layout.pipeStartX) * flowProgress;
+					const flowOpacity =
+						event.kind === 'drain_attack'
+							? isFocus ? 1 : 0.18
+							: event.kind === 'survivor_isolation'
+								? 0.12
+								: layout.flowOpacity;
 					return (
 						<g key={`${flow.label}-${index}`}>
 							<path
@@ -556,15 +566,22 @@ export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, scene, fra
 								strokeWidth={width}
 								fill="none"
 								strokeLinecap="round"
-								opacity={layout.flowOpacity}
+								opacity={flowOpacity}
 							/>
-							<circle cx={drawX} cy={y} r={Math.max(8, width / 3)} fill={color} opacity={flowProgress > 0.04 ? layout.flowOpacity : 0} />
+							<circle cx={drawX} cy={y} r={Math.max(8, width / 3)} fill={color} opacity={flowProgress > 0.04 ? flowOpacity : 0} />
 						</g>
 					);
 				}) : null}
 			</svg>
 			{phase !== 'intro' ? flows.map((flow, index) => {
 				const y = layout.rowStartY + index * layout.rowGap - (index % 2) * layout.rowOverlap;
+				const isFocus = index === focusFlow;
+				const eventOpacity =
+					event.kind === 'drain_attack'
+						? isFocus ? 1 : 0.18
+						: event.kind === 'survivor_isolation'
+							? 0.1
+							: 1;
 				return (
 					<div
 						key={flow.label}
@@ -572,8 +589,8 @@ export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, scene, fra
 							position: 'absolute',
 							left: layout.pipeEndX + layout.labelOffsetX,
 							top: y - 38,
-							opacity: labelProgress * layout.labelOpacity,
-							transform: `scale(${layout.labelScale}) translateX(${layout.profile === 'pressure_cluster' ? -18 * layoutMix : 0}px)`,
+							opacity: labelProgress * layout.labelOpacity * eventOpacity,
+							transform: `scale(${layout.labelScale * (isFocus && event.kind === 'drain_attack' ? 1.22 : 1)}) translateX(${layout.profile === 'pressure_cluster' ? -18 * layoutMix : 0}px)`,
 							transformOrigin: 'left center',
 						}}
 					>
@@ -593,7 +610,7 @@ export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, scene, fra
 					border: `2px solid ${accentColor}`,
 					textAlign: 'right',
 					opacity: remainderOpacity,
-					transform: `translate(-50%, -50%) scale(${layout.remainderScale})`,
+					transform: `translate(-50%, -50%) scale(${layout.remainderScale * (event.kind === 'survivor_isolation' ? 1.08 : 1)})`,
 					boxShadow: layout.profile === 'isolate_survivor' ? `0 0 120px ${accentColor}33` : 'none',
 				}}
 			>
@@ -602,13 +619,6 @@ export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, scene, fra
 					{remainder.value}
 				</div>
 			</div>
-			<MoneyFlowDebugOverlay
-				currentFrame={currentFrame}
-				beatLabel={String(beat.text ?? '')}
-				shot={activeShot}
-				visualState={visualState}
-				layoutValues={layoutDebug}
-			/>
 		</AbsoluteFill>
 	);
 };
