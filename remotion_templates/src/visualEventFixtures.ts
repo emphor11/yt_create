@@ -43,9 +43,11 @@ const timedBeat = (
 	},
 });
 
-const scene = (scene_id: string, pattern: string, beats: Beat[]): Scene => ({
+const scene = (scene_id: string, pattern: string, beats: Beat[], narration = ''): Scene => ({
 	scene_id,
 	pattern,
+	narration,
+	text: narration,
 	duration: 12,
 	audio_file: '',
 	beats,
@@ -126,9 +128,9 @@ export const visualEventFixtureScenes: Scene[] = [
 	scene('fixture_lifestyle', 'LifestyleCreepVisualizer', [
 		timedBeat('LifestyleCreepVisualizer', 'Old lifestyle baseline', 0, 3, 'income_base', 'income_baseline', 'old_income', lifestyle, 'wide_context'),
 		timedBeat('LifestyleCreepVisualizer', 'Raise arrives', 3, 6, 'raise_arrives', 'income_rises', 'raise_amount', lifestyle, 'upward_momentum'),
-		timedBeat('LifestyleCreepVisualizer', 'Lifestyle absorbs raise', 6, 9, 'expenses_follow', 'expenses_follow', 'new_spending', lifestyle, 'pressure_closeup'),
+		timedBeat('LifestyleCreepVisualizer', 'Rent upgrade, food apps, weekend spending, shopping, and subscriptions absorb the raise', 6, 9, 'expenses_follow', 'expenses_follow', 'new_spending', lifestyle, 'pressure_closeup'),
 		timedBeat('LifestyleCreepVisualizer', 'Savings gap exposed', 9, 12, 'gap_revealed', 'savings_gap_revealed', 'new_savings', lifestyle, 'survivor_isolation'),
-	]),
+	], 'Salary rises from ₹50,000 to ₹80,000. Rent upgrade arrives first. Food apps follow. Weekend spending expands. Shopping gets normalized. Subscriptions quietly become permanent. Savings stays almost flat.'),
 	scene('fixture_emi', 'EMIStackVisualizer', [
 		timedBeat('EMIStackVisualizer', 'One EMI looks harmless', 0, 3, 'first_emi', 'first_emi_appears', 'phone_emi', emi, 'wide_context'),
 		timedBeat('EMIStackVisualizer', 'EMIs stack', 3, 6, 'stacking', 'emi_stacks', 'emi_group', emi, 'pressure_closeup'),

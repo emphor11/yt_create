@@ -39,6 +39,8 @@ export type Beat = {
 export type Scene = {
 	id?: string;
 	scene_id?: string;
+	narration?: string;
+	text?: string;
 	concept?: string;
 	concept_type?: string;
 	visual_mode?: string;

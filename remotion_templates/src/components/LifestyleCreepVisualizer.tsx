@@ -24,13 +24,40 @@ type LifestyleCreepData = {
 
 type ResolvedMoneyPoint = Required<MoneyPoint>;
 
-type ExpenseAttack = {
+type LifestyleVisualRole = 'housing' | 'food' | 'experience' | 'retail' | 'subscription' | 'device' | 'comfort';
+
+type GravityCenter = {
+	x: number;
+	y: number;
+};
+
+type LifestyleFocalEntity = {
+	id: string;
 	label: string;
 	amount: number;
 	color: string;
-	x: number;
-	y: number;
-	delay: number;
+	visualRole: LifestyleVisualRole;
+	gravityCenter: GravityCenter;
+	keywords: string[];
+	weight: number;
+	sourceIndex: number;
+};
+
+type LifestyleFocalMoment = {
+	entityId: string;
+	startProgress: number;
+	endProgress: number;
+	dominance: number;
+	decay: number;
+	gravityCenter: GravityCenter;
+	attentionWeight: number;
+	visualMode: 'entity_attack' | 'compression' | 'salary_anchor' | 'raise_hero' | 'savings_isolation';
+};
+
+type TimedSentence = {
+	text: string;
+	startProgress: number;
+	endProgress: number;
 };
 
 const moneyPoint = (point: unknown, fallbackAmount: number): ResolvedMoneyPoint => {
@@ -45,6 +72,354 @@ const moneyPoint = (point: unknown, fallbackAmount: number): ResolvedMoneyPoint 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(value, max));
 
 const rupee = (amount: number) => formatIndianRupee(Math.round(amount));
+
+const LIFESTYLE_ENTITY_CATALOG: Array<Omit<LifestyleFocalEntity, 'amount' | 'sourceIndex'>> = [
+	{
+		id: 'rent_upgrade',
+		label: 'Rent upgrade',
+		color: COLORS.warning,
+		visualRole: 'housing',
+		gravityCenter: {x: 1135, y: 170},
+		keywords: ['rent', 'house', 'housing', 'apartment', 'better house', 'home upgrade'],
+		weight: 0.32,
+	},
+	{
+		id: 'food_apps',
+		label: 'Food apps',
+		color: COLORS.danger,
+		visualRole: 'food',
+		gravityCenter: {x: 1360, y: 345},
+		keywords: ['food app', 'food apps', 'delivery', 'takeout', 'takeaway', 'better food', 'swiggy', 'zomato'],
+		weight: 0.2,
+	},
+	{
+		id: 'weekend_spending',
+		label: 'Weekend plans',
+		color: '#FF6B35',
+		visualRole: 'experience',
+		gravityCenter: {x: 1170, y: 570},
+		keywords: ['weekend', 'weekends', 'plans', 'party', 'outing', 'trip', 'travel'],
+		weight: 0.18,
+	},
+	{
+		id: 'shopping',
+		label: 'Shopping',
+		color: '#FFD166',
+		visualRole: 'retail',
+		gravityCenter: {x: 1425, y: 715},
+		keywords: ['shopping', 'clothes', 'fashion', 'purchase', 'buying'],
+		weight: 0.18,
+	},
+	{
+		id: 'subscriptions',
+		label: 'Subscriptions',
+		color: '#A78BFA',
+		visualRole: 'subscription',
+		gravityCenter: {x: 1088, y: 742},
+		keywords: ['subscription', 'subscriptions', 'netflix', 'prime', 'ott', 'streaming', 'membership'],
+		weight: 0.12,
+	},
+	{
+		id: 'phone_upgrade',
+		label: 'Phone upgrade',
+		color: '#38BDF8',
+		visualRole: 'device',
+		gravityCenter: {x: 1460, y: 205},
+		keywords: ['phone', 'nicer phone', 'mobile', 'device', 'gadget'],
+		weight: 0.16,
+	},
+	{
+		id: 'comfort_upgrade',
+		label: 'Comfort upgrades',
+		color: '#F472B6',
+		visualRole: 'comfort',
+		gravityCenter: {x: 1280, y: 505},
+		keywords: ['comfort'],
+		weight: 0.14,
+	},
+];
+
+const visualRoleLabel: Record<LifestyleVisualRole, string> = {
+	housing: 'HOME',
+	food: 'FOOD',
+	experience: 'WEEKEND',
+	retail: 'BUY',
+	subscription: 'AUTO',
+	device: 'PHONE',
+	comfort: 'COMFORT',
+};
+
+const sceneLanguage = (scene: BeatComponentProps['scene']): string => {
+	const parts = [
+		scene?.narration,
+		scene?.text,
+		...(scene?.beats ?? []).flatMap((item) => [item.text, item.source_text]),
+	];
+	return parts.filter(Boolean).map(String).join(' ').toLowerCase();
+};
+
+const sceneNarrationText = (scene: BeatComponentProps['scene']): string => {
+	const direct = String(scene?.narration ?? scene?.text ?? '').trim();
+	if (direct) {
+		return direct;
+	}
+	return (scene?.beats ?? [])
+		.map((item) => String(item.source_text ?? item.text ?? '').trim())
+		.filter(Boolean)
+		.join(' ');
+};
+
+const sceneDurationSeconds = (scene: BeatComponentProps['scene'], beat: BeatComponentProps['beat']) => {
+	const explicit = Number(scene?.duration ?? scene?.total_duration);
+	if (Number.isFinite(explicit) && explicit > 0) {
+		return explicit;
+	}
+	const beatEnd = Math.max(...(scene?.beats ?? [beat]).map((item) => Number(item.end_time ?? 0)));
+	return Number.isFinite(beatEnd) && beatEnd > 0 ? beatEnd : Math.max(Number(beat.end_time ?? 0), 1);
+};
+
+const wordCount = (text: string) => {
+	const matches = text.match(/[A-Za-z0-9₹,]+/g);
+	return matches?.length ?? 0;
+};
+
+const splitNarrationSentences = (text: string): string[] =>
+	text
+		.split(/(?<=[.!?])\s+/)
+		.map((item) => item.trim())
+		.filter(Boolean);
+
+const narrationSentences = (text: string): TimedSentence[] => {
+	const sentences = splitNarrationSentences(text);
+	const totalWords = sentences.reduce((sum, sentence) => sum + wordCount(sentence), 0) || 1;
+	let cursor = 0;
+
+	return sentences.map((sentence) => {
+		const duration = wordCount(sentence) / totalWords;
+		const timed = {
+			text: sentence,
+			startProgress: cursor,
+			endProgress: Math.min(1, cursor + duration),
+		};
+		cursor = timed.endProgress;
+		return timed;
+	});
+};
+
+const firstKeywordIndex = (text: string, keywords: string[]) => {
+	const hits = keywords
+		.map((keyword) => text.indexOf(keyword.toLowerCase()))
+		.filter((index) => index >= 0);
+	return hits.length > 0 ? Math.min(...hits) : -1;
+};
+
+const buildLifestyleEntities = (text: string, spendingDelta: number): LifestyleFocalEntity[] => {
+	const found = LIFESTYLE_ENTITY_CATALOG.map((entity) => ({
+		...entity,
+		sourceIndex: firstKeywordIndex(text, entity.keywords),
+		amount: 0,
+	})).filter((entity) => entity.sourceIndex >= 0);
+	const selected = [...found].sort((a, b) => a.sourceIndex - b.sourceIndex);
+
+	for (const entity of LIFESTYLE_ENTITY_CATALOG) {
+		if (selected.length >= 5) {
+			break;
+		}
+		if (!selected.some((item) => item.id === entity.id)) {
+			selected.push({...entity, sourceIndex: 100000 + selected.length, amount: 0});
+		}
+	}
+
+	const totalWeight = selected.reduce((sum, entity) => sum + entity.weight, 0) || 1;
+	const availableDelta = Math.max(spendingDelta, 1);
+
+	return selected.slice(0, 6).map((entity) => ({
+		...entity,
+		amount: Math.max(900, Math.round((availableDelta * entity.weight) / totalWeight)),
+	}));
+};
+
+const buildLifestyleFocalSequence = (entities: LifestyleFocalEntity[]): LifestyleFocalMoment[] => {
+	const usableEntities = entities.slice(0, 6);
+	const sequenceStart = 0.08;
+	const sequenceEnd = 0.8;
+	const windowSize = (sequenceEnd - sequenceStart) / Math.max(usableEntities.length, 1);
+	const moments = usableEntities.map((entity, index) => ({
+		entityId: entity.id,
+		startProgress: sequenceStart + index * windowSize,
+		endProgress: sequenceStart + (index + 0.92) * windowSize,
+		dominance: 1.15 + index * 0.025,
+		decay: 0.24,
+		gravityCenter: entity.gravityCenter,
+		attentionWeight: 0.82 + Math.min(index, 4) * 0.035,
+		visualMode: 'entity_attack' as const,
+	}));
+
+	return [
+		...moments,
+		{
+			entityId: 'compression_cluster',
+			startProgress: 0.78,
+			endProgress: 1,
+			dominance: 1.08,
+			decay: 0.34,
+			gravityCenter: {x: 1280, y: 510},
+			attentionWeight: 1,
+			visualMode: 'compression',
+		},
+	];
+};
+
+const entityMentionsForSentence = (sentence: string, entities: LifestyleFocalEntity[]): LifestyleFocalEntity[] => {
+	const lowered = sentence.toLowerCase();
+	return entities
+		.map((entity) => ({
+			entity,
+			index: firstKeywordIndex(lowered, entity.keywords),
+		}))
+		.filter((item) => item.index >= 0)
+		.sort((a, b) => a.index - b.index)
+		.map((item) => item.entity);
+};
+
+const semanticModeForSentence = (sentence: string): LifestyleFocalMoment['visualMode'] | null => {
+	if (/\bsavings?\b|\bgap\b|flat|captured|protected|freedom/i.test(sentence)) {
+		return 'savings_isolation';
+	}
+	if (/absorbs?|new expense|permanent|lifestyle inflation|permanent bills|comfort quietly converts/i.test(sentence)) {
+		return 'compression';
+	}
+	if (/\bsalary\b|\bincome\b|earning more|rises?|paper/i.test(sentence)) {
+		return 'salary_anchor';
+	}
+	if (/\braise\b|extra\s*₹|extra\s+rs|progress|arrives?/i.test(sentence)) {
+		return 'raise_hero';
+	}
+	return null;
+};
+
+const momentForSentence = (
+	sentence: TimedSentence,
+	visualMode: LifestyleFocalMoment['visualMode'],
+): LifestyleFocalMoment => {
+	const centers: Record<LifestyleFocalMoment['visualMode'], GravityCenter> = {
+		entity_attack: {x: 1320, y: 420},
+		compression: {x: 1280, y: 510},
+		salary_anchor: {x: 960, y: 470},
+		raise_hero: {x: 1120, y: 390},
+		savings_isolation: {x: 960, y: 430},
+	};
+	return {
+		entityId: visualMode,
+		startProgress: Math.max(0, sentence.startProgress - 0.002),
+		endProgress: Math.min(1, sentence.endProgress + 0.008),
+		dominance: visualMode === 'raise_hero' ? 1.18 : 1.08,
+		decay: visualMode === 'compression' ? 0.34 : 0.22,
+		gravityCenter: centers[visualMode],
+		attentionWeight: 1,
+		visualMode,
+	};
+};
+
+const buildNarrationFocalSequence = (
+	narration: string,
+	entities: LifestyleFocalEntity[],
+): LifestyleFocalMoment[] => {
+	const moments: LifestyleFocalMoment[] = [];
+	const sentences = narrationSentences(narration);
+	const seen = new Set<string>();
+
+	for (const sentence of sentences) {
+		const mentioned = entityMentionsForSentence(sentence.text, entities);
+		if (mentioned.length === 0) {
+			const semanticMode = semanticModeForSentence(sentence.text);
+			if (semanticMode) {
+				moments.push(momentForSentence(sentence, semanticMode));
+			}
+			continue;
+		}
+		const sentenceDuration = sentence.endProgress - sentence.startProgress;
+		const slot = sentenceDuration / mentioned.length;
+		mentioned.forEach((entity, index) => {
+			const startProgress = Math.max(0, sentence.startProgress + slot * index - 0.004);
+			const endProgress = Math.min(1, sentence.startProgress + slot * (index + 1) + 0.004);
+			moments.push({
+				entityId: entity.id,
+				startProgress,
+				endProgress,
+				dominance: 1.2,
+				decay: 0.18,
+				gravityCenter: entity.gravityCenter,
+				attentionWeight: 0.94,
+				visualMode: 'entity_attack',
+			});
+			seen.add(entity.id);
+		});
+	}
+
+	if (moments.length === 0) {
+		return buildLifestyleFocalSequence(entities);
+	}
+
+	const finalEntityEnd = moments.filter((moment) => moment.visualMode === 'entity_attack').reduce((latest, moment) => Math.max(latest, moment.endProgress), 0);
+	const savingsSentence = sentences.find((sentence) => /\bsavings?\b|\bgap\b|flat|never reaches/i.test(sentence.text));
+	const compressionStart = Math.min(
+		0.92,
+		Math.max(finalEntityEnd + 0.025, savingsSentence ? savingsSentence.startProgress + 0.035 : finalEntityEnd + 0.08),
+	);
+	if (!moments.some((moment) => moment.visualMode === 'compression' && compressionStart >= moment.startProgress && compressionStart <= moment.endProgress)) {
+		moments.push({
+			entityId: 'compression_cluster',
+			startProgress: compressionStart,
+			endProgress: Math.min(1, compressionStart + 0.12),
+			dominance: 1.08,
+			decay: 0.34,
+			gravityCenter: {x: 1280, y: 510},
+			attentionWeight: 1,
+			visualMode: 'compression',
+		});
+	}
+
+	for (const entity of entities) {
+		if (seen.has(entity.id) || moments.length >= 7) {
+			continue;
+		}
+		const fallbackStart = Math.min(0.76, finalEntityEnd + 0.04 + moments.length * 0.035);
+		moments.splice(Math.max(0, moments.length - 1), 0, {
+			entityId: entity.id,
+			startProgress: fallbackStart,
+			endProgress: Math.min(0.9, fallbackStart + 0.07),
+			dominance: 1.08,
+			decay: 0.18,
+			gravityCenter: entity.gravityCenter,
+			attentionWeight: 0.86,
+			visualMode: 'entity_attack',
+		});
+	}
+
+	return moments.sort((a, b) => a.startProgress - b.startProgress);
+};
+
+const momentPresence = (progress: number, moment: LifestyleFocalMoment) => {
+	if (progress < moment.startProgress || progress > moment.endProgress) {
+		return 0;
+	}
+	const enterEnd = moment.startProgress + (moment.endProgress - moment.startProgress) * 0.34;
+	const exitStart = moment.startProgress + (moment.endProgress - moment.startProgress) * 0.7;
+	const enter = interpolate(progress, [moment.startProgress, enterEnd], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+	const exit = interpolate(progress, [exitStart, moment.endProgress], [1, 0.58], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+	return enter * exit;
+};
+
+const memoryPresence = (progress: number, moment: LifestyleFocalMoment) => {
+	if (progress <= moment.endProgress) {
+		return 0;
+	}
+	return interpolate(progress, [moment.endProgress, Math.min(1, moment.endProgress + 0.24)], [0.42, 0.18], {
+		extrapolateLeft: 'clamp',
+		extrapolateRight: 'clamp',
+	});
+};
 
 const Shell: React.FC<{
 	title: string;
@@ -109,6 +484,9 @@ export const LifestyleCreepVisualizer: React.FC<BeatComponentProps> = ({beat, sc
 	const rawData = getBeatData<LifestyleCreepData>(beat) ?? {};
 	const phase = String(beat.beat_phase ?? rawData.active_phase ?? 'expenses_follow');
 	const event = resolveVisualEvent(beat, scene, 'LifestyleCreepVisualizer');
+	const narration = sceneNarrationText(scene);
+	const currentSceneSeconds = Number(beat.start_time ?? 0) + frameWithinBeat / fps;
+	const sceneProgress = clamp(currentSceneSeconds / sceneDurationSeconds(scene, beat), 0, 1);
 	const startIncome = moneyPoint(rawData.start_income, 50000);
 	const endIncome = moneyPoint(rawData.end_income, 80000);
 	const oldSpending = moneyPoint(rawData.old_spending, Math.round(startIncome.amount * 0.78));
@@ -126,14 +504,16 @@ export const LifestyleCreepVisualizer: React.FC<BeatComponentProps> = ({beat, sc
 	const savingsAmount = Math.max(0, incomeAmount - spendingAmount);
 	const gapShrank = newSavings.amount <= oldSavings.amount * 1.15;
 	const newSpendDelta = Math.max(0, newSpending.amount - oldSpending.amount);
-	const attacks: ExpenseAttack[] = [
-		{label: 'Rent upgrade', amount: Math.round(newSpendDelta * 0.34), color: COLORS.warning, x: 1150, y: 178, delay: 0.04},
-		{label: 'Food apps', amount: Math.round(newSpendDelta * 0.2), color: COLORS.danger, x: 1330, y: 350, delay: 0.2},
-		{label: 'Weekends', amount: Math.round(newSpendDelta * 0.22), color: '#FF6B35', x: 1225, y: 535, delay: 0.36},
-		{label: 'Shopping', amount: Math.round(newSpendDelta * 0.24), color: '#FFD166', x: 1395, y: 720, delay: 0.52},
-	];
+	const lifestyleEntities = buildLifestyleEntities(sceneLanguage(scene), newSpendDelta);
+	const focalSequence = buildNarrationFocalSequence(narration, lifestyleEntities);
+	const semanticMoment = focalSequence.find((moment) => sceneProgress >= moment.startProgress && sceneProgress <= moment.endProgress);
+	const semanticEventProgress = semanticMoment
+		? clamp((sceneProgress - semanticMoment.startProgress) / Math.max(semanticMoment.endProgress - semanticMoment.startProgress, 0.001), 0, 1)
+		: rawProgress;
+	const shouldUseNarrationFocalWorld = Boolean(semanticMoment && sceneProgress > 0.045);
+	const semanticMode = shouldUseNarrationFocalWorld ? semanticMoment?.visualMode : undefined;
 
-	if (event.kind === 'baseline_life') {
+	if (semanticMode === 'salary_anchor' || (event.kind === 'baseline_life' && !shouldUseNarrationFocalWorld)) {
 		const reserveWidth = interpolate(entry, [0, 1], [120, 430]);
 		const spendRatio = clamp(oldSpending.amount / Math.max(startIncome.amount, 1), 0, 1);
 
@@ -188,10 +568,11 @@ export const LifestyleCreepVisualizer: React.FC<BeatComponentProps> = ({beat, sc
 		);
 	}
 
-	if (event.kind === 'raise_arrival') {
-		const lift = interpolate(rawProgress, [0, 1], [120, -36], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
-		const glow = interpolate(rawProgress, [0, 1], [0.28, 0.72], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
-		const displayedIncome = rupee(startIncome.amount + (endIncome.amount - startIncome.amount) * rawProgress);
+	if (semanticMode === 'raise_hero' || (event.kind === 'raise_arrival' && !shouldUseNarrationFocalWorld)) {
+		const raiseEventProgress = semanticMode === 'raise_hero' ? semanticEventProgress : rawProgress;
+		const lift = interpolate(raiseEventProgress, [0, 1], [120, -36], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+		const glow = interpolate(raiseEventProgress, [0, 1], [0.28, 0.72], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+		const displayedIncome = rupee(startIncome.amount + (endIncome.amount - startIncome.amount) * raiseEventProgress);
 
 		return (
 			<Shell title="Raise arrival" tone="optimistic">
@@ -231,7 +612,7 @@ export const LifestyleCreepVisualizer: React.FC<BeatComponentProps> = ({beat, sc
 						border: `5px solid ${COLORS.warning}`,
 						background: 'rgba(255,209,102,0.11)',
 						boxShadow: '0 0 90px rgba(255,209,102,0.34)',
-						transform: `scale(${0.72 + rawProgress * 0.34})`,
+						transform: `scale(${0.72 + raiseEventProgress * 0.34})`,
 						zIndex: 2,
 					}}
 				>
@@ -248,7 +629,7 @@ export const LifestyleCreepVisualizer: React.FC<BeatComponentProps> = ({beat, sc
 							height: 190 + index * 45,
 							borderRadius: 999,
 							background: `linear-gradient(180deg, ${COLORS.warning}, rgba(255,209,102,0))`,
-							opacity: interpolate(rawProgress, [index * 0.12, 1], [0, 0.82], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
+							opacity: interpolate(raiseEventProgress, [index * 0.12, 1], [0, 0.82], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
 						}}
 					/>
 				))}
@@ -256,8 +637,9 @@ export const LifestyleCreepVisualizer: React.FC<BeatComponentProps> = ({beat, sc
 		);
 	}
 
-	if (event.kind === 'savings_gap_reveal') {
-		const collapse = interpolate(rawProgress, [0, 0.68], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+	if (semanticMode === 'savings_isolation' || (event.kind === 'savings_gap_reveal' && !shouldUseNarrationFocalWorld)) {
+		const savingsEventProgress = semanticMode === 'savings_isolation' ? semanticEventProgress : rawProgress;
+		const collapse = interpolate(savingsEventProgress, [0, 0.68], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
 		const tinyScale = interpolate(collapse, [0, 1], [1.12, 0.92]);
 
 		return (
@@ -325,7 +707,7 @@ export const LifestyleCreepVisualizer: React.FC<BeatComponentProps> = ({beat, sc
 						background: gapShrank ? 'rgba(230,57,70,0.14)' : 'rgba(255,209,102,0.12)',
 						textAlign: 'center',
 						zIndex: 4,
-						opacity: interpolate(rawProgress, [0.24, 0.72], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
+						opacity: interpolate(savingsEventProgress, [0.24, 0.72], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
 					}}
 				>
 					<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 58, lineHeight: 0.94, color: gapShrank ? COLORS.danger : COLORS.warning}}>
@@ -336,11 +718,28 @@ export const LifestyleCreepVisualizer: React.FC<BeatComponentProps> = ({beat, sc
 		);
 	}
 
-	const boardReveal = interpolate(rawProgress, [0, 0.28], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
-	const crowd = interpolate(rawProgress, [0.1, 0.88], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
-	const salaryWidth = interpolate(rawProgress, [0, 1], [680, 380], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
-	const spendWidth = interpolate(rawProgress, [0, 1], [170, 700], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
-	const savingsWidth = interpolate(rawProgress, [0, 1], [310, 96], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+	const focalProgress = shouldUseNarrationFocalWorld ? sceneProgress : rawProgress;
+	const narrationIncomeProgress = shouldUseNarrationFocalWorld ? interpolate(sceneProgress, [0, 0.16], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}) : raiseProgress;
+	const narrationSpendProgress = shouldUseNarrationFocalWorld ? interpolate(focalProgress, [0.06, 0.64], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}) : creepProgress;
+	const displayIncomeAmount = startIncome.amount + (endIncome.amount - startIncome.amount) * narrationIncomeProgress;
+	const displaySpendingAmount = oldSpending.amount + (newSpending.amount - oldSpending.amount) * narrationSpendProgress;
+	const displaySavingsAmount = Math.max(0, displayIncomeAmount - displaySpendingAmount);
+	const boardReveal = shouldUseNarrationFocalWorld ? 1 : interpolate(rawProgress, [0, 0.28], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+	const crowd = interpolate(focalProgress, [0.05, 0.72], [0.2, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+	const salaryWidth = interpolate(narrationSpendProgress, [0, 1], [640, 350], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+	const spendWidth = interpolate(narrationSpendProgress, [0, 1], [130, 660], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+	const savingsWidth = interpolate(displaySavingsAmount / Math.max(endIncome.amount, 1), [0, 0.32], [96, 310], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+	const compressionPresence = focalSequence
+		.filter((moment) => moment.visualMode === 'compression')
+		.reduce((maxPresence, moment) => Math.max(maxPresence, momentPresence(focalProgress, moment)), 0);
+	const activeMoment =
+		focalSequence
+			.filter((moment) => focalProgress >= moment.startProgress && focalProgress <= moment.endProgress && moment.visualMode === 'entity_attack')
+			.sort((a, b) => b.startProgress - a.startProgress)[0] ??
+		(!shouldUseNarrationFocalWorld ? focalSequence.filter((moment) => moment.visualMode === 'entity_attack').slice(-1)[0] : undefined);
+	const activeEntity = lifestyleEntities.find((entity) => entity.id === activeMoment?.entityId) ?? lifestyleEntities[0];
+	const activePresence = activeMoment ? momentPresence(focalProgress, activeMoment) : 0;
+	const activeDrift = activeMoment ? Math.sin((frameWithinBeat / fps) * Math.PI * 1.8) * 10 * activeMoment.attentionWeight : 0;
 
 	return (
 		<Shell title="Lifestyle absorption" tone="pressure">
@@ -348,77 +747,151 @@ export const LifestyleCreepVisualizer: React.FC<BeatComponentProps> = ({beat, sc
 				style={{
 					position: 'absolute',
 					left: 132,
-					top: 180,
-					width: 960,
-					height: 640,
+					top: 188,
+					width: 840,
+					height: 590,
 					borderRadius: 8,
 					border: `1px solid ${COLORS.stroke}`,
 					background: 'rgba(255,255,255,0.045)',
 					boxShadow: '0 0 70px rgba(230,57,70,0.12)',
-					opacity: boardReveal,
+					opacity: boardReveal * (1 - compressionPresence * 0.45),
 					transform: `translateX(${interpolate(boardReveal, [0, 1], [-70, 0])}px)`,
 					zIndex: 2,
 				}}
 			>
 				<div style={{position: 'absolute', left: 64, top: 76, fontSize: TYPE_SCALE.subtext.size, fontWeight: 900, color: COLORS.text_secondary}}>Raise being consumed</div>
-				<div style={{position: 'absolute', left: 64, top: 160, width: 730, height: 86}}>
+				<div style={{position: 'absolute', left: 64, top: 158, width: 660, height: 86, opacity: 0.72}}>
 					<div style={{fontSize: TYPE_SCALE.micro.size + 4, fontWeight: 900, color: COLORS.text_secondary}}>Income</div>
 					<div style={{marginTop: 12, width: salaryWidth, height: 34, borderRadius: 999, background: COLORS.positive, boxShadow: `0 0 28px ${COLORS.positive}55`}} />
-					<div style={{position: 'absolute', right: 0, top: 36, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 46, color: COLORS.positive}}>{rupee(incomeAmount)}</div>
+					<div style={{position: 'absolute', right: 0, top: 36, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 46, color: COLORS.positive}}>{rupee(displayIncomeAmount)}</div>
 				</div>
-				<div style={{position: 'absolute', left: 64, top: 300, width: 800, height: 116}}>
+				<div style={{position: 'absolute', left: 64, top: 294, width: 690, height: 116}}>
 					<div style={{fontSize: TYPE_SCALE.micro.size + 4, fontWeight: 900, color: COLORS.text_secondary}}>Lifestyle spending</div>
 					<div style={{marginTop: 12, width: spendWidth, height: 58, borderRadius: 8, background: COLORS.warning, boxShadow: `0 0 ${38 + crowd * 24}px ${COLORS.warning}66`}} />
-					<div style={{position: 'absolute', right: 0, top: 32, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 56, color: COLORS.warning}}>{rupee(spendingAmount)}</div>
+					<div style={{position: 'absolute', right: 0, top: 32, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 56, color: COLORS.warning}}>{rupee(displaySpendingAmount)}</div>
 				</div>
-				<div style={{position: 'absolute', left: 64, bottom: 100, width: 760, height: 90}}>
+				<div style={{position: 'absolute', left: 64, bottom: 78, width: 660, height: 90}}>
 					<div style={{fontSize: TYPE_SCALE.micro.size + 4, fontWeight: 900, color: COLORS.text_secondary}}>Savings squeezed</div>
 					<div style={{marginTop: 12, width: savingsWidth, height: 26, borderRadius: 999, background: gapShrank ? COLORS.danger : COLORS.positive}} />
-					<div style={{position: 'absolute', right: 0, top: 26, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 48, color: gapShrank ? COLORS.danger : COLORS.positive}}>{rupee(savingsAmount)}</div>
+					<div style={{position: 'absolute', right: 0, top: 26, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 48, color: gapShrank ? COLORS.danger : COLORS.positive}}>{rupee(displaySavingsAmount)}</div>
 				</div>
 			</div>
-			{attacks.map((attack) => {
-				const attackIn = interpolate(rawProgress, [attack.delay, attack.delay + 0.22], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
-				const x = attack.x - attackIn * 150;
-				const y = attack.y + Math.sin((frameWithinBeat / fps + attack.delay * 4) * Math.PI * 2) * 8;
+			<div
+				style={{
+					position: 'absolute',
+					left: 1080,
+					top: 94,
+					width: 520,
+					height: 78,
+					zIndex: 3,
+					opacity: interpolate(focalProgress, [0.02, 0.18], [0, 0.82], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
+				}}
+			>
+				<div style={{fontSize: TYPE_SCALE.micro.size + 4, fontWeight: 900, color: COLORS.text_secondary}}>Attention sequence</div>
+				<div style={{marginTop: 13, height: 10, borderRadius: 999, background: 'rgba(255,255,255,0.1)', overflow: 'hidden'}}>
+					<div style={{width: `${focalProgress * 100}%`, height: '100%', borderRadius: 999, background: activeEntity?.color ?? COLORS.warning}} />
+				</div>
+			</div>
+			{activeEntity && activeMoment ? (
+				<div
+					style={{
+						position: 'absolute',
+						left: activeMoment.gravityCenter.x - 185,
+						top: activeMoment.gravityCenter.y - 102 + activeDrift,
+						width: 370,
+						padding: '28px 30px',
+						borderRadius: 8,
+						border: `3px solid ${activeEntity.color}`,
+						background: 'rgba(8,8,14,0.96)',
+						boxShadow: `0 0 ${54 + activePresence * 48}px ${activeEntity.color}68`,
+						opacity: activePresence * (1 - compressionPresence),
+						transform: `scale(${0.82 + activePresence * activeMoment.dominance * 0.22})`,
+						zIndex: 7,
+					}}
+				>
+					<div style={{fontSize: TYPE_SCALE.micro.size + 2, color: activeEntity.color, fontWeight: 950, letterSpacing: 0}}>
+						{visualRoleLabel[activeEntity.visualRole]}
+					</div>
+					<div style={{marginTop: 8, fontSize: 34, color: COLORS.text_secondary, fontWeight: 900}}>{activeEntity.label}</div>
+					<div style={{marginTop: 2, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 68, lineHeight: 0.88, color: activeEntity.color}}>
+						+{rupee(activeEntity.amount)}
+					</div>
+				</div>
+			) : null}
+			{lifestyleEntities.map((entity, index) => {
+				const moment = focalSequence.find((item) => item.entityId === entity.id);
+				const memory = moment ? memoryPresence(focalProgress, moment) : 0;
+				const active = moment ? momentPresence(focalProgress, moment) : 0;
+				const opacity = Math.max(memory, active * 0.16);
+				const x = 1050 + (index % 3) * 238;
+				const y = 845 + Math.floor(index / 3) * 74;
 
 				return (
 					<div
-						key={attack.label}
+						key={entity.id}
 						style={{
 							position: 'absolute',
 							left: x,
 							top: y,
-							width: 300,
-							padding: '22px 24px',
+							width: 210,
+							height: 60,
 							borderRadius: 8,
-							border: `2px solid ${attack.color}`,
-							background: 'rgba(12,12,20,0.92)',
-							boxShadow: `0 0 46px ${attack.color}42`,
-							opacity: attackIn,
-							transform: `scale(${0.78 + attackIn * 0.22})`,
+							border: `1px solid ${entity.color}`,
+							background: `${entity.color}18`,
+							opacity,
+							transform: `translateY(${(1 - opacity) * 18}px) scale(${0.92 + active * 0.08})`,
 							zIndex: 4,
 						}}
 					>
-						<div style={{fontSize: TYPE_SCALE.micro.size + 3, color: COLORS.text_secondary, fontWeight: 900}}>{attack.label}</div>
-						<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 54, lineHeight: 0.9, color: attack.color}}>
-							+{rupee(attack.amount)}
-						</div>
+						<div style={{position: 'absolute', left: 16, top: 8, fontSize: TYPE_SCALE.micro.size, color: COLORS.text_secondary, fontWeight: 900}}>{entity.label}</div>
+						<div style={{position: 'absolute', left: 16, bottom: 8, fontSize: 18, color: entity.color, fontWeight: 950}}>spent</div>
 					</div>
 				);
 			})}
+			<div
+				style={{
+					position: 'absolute',
+					left: 1068,
+					top: 284,
+					width: 560,
+					height: 360,
+					borderRadius: 8,
+					border: `2px solid ${COLORS.danger}`,
+					background: 'rgba(230,57,70,0.1)',
+					opacity: compressionPresence,
+					boxShadow: `0 0 ${70 + compressionPresence * 50}px rgba(230,57,70,0.35)`,
+					zIndex: 6,
+				}}
+			>
+				<div style={{position: 'absolute', left: 42, top: 34, fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>
+					Compression cluster
+				</div>
+				<div style={{position: 'absolute', left: 42, top: 88, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 82, lineHeight: 0.88, color: COLORS.danger}}>
+					{rupee(newSpending.amount)}
+				</div>
+				<div style={{position: 'absolute', left: 42, right: 42, bottom: 58, height: 30, borderRadius: 999, background: 'rgba(255,255,255,0.1)', overflow: 'hidden'}}>
+					<div style={{height: '100%', width: '86%', background: COLORS.danger, boxShadow: `0 0 34px ${COLORS.danger}77`}} />
+				</div>
+				<div style={{position: 'absolute', right: 44, bottom: 104, fontSize: 32, color: COLORS.text_secondary, fontWeight: 900}}>
+					{lifestyleEntities.length} upgrades locked in
+				</div>
+			</div>
 			<svg viewBox="0 0 1920 1080" style={{position: 'absolute', inset: 0, zIndex: 3, overflow: 'visible', opacity: crowd}}>
-				{attacks.map((attack, index) => (
+				{lifestyleEntities.map((entity) => {
+					const moment = focalSequence.find((item) => item.entityId === entity.id);
+					const presence = moment ? Math.max(momentPresence(focalProgress, moment), memoryPresence(focalProgress, moment)) : 0;
+					return (
 					<path
-						key={attack.label}
-						d={`M ${attack.x - 8} ${attack.y + 64} C ${980 + index * 20} ${attack.y + 30}, ${920 - index * 22} ${350 + index * 36}, ${780} ${330 + index * 62}`}
-						stroke={attack.color}
+						key={entity.id}
+						d={`M ${entity.gravityCenter.x - 80} ${entity.gravityCenter.y + 30} C 1040 ${entity.gravityCenter.y}, 920 ${390}, 760 ${375}`}
+						stroke={entity.color}
 						strokeWidth={6}
 						strokeLinecap="round"
 						fill="none"
-						opacity={0.7}
+						opacity={presence * 0.82}
 					/>
-				))}
+					);
+				})}
 			</svg>
 		</Shell>
 	);
