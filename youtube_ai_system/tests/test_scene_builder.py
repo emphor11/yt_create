@@ -356,6 +356,8 @@ class SceneBuilderTestCase(unittest.TestCase):
         self.assertTrue(all(beat["semantic_timing"]["engine"] == "semantic_timing" for beat in beats))
         self.assertEqual([state["state_type"] for state in scene["visual_state_sequence"]["states"]], ["centered_focus", "pressure_cluster", "isolate_survivor"])
         self.assertTrue(all(beat["visual_state"]["source_beat_indices"] for beat in beats))
+        self.assertEqual([shot["shot_type"] for shot in scene["shot_sequence"]["shots"]], ["wide_context", "pressure_closeup", "pressure_closeup", "survivor_isolation"])
+        self.assertTrue(all(beat["active_shot"]["source_beat_indices"] for beat in beats))
         self.assertEqual(beats[1]["semantic_timing"]["pacing"], "overlap_intensify")
         self.assertEqual(beats[-1]["semantic_timing"]["pacing"], "reveal_hold")
         self.assertGreater(durations[-1], durations[1])

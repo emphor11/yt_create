@@ -17,6 +17,21 @@ type VisualState = {
 	source_beat_indices?: number[];
 };
 
+type Shot = {
+	shot_type?: string;
+	focus_target?: string;
+	framing_profile?: string;
+	composition_emphasis?: string;
+	attention_weight?: number;
+	start_frame?: number;
+	end_frame?: number;
+	composition_window?: {start_frame?: number; end_frame?: number};
+	derived_from_action?: string;
+	derived_from_state?: string;
+	source_action_ids?: string[];
+	source_beat_indices?: number[];
+};
+
 type GrowthLayout = {
 	profile: 'default' | 'optimistic_seed' | 'growth_acceleration' | 'layered_growth' | 'awe_reveal';
 	seedX: number;
@@ -192,6 +207,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const toVisualState = (value: unknown): VisualState | null =>
 	isRecord(value) ? (value as VisualState) : null;
 
+const toShot = (value: unknown): Shot | null =>
+	isRecord(value) ? (value as Shot) : null;
+
 const overlapsBeat = (state: VisualState, beat: BeatComponentProps['beat']) => {
 	const start = Number(state.frame_window?.start_frame ?? 0);
 	const end = Number(state.frame_window?.end_frame ?? 0);
@@ -231,6 +249,45 @@ const resolveVisualState = (
 	);
 };
 
+const overlapsShot = (shot: Shot, beat: BeatComponentProps['beat']) => {
+	const start = Number(shot.start_frame ?? shot.composition_window?.start_frame ?? 0);
+	const end = Number(shot.end_frame ?? shot.composition_window?.end_frame ?? 0);
+	const beatStart = Math.floor(Number(beat.start_time ?? 0) * 30);
+	const beatEnd = Math.floor(Number(beat.end_time ?? 0) * 30);
+	return start < beatEnd && end > beatStart;
+};
+
+const resolveShot = (
+	beat: BeatComponentProps['beat'],
+	scene: BeatComponentProps['scene'],
+): Shot | null => {
+	const data = getBeatData<Record<string, unknown>>(beat) ?? {};
+	const direct = toShot((beat as BeatComponentProps['beat'] & {active_shot?: unknown}).active_shot);
+	if (direct?.shot_type) {
+		return direct;
+	}
+	const dataShot = toShot(data.active_shot);
+	if (dataShot?.shot_type) {
+		return dataShot;
+	}
+	const sequence = (scene as unknown as {shot_sequence?: {shots?: unknown[]}} | undefined)?.shot_sequence;
+	const shots = Array.isArray(sequence?.shots) ? sequence.shots.map(toShot).filter(Boolean) as Shot[] : [];
+	if (!shots.length) {
+		return null;
+	}
+	const action = isRecord(data.active_action) ? data.active_action : {};
+	const actionId = String(action.id ?? '');
+	const actionName = String(action.action ?? '');
+	const sequenceIndex = Number(action.sequence_index);
+	return (
+		shots.find((shot) => actionId && Array.isArray(shot.source_action_ids) && shot.source_action_ids.includes(actionId)) ??
+		shots.find((shot) => Number.isFinite(sequenceIndex) && Array.isArray(shot.source_beat_indices) && shot.source_beat_indices.includes(sequenceIndex)) ??
+		shots.find((shot) => actionName && shot.derived_from_action === actionName && overlapsShot(shot, beat)) ??
+		shots.find((shot) => overlapsShot(shot, beat)) ??
+		null
+	);
+};
+
 const layoutForState = (visualState: VisualState | null): GrowthLayout => {
 	const stateType = String(visualState?.state_type ?? '');
 	const base = STATE_LAYOUTS[stateType] ?? DEFAULT_LAYOUT;
@@ -248,6 +305,64 @@ const layoutForState = (visualState: VisualState | null): GrowthLayout => {
 		motionVelocity: transition === 'slow_reveal' ? base.motionVelocity * 0.78 : transition === 'acceleration_shift' ? base.motionVelocity * 1.12 : base.motionVelocity,
 		corpusDominance: transition === 'layer_stack' ? base.corpusDominance * 1.08 : base.corpusDominance,
 	};
+};
+
+const layoutForShot = (base: GrowthLayout, shot: Shot | null): GrowthLayout => {
+	const shotType = String(shot?.shot_type ?? '');
+	const attention = Math.max(0.4, Math.min(Number(shot?.attention_weight ?? 0.65), 1));
+	if (shotType === 'wide_context') {
+		return {
+			...base,
+			seedScale: base.seedScale * 1.05,
+			barGap: base.barGap * 1.08,
+			corpusScale: base.corpusScale * 0.94,
+			glowIntensity: base.glowIntensity * 0.82,
+			negativeSpace: base.negativeSpace + 0.08 * attention,
+			motionVelocity: base.motionVelocity * 0.92,
+		};
+	}
+	if (shotType === 'upward_momentum') {
+		return {
+			...base,
+			barsBottom: base.barsBottom + 30 * attention,
+			upwardShift: base.upwardShift + 52 * attention,
+			corpusScale: base.corpusScale * (1 + 0.12 * attention),
+			corpusDominance: base.corpusDominance * (1 + 0.1 * attention),
+			glowIntensity: Math.min(0.82, base.glowIntensity + 0.12 * attention),
+			motionVelocity: base.motionVelocity * 1.14,
+			ratioScale: base.ratioScale * (1 + 0.08 * attention),
+		};
+	}
+	if (shotType === 'focused_growth') {
+		return {
+			...base,
+			barGap: base.barGap * 0.82,
+			investedOpacity: base.investedOpacity * 0.72,
+			corpusWidth: base.corpusWidth + 54 * attention,
+			corpusScale: base.corpusScale * (1 + 0.16 * attention),
+			hierarchyContrast: base.hierarchyContrast * (1 + 0.1 * attention),
+			corpusDominance: base.corpusDominance * (1 + 0.14 * attention),
+			upwardShift: base.upwardShift + 46 * attention,
+			glowIntensity: Math.min(0.86, base.glowIntensity + 0.1 * attention),
+		};
+	}
+	if (shotType === 'reward_hero' || shotType === 'emotional_pause') {
+		return {
+			...base,
+			seedOpacity: base.seedOpacity * 0.58,
+			investedOpacity: base.investedOpacity * 0.58,
+			corpusWidth: base.corpusWidth + 84 * attention,
+			corpusScale: base.corpusScale * (1 + 0.12 * attention),
+			corpusDominance: base.corpusDominance * (1 + 0.12 * attention),
+			glowIntensity: Math.min(0.9, base.glowIntensity + 0.14 * attention),
+			rewardIsolation: Math.max(base.rewardIsolation, 0.86),
+			negativeSpace: base.negativeSpace + 0.12 * attention,
+			motionVelocity: base.motionVelocity * 0.86,
+			ratioScale: base.ratioScale * (1 + 0.12 * attention),
+			returnsScale: base.returnsScale * (1 + 0.1 * attention),
+		};
+	}
+	return base;
 };
 
 const mix = (from: number, to: number, amount: number) =>
@@ -285,14 +400,88 @@ const mixedLayout = (target: GrowthLayout, amount: number): GrowthLayout => ({
 	backgroundLift: mix(DEFAULT_LAYOUT.backgroundLift, target.backgroundLift, amount),
 });
 
+const roundDebug = (value: number) => Math.round(value * 1000) / 1000;
+
+const sipLayoutDebug = (layout: GrowthLayout) => ({
+	profile: layout.profile,
+	seedScale: roundDebug(layout.seedScale),
+	barGap: roundDebug(layout.barGap),
+	corpusWidth: roundDebug(layout.corpusWidth),
+	corpusScale: roundDebug(layout.corpusScale),
+	corpusDominance: roundDebug(layout.corpusDominance),
+	upwardShift: roundDebug(layout.upwardShift),
+	glowIntensity: roundDebug(layout.glowIntensity),
+	rewardIsolation: roundDebug(layout.rewardIsolation),
+	motionVelocity: roundDebug(layout.motionVelocity),
+});
+
+let lastSIPDebugKey = '';
+
+const SIPDebugOverlay: React.FC<{
+	currentFrame: number;
+	beatLabel: string;
+	shot: Shot | null;
+	visualState: VisualState | null;
+	layoutValues: ReturnType<typeof sipLayoutDebug>;
+}> = ({currentFrame, beatLabel, shot, visualState, layoutValues}) => (
+	<div
+		style={{
+			position: 'absolute',
+			left: 24,
+			bottom: 24,
+			zIndex: 9998,
+			width: 620,
+			padding: '18px 20px',
+			borderRadius: 8,
+			background: 'rgba(2, 6, 23, 0.82)',
+			border: '1px solid rgba(46,196,182,0.48)',
+			color: 'white',
+			fontFamily: 'monospace',
+			fontSize: 21,
+			lineHeight: 1.35,
+			pointerEvents: 'none',
+		}}
+	>
+		<div>SIPGrowthEngine debug</div>
+		<div>frame: {currentFrame}</div>
+		<div>beat: {beatLabel}</div>
+		<div>shot: {shot?.shot_type ?? 'none'}</div>
+		<div>focus: {shot?.focus_target ?? 'none'}</div>
+		<div>visual_state: {visualState?.state_type ?? 'none'}</div>
+		<div>layout: {JSON.stringify(layoutValues)}</div>
+	</div>
+);
+
 export const SIPGrowthEngine: React.FC<BeatComponentProps> = ({beat, scene, frameWithinBeat, durationFrames}) => {
 	const {fps} = useVideoConfig();
 	const data = getBeatData<Record<string, unknown>>(beat) ?? {};
 	const phase = String(beat.beat_phase ?? data.active_phase ?? 'growth');
 	const visualState = resolveVisualState(beat, scene);
-	const layoutTarget = layoutForState(visualState);
+	const activeShot = resolveShot(beat, scene);
+	const layoutTarget = layoutForShot(layoutForState(visualState), activeShot);
 	const layoutMix = spring({frame: Math.min(frameWithinBeat, 24), fps, config: SPRINGS.entry, durationInFrames: 24});
 	const layout = mixedLayout(layoutTarget, layoutMix);
+	const currentFrame = Math.floor(Number(beat.start_time ?? 0) * fps + frameWithinBeat);
+	const layoutDebug = sipLayoutDebug(layout);
+	const targetLayoutDebug = sipLayoutDebug(layoutTarget);
+	const debugKey = [
+		beat.text,
+		activeShot?.shot_type ?? 'none',
+		activeShot?.focus_target ?? 'none',
+		visualState?.state_type ?? 'none',
+		layoutTarget.profile,
+	].join('|');
+	if (debugKey !== lastSIPDebugKey) {
+		lastSIPDebugKey = debugKey;
+		console.info('[ShotDebug:SIPGrowthEngine] metadata change', {
+			frame: currentFrame,
+			beatLabel: beat.text,
+			activeShot: activeShot ?? null,
+			visualState: visualState ?? null,
+			layoutTarget: targetLayoutDebug,
+			layoutCurrent: layoutDebug,
+		});
+	}
 	const sip = data.monthly_sip as {value?: string; amount?: number} | undefined;
 	const totalInvested = Number(data.total_invested ?? 0);
 	const finalCorpus = Number(data.final_corpus ?? 0);
@@ -318,6 +507,9 @@ export const SIPGrowthEngine: React.FC<BeatComponentProps> = ({beat, scene, fram
 	const compositionDensity = String(visualState?.composition_density ?? 'default');
 	const framing = String(visualState?.framing ?? 'default');
 	const transitionBehavior = String(visualState?.transition_behavior ?? 'default');
+	const shotType = String(activeShot?.shot_type ?? 'default');
+	const focusTarget = String(activeShot?.focus_target ?? 'default');
+	const framingProfile = String(activeShot?.framing_profile ?? 'default');
 	const investedVisualOpacity = layout.investedOpacity * (1 - layout.rewardIsolation * 0.45);
 	const corpusVisualOpacity = layout.corpusOpacity;
 	const backgroundGlow = `radial-gradient(circle at ${66 + layout.rewardIsolation * 10}% ${38 - layout.backgroundLift * 18}%, rgba(46,196,182,${0.10 + layout.glowIntensity * 0.42}), transparent ${26 + layout.negativeSpace * 20}%), ${COLORS.bg_deep}`;
@@ -330,6 +522,9 @@ export const SIPGrowthEngine: React.FC<BeatComponentProps> = ({beat, scene, fram
 			data-composition-density={compositionDensity}
 			data-framing={framing}
 			data-transition-behavior={transitionBehavior}
+			data-shot-type={shotType}
+			data-focus-target={focusTarget}
+			data-framing-profile={framingProfile}
 			style={{
 				background: backgroundGlow,
 				color: COLORS.text_primary,
@@ -465,6 +660,13 @@ export const SIPGrowthEngine: React.FC<BeatComponentProps> = ({beat, scene, fram
 					{formatIndianRupee(returnsEarned)}
 				</div>
 			</div>
+			<SIPDebugOverlay
+				currentFrame={currentFrame}
+				beatLabel={String(beat.text ?? '')}
+				shot={activeShot}
+				visualState={visualState}
+				layoutValues={layoutDebug}
+			/>
 		</AbsoluteFill>
 	);
 };

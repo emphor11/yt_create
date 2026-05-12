@@ -10,6 +10,7 @@ from flask import current_app
 from .scene_mapper import map_pattern_to_component
 from .scene_debug import SceneDebugTrace, renderer_sequence
 from .semantic_timing_engine import SemanticTimingEngine
+from .shot_director import ShotDirector
 from .visual_state_engine import VisualStateEngine
 from .voice_service import VoiceService
 
@@ -127,6 +128,7 @@ class SceneBuilder:
         self.voice_service = VoiceService()
         self.semantic_timing_engine = SemanticTimingEngine()
         self.visual_state_engine = VisualStateEngine()
+        self.shot_director = ShotDirector()
 
     def build_scenes(self, sections: list[dict[str, Any]], debug_trace: SceneDebugTrace | None = None) -> dict[str, list[dict[str, Any]]]:
         scenes: list[dict[str, Any]] = []
@@ -166,6 +168,20 @@ class SceneBuilder:
                 )
                 if visual_state_sequence:
                     debug_trace.ownership("visual_state_sequence", "visual_state_engine", visual_state_sequence, "composition state sequence derived from timed semantic actions")
+            shot_sequence = None
+            if debug_trace:
+                debug_trace.snapshot("shot_director_pre", {"timed_beats": timed_beats, "visual_state_sequence": visual_state_sequence or {}}, owner="scene_builder")
+            shot_sequence = self.shot_director.build_sequence(timed_beats)
+            if shot_sequence:
+                timed_beats = self.shot_director.attach_to_beats(timed_beats, shot_sequence)
+            if debug_trace:
+                debug_trace.snapshot(
+                    "shot_director_post",
+                    {"shot_sequence": shot_sequence or {}, "timed_beats": timed_beats},
+                    owner="shot_director",
+                )
+                if shot_sequence:
+                    debug_trace.ownership("shot_sequence", "shot_director", shot_sequence, "intra-scene shot choreography derived from timed semantic beats")
             data_warnings = self._validate_beat_data(timed_beats)
             for warning in data_warnings:
                 current_app.logger.warning("SceneBuilder data warning for scene %s: %s", index, warning)
@@ -193,6 +209,7 @@ class SceneBuilder:
                     "visual_story": section.get("visual_story") or {},
                     "story_state": section.get("story_state") or {},
                     "visual_state_sequence": visual_state_sequence or {},
+                    "shot_sequence": shot_sequence or {},
                     "theme": section.get("theme") or {},
                     "beats": timed_beats,
                     "warnings": data_warnings,

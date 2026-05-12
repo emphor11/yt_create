@@ -25,6 +25,21 @@ type VisualState = {
 	source_beat_indices?: number[];
 };
 
+type Shot = {
+	shot_type?: string;
+	focus_target?: string;
+	framing_profile?: string;
+	composition_emphasis?: string;
+	attention_weight?: number;
+	start_frame?: number;
+	end_frame?: number;
+	composition_window?: {start_frame?: number; end_frame?: number};
+	derived_from_action?: string;
+	derived_from_state?: string;
+	source_action_ids?: string[];
+	source_beat_indices?: number[];
+};
+
 type LayoutProfile = {
 	profile: 'default' | 'centered_focus' | 'pressure_cluster' | 'isolate_survivor';
 	sourceX: number;
@@ -185,6 +200,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const toVisualState = (value: unknown): VisualState | null =>
 	isRecord(value) ? (value as VisualState) : null;
 
+const toShot = (value: unknown): Shot | null =>
+	isRecord(value) ? (value as Shot) : null;
+
 const overlapsBeat = (state: VisualState, beat: BeatComponentProps['beat']) => {
 	const start = Number(state.frame_window?.start_frame ?? 0);
 	const end = Number(state.frame_window?.end_frame ?? 0);
@@ -224,6 +242,45 @@ const resolveVisualState = (
 	);
 };
 
+const overlapsShot = (shot: Shot, beat: BeatComponentProps['beat']) => {
+	const start = Number(shot.start_frame ?? shot.composition_window?.start_frame ?? 0);
+	const end = Number(shot.end_frame ?? shot.composition_window?.end_frame ?? 0);
+	const beatStart = Math.floor(Number(beat.start_time ?? 0) * 30);
+	const beatEnd = Math.floor(Number(beat.end_time ?? 0) * 30);
+	return start < beatEnd && end > beatStart;
+};
+
+const resolveShot = (
+	beat: BeatComponentProps['beat'],
+	scene: BeatComponentProps['scene'],
+): Shot | null => {
+	const data = getBeatData<Record<string, unknown>>(beat) ?? {};
+	const direct = toShot((beat as BeatComponentProps['beat'] & {active_shot?: unknown}).active_shot);
+	if (direct?.shot_type) {
+		return direct;
+	}
+	const dataShot = toShot(data.active_shot);
+	if (dataShot?.shot_type) {
+		return dataShot;
+	}
+	const sequence = (scene as unknown as {shot_sequence?: {shots?: unknown[]}} | undefined)?.shot_sequence;
+	const shots = Array.isArray(sequence?.shots) ? sequence.shots.map(toShot).filter(Boolean) as Shot[] : [];
+	if (!shots.length) {
+		return null;
+	}
+	const action = isRecord(data.active_action) ? data.active_action : {};
+	const actionId = String(action.id ?? '');
+	const actionName = String(action.action ?? '');
+	const sequenceIndex = Number(action.sequence_index);
+	return (
+		shots.find((shot) => actionId && Array.isArray(shot.source_action_ids) && shot.source_action_ids.includes(actionId)) ??
+		shots.find((shot) => Number.isFinite(sequenceIndex) && Array.isArray(shot.source_beat_indices) && shot.source_beat_indices.includes(sequenceIndex)) ??
+		shots.find((shot) => actionName && shot.derived_from_action === actionName && overlapsShot(shot, beat)) ??
+		shots.find((shot) => overlapsShot(shot, beat)) ??
+		null
+	);
+};
+
 const layoutForState = (visualState: VisualState | null): LayoutProfile => {
 	const stateType = String(visualState?.state_type ?? '');
 	const base = STATE_LAYOUTS[stateType] ?? DEFAULT_LAYOUT;
@@ -242,6 +299,49 @@ const layoutForState = (visualState: VisualState | null): LayoutProfile => {
 		motionWindowShare: transition === 'soft_enter' ? Math.min(1, base.motionWindowShare * 1.08) : base.motionWindowShare,
 		backgroundDim: density === 'minimal' ? Math.min(0.35, base.backgroundDim + 0.04) : base.backgroundDim,
 	};
+};
+
+const layoutForShot = (base: LayoutProfile, shot: Shot | null): LayoutProfile => {
+	const shotType = String(shot?.shot_type ?? '');
+	const attention = Math.max(0.4, Math.min(Number(shot?.attention_weight ?? 0.65), 1));
+	if (shotType === 'pressure_closeup') {
+		return {
+			...base,
+			pipeEndX: base.pipeEndX - 52 * attention,
+			rowGap: base.rowGap * 0.98,
+			rowOverlap: base.rowOverlap + 3 * attention,
+			labelOffsetX: Math.max(6, base.labelOffsetX - 10 * attention),
+			flowWidthScale: base.flowWidthScale * (1 + 0.16 * attention),
+			progressPower: base.progressPower * 0.86,
+			backgroundDim: Math.min(0.28, base.backgroundDim + 0.06 * attention),
+		};
+	}
+	if (shotType === 'survivor_isolation' || shotType === 'emotional_pause') {
+		return {
+			...base,
+			sourceOpacity: base.sourceOpacity * 0.72,
+			pipeEndX: base.pipeEndX - 120 * attention,
+			labelOpacity: base.labelOpacity * 0.48,
+			flowOpacity: base.flowOpacity * 0.46,
+			ghostOpacity: base.ghostOpacity * 0.5,
+			remainderX: 960,
+			remainderY: 560,
+			remainderScale: base.remainderScale * (1 + 0.22 * attention),
+			remainderOpacityBoost: Math.max(base.remainderOpacityBoost, 0.38),
+			progressPower: base.progressPower * 1.12,
+			backgroundDim: Math.min(0.34, base.backgroundDim + 0.08 * attention),
+		};
+	}
+	if (shotType === 'wide_context') {
+		return {
+			...base,
+			rowGap: base.rowGap * 1.08,
+			pipeEndX: base.pipeEndX + 36 * attention,
+			flowOpacity: base.flowOpacity * 0.92,
+			progressPower: base.progressPower * 1.08,
+		};
+	}
+	return base;
 };
 
 const mix = (from: number, to: number, amount: number) =>
@@ -273,14 +373,91 @@ const mixedLayout = (target: LayoutProfile, amount: number): LayoutProfile => ({
 	backgroundDim: mix(DEFAULT_LAYOUT.backgroundDim, target.backgroundDim, amount),
 });
 
+const roundDebug = (value: number) => Math.round(value * 1000) / 1000;
+
+const moneyLayoutDebug = (layout: LayoutProfile) => ({
+	profile: layout.profile,
+	sourceX: roundDebug(layout.sourceX),
+	pipeEndX: roundDebug(layout.pipeEndX),
+	rowGap: roundDebug(layout.rowGap),
+	rowOverlap: roundDebug(layout.rowOverlap),
+	labelOpacity: roundDebug(layout.labelOpacity),
+	flowOpacity: roundDebug(layout.flowOpacity),
+	flowWidthScale: roundDebug(layout.flowWidthScale),
+	remainderX: roundDebug(layout.remainderX),
+	remainderY: roundDebug(layout.remainderY),
+	remainderScale: roundDebug(layout.remainderScale),
+	backgroundDim: roundDebug(layout.backgroundDim),
+	progressPower: roundDebug(layout.progressPower),
+});
+
+let lastMoneyFlowDebugKey = '';
+
+const MoneyFlowDebugOverlay: React.FC<{
+	currentFrame: number;
+	beatLabel: string;
+	shot: Shot | null;
+	visualState: VisualState | null;
+	layoutValues: ReturnType<typeof moneyLayoutDebug>;
+}> = ({currentFrame, beatLabel, shot, visualState, layoutValues}) => (
+	<div
+		style={{
+			position: 'absolute',
+			left: 24,
+			bottom: 24,
+			zIndex: 9998,
+			width: 650,
+			padding: '18px 20px',
+			borderRadius: 8,
+			background: 'rgba(2, 6, 23, 0.82)',
+			border: '1px solid rgba(255,159,28,0.55)',
+			color: 'white',
+			fontFamily: 'monospace',
+			fontSize: 21,
+			lineHeight: 1.35,
+			pointerEvents: 'none',
+		}}
+	>
+		<div>MoneyFlowDiagram debug</div>
+		<div>frame: {currentFrame}</div>
+		<div>beat: {beatLabel}</div>
+		<div>shot: {shot?.shot_type ?? 'none'}</div>
+		<div>focus: {shot?.focus_target ?? 'none'}</div>
+		<div>visual_state: {visualState?.state_type ?? 'none'}</div>
+		<div>layout: {JSON.stringify(layoutValues)}</div>
+	</div>
+);
+
 export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, scene, frameWithinBeat, durationFrames}) => {
 	const {fps} = useVideoConfig();
 	const rawData = getBeatData<Record<string, unknown>>(beat) ?? {};
 	const phase = String(beat.beat_phase ?? rawData.active_phase ?? 'drain');
 	const visualState = resolveVisualState(beat, scene);
-	const layoutTarget = layoutForState(visualState);
+	const activeShot = resolveShot(beat, scene);
+	const layoutTarget = layoutForShot(layoutForState(visualState), activeShot);
 	const layoutMix = spring({frame: Math.min(frameWithinBeat, 22), fps, config: SPRINGS.entry, durationInFrames: 22});
 	const layout = mixedLayout(layoutTarget, layoutMix);
+	const currentFrame = Math.floor(Number(beat.start_time ?? 0) * fps + frameWithinBeat);
+	const layoutDebug = moneyLayoutDebug(layout);
+	const targetLayoutDebug = moneyLayoutDebug(layoutTarget);
+	const debugKey = [
+		beat.text,
+		activeShot?.shot_type ?? 'none',
+		activeShot?.focus_target ?? 'none',
+		visualState?.state_type ?? 'none',
+		layoutTarget.profile,
+	].join('|');
+	if (debugKey !== lastMoneyFlowDebugKey) {
+		lastMoneyFlowDebugKey = debugKey;
+		console.info('[ShotDebug:MoneyFlowDiagram] metadata change', {
+			frame: currentFrame,
+			beatLabel: beat.text,
+			activeShot: activeShot ?? null,
+			visualState: visualState ?? null,
+			layoutTarget: targetLayoutDebug,
+			layoutCurrent: layoutDebug,
+		});
+	}
 	const {source, flows, remainder} = moneyFlowData(beat);
 	const total = Math.max(source.amount, 1);
 	const rawProgress = Math.min(getBeatProgress(frameWithinBeat, Math.floor(durationFrames * layout.motionWindowShare)) / 1, 1);
@@ -296,6 +473,9 @@ export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, scene, fra
 	const compositionDensity = String(visualState?.composition_density ?? 'default');
 	const framing = String(visualState?.framing ?? 'default');
 	const transitionBehavior = String(visualState?.transition_behavior ?? 'default');
+	const shotType = String(activeShot?.shot_type ?? 'default');
+	const focusTarget = String(activeShot?.focus_target ?? 'default');
+	const framingProfile = String(activeShot?.framing_profile ?? 'default');
 
 	return (
 		<AbsoluteFill
@@ -305,6 +485,9 @@ export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, scene, fra
 			data-composition-density={compositionDensity}
 			data-framing={framing}
 			data-transition-behavior={transitionBehavior}
+			data-shot-type={shotType}
+			data-focus-target={focusTarget}
+			data-framing-profile={framingProfile}
 			style={{
 				background: COLORS.bg_deep,
 				color: COLORS.text_primary,
@@ -419,6 +602,13 @@ export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, scene, fra
 					{remainder.value}
 				</div>
 			</div>
+			<MoneyFlowDebugOverlay
+				currentFrame={currentFrame}
+				beatLabel={String(beat.text ?? '')}
+				shot={activeShot}
+				visualState={visualState}
+				layoutValues={layoutDebug}
+			/>
 		</AbsoluteFill>
 	);
 };

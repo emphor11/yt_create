@@ -1,3 +1,24 @@
+export type Shot = {
+	shot_type?: string;
+	focus_target?: string;
+	framing_profile?: string;
+	composition_emphasis?: string;
+	attention_weight?: number;
+	start_frame?: number;
+	end_frame?: number;
+	composition_window?: {
+		start_frame?: number;
+		end_frame?: number;
+	};
+	derived_from_action?: string;
+	derived_from_state?: string;
+	component?: string;
+	overlap_group?: string;
+	source_beat_indices?: number[];
+	source_action_ids?: string[];
+	shot_index?: number;
+};
+
 export type Beat = {
 	component: string;
 	text: string;
@@ -10,6 +31,7 @@ export type Beat = {
 	steps?: Array<Record<string, unknown>>;
 	props?: Record<string, unknown>;
 	data?: Record<string, unknown>;
+	active_shot?: Shot;
 	source_text?: string;
 	sentence_index?: number;
 };
@@ -28,6 +50,12 @@ export type Scene = {
 	direction?: Record<string, unknown> | null;
 	theme?: Record<string, string>;
 	beats: Beat[];
+	shot_sequence?: {
+		source?: string;
+		shots?: Shot[];
+		shot_count?: number;
+		fps?: number;
+	};
 	duration?: number;
 	total_duration?: number;
 	audio_file: string;

@@ -28,6 +28,8 @@ TRACE_FIELDS = (
     "visual_action_graph",
     "visual_state_sequence",
     "visual_state",
+    "shot_sequence",
+    "active_shot",
     "pattern",
     "data",
     "beats",
