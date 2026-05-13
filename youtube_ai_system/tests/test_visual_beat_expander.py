@@ -94,6 +94,35 @@ class VisualBeatExpanderTestCase(unittest.TestCase):
         self.assertIn("spiral", phases)
         self.assertTrue(all(component != "CalculationStrip" for component in components))
 
+    def test_risk_return_mechanism_uses_risk_return_visualizer_even_from_split_plan(self) -> None:
+        section = {
+            "text": (
+                "Risk and return are connected. An FD may offer around 6% and feel calm. "
+                "Equity can offer higher long-term growth. The price is volatility. "
+                "Choose risk you can stay with."
+            ),
+            "concept_type": "risk_return",
+            "visual_plan": [
+                {
+                    "concept": {"concept": "Risk vs Return", "type": "comparison"},
+                    "visual": {"pattern": "SplitComparison", "data": {"mechanism": "risk_return"}},
+                    "beats": {
+                        "beats": [
+                            {"component": "StatCard", "text": "FD feels calm"},
+                            {"component": "SplitComparison", "text": "Risk vs Return"},
+                            {"component": "HighlightText", "text": "Choose risk deliberately"},
+                        ]
+                    },
+                }
+            ],
+        }
+
+        result = self.expander.expand_section(section)
+        beats = result["visual_plan"][0]["beats"]["beats"]
+
+        self.assertTrue(any(beat.get("component") == "RiskReturnVisualizer" for beat in beats))
+        self.assertFalse(any(beat.get("component") == "SplitComparison" for beat in beats))
+
     def test_phase_based_primary_mechanism_is_not_expanded_into_repeated_loops(self) -> None:
         flow_data = {
             "source": {"label": "Salary", "value": "₹50,000", "amount": 50000},

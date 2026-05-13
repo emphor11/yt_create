@@ -321,6 +321,8 @@ class VisualBeatExpander:
             return "InflationErosionVisualizer"
         if index == 2 and pattern in {"GrowthChart", "SIPGrowthEngine"}:
             return "GrowthChart"
+        if mechanism == "risk_return" or pattern == "RiskReturnVisualizer":
+            return "RiskReturnVisualizer"
         if index == 2 and pattern == "SplitComparison":
             return "SplitComparison"
         return self._component_for("", index, is_first, is_last, pattern, mechanism)
@@ -559,7 +561,9 @@ class VisualBeatExpander:
             return "InflationErosionVisualizer" if index in {2, 4} else "StatCard"
         if pattern in {"GrowthChart", "SIPGrowthEngine"} or mechanism in {"sip_growth", "compounding"}:
             return "GrowthChart" if index in {2, 4} else "StatCard"
-        if pattern == "SplitComparison" or mechanism in {"risk_return", "diversification", "speculation_risk"}:
+        if mechanism == "risk_return" or pattern == "RiskReturnVisualizer":
+            return "RiskReturnVisualizer"
+        if pattern == "SplitComparison" or mechanism in {"diversification", "speculation_risk"}:
             return "SplitComparison" if index == 2 else "StatCard"
         return "StatCard"
 

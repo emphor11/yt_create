@@ -92,6 +92,41 @@ class SceneBuilderTestCase(unittest.TestCase):
         self.assertEqual(scene["beats"][0]["text"], "Inflation quietly reduces")
         self.assertEqual(scene["beats"][-1]["emphasis"], "hero")
 
+    def test_risk_return_split_comparison_upgrades_to_finance_visualizer(self) -> None:
+        result = build_scenes(
+            [
+                {
+                    "kind": "body",
+                    "text": (
+                        "Risk and return are connected. An FD may offer around 6% and feel calm. "
+                        "Equity can offer higher long-term growth. The price is volatility."
+                    ),
+                    "concept_type": "risk_return",
+                    "visual_plan": [
+                        {
+                            "concept": {"concept": "Risk vs Return", "type": "comparison"},
+                            "visual": {
+                                "pattern": "SplitComparison",
+                                "data": {"left": {"label": "Risk"}, "right": {"label": "Return"}},
+                            },
+                            "beats": {
+                                "beats": [
+                                    {"component": "StatCard", "text": "6%"},
+                                    {"component": "SplitComparison", "text": "Risk vs Return"},
+                                    {"component": "HighlightText", "text": "Choose risk deliberately"},
+                                ]
+                            },
+                        }
+                    ],
+                }
+            ]
+        )
+
+        scene = result["scenes"][0]
+        self.assertEqual(scene["pattern"], "RiskReturnVisualizer")
+        self.assertEqual(scene["data"]["safe_asset"], "FD")
+        self.assertEqual(scene["data"]["growth_asset"], "Equity")
+
     def test_equal_audio_split_respects_minimum_duration(self) -> None:
         result = build_scenes(
             [

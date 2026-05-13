@@ -438,6 +438,7 @@ class SceneBuilder:
                 if not data:
                     data = self._data_from_matching_beat(item, pattern)
                 concept = str((item.get("concept") or {}).get("concept") or "").strip()
+                pattern, data, concept = self._upgrade_generic_finance_pattern(pattern, data, concept, section)
                 score = PATTERN_PRIORITY.get(pattern, 0)
                 if pattern and data and concept and score > best_score:
                     best_pattern = pattern
@@ -453,9 +454,51 @@ class SceneBuilder:
             inferred = self._infer_contract_from_visual_plan(visual_plan)
             if inferred is not None:
                 pattern, data, concept = inferred
+                pattern, data, concept = self._upgrade_generic_finance_pattern(pattern, data, concept, section)
                 return pattern, self._enrich_data_with_section(pattern, data, section), concept
         fallback_text = self._fallback_text(str(section.get("text") or ""))
         return "ConceptCard", {"title": fallback_text.upper()}, fallback_text
+
+    def _upgrade_generic_finance_pattern(
+        self,
+        pattern: str,
+        data: dict[str, Any],
+        concept: str,
+        section: dict[str, Any],
+    ) -> tuple[str, dict[str, Any], str]:
+        mechanism = str(
+            data.get("mechanism")
+            or section.get("concept_type")
+            or ((section.get("visual_scene") or {}).get("mechanism") if isinstance(section.get("visual_scene"), dict) else "")
+            or ""
+        ).strip().lower()
+        combined = " ".join(
+            str(value or "")
+            for value in [
+                concept,
+                section.get("text"),
+                section.get("narration"),
+                section.get("visual_instruction"),
+                section.get("visual_intent"),
+            ]
+        ).lower()
+        if pattern in {"SplitComparison", "SplitComparisonScene"} and (
+            mechanism == "risk_return"
+            or "risk vs return" in combined
+            or ("risk" in combined and "return" in combined and any(token in combined for token in ("fd", "equity", "volatility", "upside")))
+        ):
+            upgraded = dict(data)
+            upgraded.setdefault("safe_asset", "FD")
+            upgraded.setdefault("growth_asset", "Equity")
+            upgraded.setdefault("safe_rate", self._first_percent(combined) or "6%")
+            upgraded.setdefault("growth_rate", "12%")
+            upgraded.setdefault("mechanism", "risk_return")
+            return "RiskReturnVisualizer", upgraded, concept or "Risk vs Return"
+        return pattern, data, concept
+
+    def _first_percent(self, text: str) -> str:
+        match = re.search(r"\d+(?:\.\d+)?\s*%", text)
+        return match.group(0).replace(" ", "") if match else ""
 
     def _infer_contract_from_visual_plan(self, visual_plan: list[dict[str, Any]]) -> tuple[str, dict[str, Any], str] | None:
         best: tuple[str, dict[str, Any], str] | None = None
@@ -561,6 +604,12 @@ class SceneBuilder:
                 enriched["right"] = {"label": end_value}
             if rate and not enriched.get("rate"):
                 enriched["rate"] = rate
+        elif pattern == "RiskReturnVisualizer":
+            if rate and not enriched.get("safe_rate"):
+                enriched["safe_rate"] = rate
+            enriched.setdefault("safe_asset", "FD")
+            enriched.setdefault("growth_asset", "Equity")
+            enriched.setdefault("growth_rate", "12%")
         elif pattern == "StepFlow":
             steps = [str(step).strip() for step in enriched.get("steps") or [] if str(step).strip()]
             if not enriched.get("steps"):
