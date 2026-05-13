@@ -150,6 +150,34 @@ const portfolio = {
 	],
 };
 
+const riskReturn = {
+	safe_asset: 'FD',
+	growth_asset: 'Equity',
+	safe_rate: '6%',
+	growth_rate: '12%',
+	punch: 'Risk buys upside only when you can stay invested',
+};
+
+const emergencyFund = {
+	buffer_months: 6,
+	buffer_label: '6-month buffer',
+	buffer_value: '₹1,50,000',
+	shock_label: 'Medical bill',
+	debt_label: 'Credit card debt',
+	punch: 'The buffer buys breathing room before debt begins',
+};
+
+const outroRecap = {
+	title: 'Build the system before the next salary arrives',
+	actions: [
+		{id: 'track', label: 'Track the leak', shortLabel: 'TRACK', keywords: ['track', 'spending', 'expenses'], color: '#4361EE'},
+		{id: 'protect', label: 'Protect the buffer', shortLabel: 'PROTECT', keywords: ['protect', 'buffer', 'emergency'], color: '#2EC4B6'},
+		{id: 'reduce_debt', label: 'Cut fixed pressure', shortLabel: 'CUT DEBT', keywords: ['debt', 'emi', 'loan'], color: '#FF9F1C'},
+		{id: 'invest', label: 'Invest consistently', shortLabel: 'INVEST', keywords: ['invest', 'sip', 'compound'], color: '#2EC4B6'},
+		{id: 'start', label: 'Start this month', shortLabel: 'START', keywords: ['start', 'this month'], color: '#FF9F1C'},
+	],
+};
+
 export const visualEventFixtureScenes: Scene[] = [
 	scene('fixture_money_flow', 'MoneyFlowDiagram', [
 		timedBeat('MoneyFlowDiagram', '₹50,000 salary lands', 0, 3, 'intro', 'salary_arrives', 'salary_income', moneyFlow, 'wide_context'),
@@ -205,4 +233,22 @@ export const visualEventFixtureScenes: Scene[] = [
 		timedBeat('PortfolioDiversificationVisualizer', 'One asset falls', 6, 9, 'impact', 'asset_falls', 'falling_asset', portfolio, 'pressure_closeup'),
 		timedBeat('PortfolioDiversificationVisualizer', 'The portfolio absorbs impact', 9, 12, 'impact', 'impact_absorbed', 'portfolio_mix', portfolio, 'survivor_isolation'),
 	], 'One stock decides everything. Equity gets one allocation. Debt gets another. FD, gold, and cash spread the risk. When one asset falls, the portfolio absorbs the impact.'),
+	scene('fixture_risk_return', 'RiskReturnVisualizer', [
+		timedBeat('RiskReturnVisualizer', 'FD feels calm', 0, 3, 'fd_anchor', 'safe_asset_anchors', 'fd_asset', riskReturn, 'wide_context'),
+		timedBeat('RiskReturnVisualizer', 'Equity can grow faster', 3, 6, 'equity_growth', 'growth_asset_rises', 'equity_asset', riskReturn, 'upward_momentum'),
+		timedBeat('RiskReturnVisualizer', 'Volatility is the price', 6, 9, 'volatility_price', 'risk_arrives', 'volatility', riskReturn, 'pressure_closeup'),
+		timedBeat('RiskReturnVisualizer', 'Choose risk you can stay with', 9, 12, 'chosen_risk', 'risk_choice_revealed', 'decision', riskReturn, 'survivor_isolation'),
+	], 'An FD gives 6% and feels calm. Equity offers higher long-term growth. Volatility is the price of that upside. Choose the risk you can stay with.'),
+	scene('fixture_emergency_fund', 'EmergencyFundVisualizer', [
+		timedBeat('EmergencyFundVisualizer', 'Cash buffer waits', 0, 3, 'boring_buffer', 'buffer_waits', 'cash_buffer', emergencyFund, 'wide_context'),
+		timedBeat('EmergencyFundVisualizer', 'Medical bill hits', 3, 6, 'shock_focus', 'shock_hits', 'medical_bill', emergencyFund, 'pressure_closeup'),
+		timedBeat('EmergencyFundVisualizer', 'Buffer blocks debt', 6, 9, 'debt_prevention', 'debt_blocked', 'credit_card_debt', emergencyFund, 'pressure_closeup'),
+		timedBeat('EmergencyFundVisualizer', 'The plan survives', 9, 12, 'plan_survives', 'plan_survives', 'breathing_room', emergencyFund, 'survivor_isolation'),
+	], 'An emergency fund looks boring. Then a medical bill hits the month. The cash buffer blocks credit card debt. The plan survives.'),
+	scene('fixture_outro', 'OutroRecapVisualizer', [
+		timedBeat('OutroRecapVisualizer', 'Track the leak', 0, 3, 'track', 'track_leaks', 'spending', outroRecap, 'wide_context'),
+		timedBeat('OutroRecapVisualizer', 'Protect the buffer and cut fixed pressure', 3, 6, 'protect', 'protect_buffer', 'buffer', outroRecap, 'comparison_focus'),
+		timedBeat('OutroRecapVisualizer', 'Invest consistently', 6, 9, 'invest', 'invest_consistently', 'sip', outroRecap, 'upward_momentum'),
+		timedBeat('OutroRecapVisualizer', 'Start this month', 9, 12, 'start', 'start_now', 'action', outroRecap, 'reward_hero'),
+	], 'Track your spending leaks. Protect an emergency buffer. Cut fixed EMI pressure. Invest consistently with a SIP. Start this month before the next salary disappears.'),
 ];

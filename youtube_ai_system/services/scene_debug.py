@@ -64,6 +64,9 @@ RENDERER_COMPONENTS = {
     "FOMOPriceCrashVisualizer",
     "PortfolioDiversificationVisualizer",
     "SmallLeaksAccumulator",
+    "RiskReturnVisualizer",
+    "EmergencyFundVisualizer",
+    "OutroRecapVisualizer",
     "CinematicScene",
 }
 
@@ -76,7 +79,8 @@ MECHANISM_COMPONENTS = {
     "inflation_erosion": {"InflationErosionVisualizer"},
     "sip_growth": {"SIPGrowthEngine", "GrowthChart"},
     "compounding": {"SIPGrowthEngine", "GrowthChart"},
-    "risk_return": {"SplitComparison", "RiskCard"},
+    "risk_return": {"RiskReturnVisualizer", "SplitComparison", "RiskCard"},
+    "emergency_fund": {"EmergencyFundVisualizer", "FlowDiagram"},
     "diversification": {"PortfolioDiversificationVisualizer"},
     "speculation_risk": {"FOMOPriceCrashVisualizer"},
     "fomo_risk": {"FOMOPriceCrashVisualizer"},
@@ -94,6 +98,8 @@ REQUIRED_BEAT_DATA = {
     "FOMOPriceCrashVisualizer": ("points",),
     "PortfolioDiversificationVisualizer": ("assets",),
     "SmallLeaksAccumulator": ("leaks", "monthly_loss"),
+    "RiskReturnVisualizer": ("safe_asset", "growth_asset"),
+    "EmergencyFundVisualizer": ("buffer_label", "shock_label"),
     "CalculationStrip": ("steps",),
     "SplitComparison": ("left", "right"),
 }

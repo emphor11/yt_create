@@ -261,7 +261,9 @@ class VisualDirector:
             return self._with_cinematic_intent(self._lifestyle_creep_plan(director_input, concept_type), director_input)
         if concept_type in {"expense_leakage", "subscription_leak"}:
             return self._with_cinematic_intent(self._small_leaks_plan(director_input, concept_type), director_input)
-        if concept_type in {"budgeting", "savings_rate", "emergency_fund", "rent_burden", "tax_drain"}:
+        if concept_type == "emergency_fund":
+            return self._with_cinematic_intent(self._emergency_fund_plan(director_input, concept_type), director_input)
+        if concept_type in {"budgeting", "savings_rate", "rent_burden", "tax_drain"}:
             return self._with_cinematic_intent(self._money_mechanism_plan(director_input, concept_type), director_input)
         if concept_type == "debt_trap":
             return self._with_cinematic_intent(self._debt_trap_plan(director_input, concept_type), director_input)
@@ -281,7 +283,9 @@ class VisualDirector:
             return self._with_cinematic_intent(self._speculation_risk_plan(director_input, concept_type), director_input)
         if concept_type == "diversification":
             return self._with_cinematic_intent(self._diversification_plan(director_input, concept_type), director_input)
-        if concept_type in {"opportunity_cost", "comparison_timeline", "risk_return", "tax_saving"}:
+        if concept_type == "risk_return":
+            return self._with_cinematic_intent(self._risk_return_plan(director_input, concept_type), director_input)
+        if concept_type in {"opportunity_cost", "comparison_timeline", "tax_saving"}:
             return self._with_cinematic_intent(self._comparison_mechanism_plan(director_input, concept_type), director_input)
         return self._with_cinematic_intent(self._generic_plan(director_input, concept_type), director_input)
 
@@ -339,6 +343,9 @@ class VisualDirector:
             "FOMOPriceCrashVisualizer",
             "PortfolioDiversificationVisualizer",
             "SmallLeaksAccumulator",
+            "RiskReturnVisualizer",
+            "EmergencyFundVisualizer",
+            "OutroRecapVisualizer",
         }
         for index, beat in enumerate(beats):
             data = dict(beat.data or {})
@@ -820,6 +827,106 @@ class VisualDirector:
                 ],
                 director_input.narration_text,
             ),
+        )
+
+    def _risk_return_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
+        data = self._risk_return_data(director_input)
+        direction = SceneDirection("confusion", "clarity", director_input.section_position, "neutral")
+        beats = self._contextualize_beats(
+            [
+                DirectedBeat(
+                    "RiskReturnVisualizer",
+                    "FD feels calm",
+                    "normal",
+                    "low risk baseline",
+                    data={**data, "active_phase": "fd_anchor"},
+                    beat_phase="fd_anchor",
+                ),
+                DirectedBeat(
+                    "RiskReturnVisualizer",
+                    "Equity can grow faster",
+                    "subtle",
+                    "upside",
+                    data={**data, "active_phase": "equity_growth"},
+                    beat_phase="equity_growth",
+                ),
+                DirectedBeat(
+                    "RiskReturnVisualizer",
+                    "Volatility is the price",
+                    "subtle",
+                    "risk",
+                    data={**data, "active_phase": "volatility_price"},
+                    beat_phase="volatility_price",
+                ),
+                DirectedBeat(
+                    "RiskReturnVisualizer",
+                    "Choose risk you can stay with",
+                    "hero",
+                    "decision",
+                    data={**data, "active_phase": "chosen_risk"},
+                    beat_phase="chosen_risk",
+                ),
+            ],
+            director_input.narration_text,
+        )
+        return DirectedPlan(
+            concept_type=concept_type,
+            concept_name="Risk vs Return",
+            pattern="RiskReturnVisualizer",
+            data=data,
+            beats=beats,
+            direction=direction,
+            theme=THEME,
+        )
+
+    def _emergency_fund_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
+        data = self._emergency_fund_data(director_input)
+        direction = SceneDirection("fragile", "relief", director_input.section_position, "positive")
+        beats = self._contextualize_beats(
+            [
+                DirectedBeat(
+                    "EmergencyFundVisualizer",
+                    "Cash buffer waits",
+                    "normal",
+                    "boring protection",
+                    data={**data, "active_phase": "boring_buffer"},
+                    beat_phase="boring_buffer",
+                ),
+                DirectedBeat(
+                    "EmergencyFundVisualizer",
+                    "Life shock hits",
+                    "subtle",
+                    "unexpected bill",
+                    data={**data, "active_phase": "shock_focus"},
+                    beat_phase="shock_focus",
+                ),
+                DirectedBeat(
+                    "EmergencyFundVisualizer",
+                    "Buffer blocks debt",
+                    "subtle",
+                    "no credit card spiral",
+                    data={**data, "active_phase": "debt_prevention"},
+                    beat_phase="debt_prevention",
+                ),
+                DirectedBeat(
+                    "EmergencyFundVisualizer",
+                    "The plan survives",
+                    "hero",
+                    "breathing room",
+                    data={**data, "active_phase": "plan_survives"},
+                    beat_phase="plan_survives",
+                ),
+            ],
+            director_input.narration_text,
+        )
+        return DirectedPlan(
+            concept_type=concept_type,
+            concept_name="Emergency Fund",
+            pattern="EmergencyFundVisualizer",
+            data=data,
+            beats=beats,
+            direction=direction,
+            theme=THEME,
         )
 
     def _recap_system_plan(self, director_input: VisualDirectorInput) -> DirectedPlan:
@@ -1325,8 +1432,15 @@ class VisualDirector:
         if not emis:
             return None
         total_emi = sum(float(item["amount"]) for item in emis)
+        explicit_salary = self._explicit_salary_amount(director_input.narration_text)
+        if explicit_salary is not None:
+            salary_amount = explicit_salary
+        elif salary_amount <= total_emi * 1.05:
+            salary_amount = max(50000.0, round(total_emi * 2.6 / 1000.0) * 1000.0)
         remaining_entity = self._semantic_entity(director_input, "remaining_balance")
         remaining = self._semantic_money_amount(remaining_entity)
+        if remaining is None:
+            remaining = self._explicit_remaining_amount(director_input.narration_text)
         if remaining is None:
             remaining = max(salary_amount - total_emi, 0.0)
         return {
@@ -1751,8 +1865,11 @@ class VisualDirector:
         text = director_input.narration_text
         amounts = self._money_mentions(text)
         salary_amount = self._parse_rupee(director_input.start_value) or 50000.0
+        explicit_salary = self._explicit_salary_amount(text)
+        if explicit_salary is not None:
+            salary_amount = explicit_salary
         for item in amounts:
-            if str(item.get("label") or "").lower() in {"salary", "income"}:
+            if explicit_salary is None and str(item.get("label") or "").lower() in {"salary", "income"}:
                 salary_amount = float(item["amount"])
                 break
         emi_amounts = [
@@ -1769,7 +1886,11 @@ class VisualDirector:
             for index, amount in enumerate(emi_amounts[:5])
         ]
         total_emi = sum(float(item["amount"]) for item in emis)
-        remaining = max(salary_amount - total_emi, 0.0)
+        if explicit_salary is None and salary_amount <= total_emi * 1.05:
+            salary_amount = max(50000.0, round(total_emi * 2.6 / 1000.0) * 1000.0)
+        remaining = self._explicit_remaining_amount(text)
+        if remaining is None:
+            remaining = max(salary_amount - total_emi, 0.0)
         if "nothing" in text.lower() or "trapped" in text.lower():
             remaining = min(remaining, salary_amount * 0.12)
         return {
@@ -1973,6 +2094,68 @@ class VisualDirector:
                 return {"left": {"label": "Spend today", "value": self._format_rupee(amount)}, "right": {"label": "Invest monthly", "value": self._format_rupee(amount)}, "punch": "Small choice compounds", "accent": "orange"}
             return {"left": {"label": "Spend today", "value": "instant"}, "right": {"label": "Invest instead", "value": "future"}, "punch": "Small choice compounds", "accent": "orange"}
         return {"left": {"label": "Path A", "value": "today"}, "right": {"label": "Path B", "value": "future"}, "punch": "Choose the better path", "accent": "teal"}
+
+    def _risk_return_data(self, director_input: VisualDirectorInput) -> dict[str, Any]:
+        text = director_input.narration_text
+        rates = [float(match.group(1)) for match in re.finditer(r"(\d+(?:\.\d+)?)\s*%", text)]
+        fd_rate = next((rate for rate in rates if rate <= 9), 6.0)
+        equity_rate = next((rate for rate in rates if rate > 9), 12.0)
+        return {
+            "safe_asset": "FD",
+            "growth_asset": "Equity",
+            "safe_rate": f"{fd_rate:g}%",
+            "growth_rate": f"{equity_rate:g}%",
+            "punch": "Risk buys upside only when you can stay invested",
+        }
+
+    def _emergency_fund_data(self, director_input: VisualDirectorInput) -> dict[str, Any]:
+        text = director_input.narration_text
+        months_match = re.search(r"(\d+)\s*(?:-|to\s*)?(?:month|months)", text, re.IGNORECASE)
+        buffer_months = int(months_match.group(1)) if months_match else 6
+        amount = self._semantic_first_money_amount(director_input) or self._parse_rupee(director_input.start_value)
+        shock = "Unexpected bill"
+        lowered = text.lower()
+        if "medical" in lowered or "hospital" in lowered:
+            shock = "Medical bill"
+        elif "job" in lowered or "layoff" in lowered or "income delay" in lowered:
+            shock = "Income delay"
+        elif "repair" in lowered or "car" in lowered:
+            shock = "Repair bill"
+        return {
+            "buffer_months": buffer_months,
+            "buffer_label": f"{buffer_months}-month buffer",
+            "buffer_value": self._format_rupee(amount) if amount else f"{buffer_months} months",
+            "shock_label": shock,
+            "debt_label": "Credit card debt",
+            "punch": "The buffer buys breathing room before debt begins",
+        }
+
+    def _explicit_salary_amount(self, text: str) -> float | None:
+        patterns = (
+            r"(?:salary|income|paycheck|pay)\D{0,18}(?:₹\s*|Rs\.?\s*)?(\d[\d,]*(?:\.\d+)?)",
+            r"(?:₹\s*|Rs\.?\s*)?(\d[\d,]*(?:\.\d+)?)\D{0,18}(?:salary|income|paycheck|pay)",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                amount = float(match.group(1).replace(",", ""))
+                if amount < 1000 and "lakh" in self._window(text, match.start(), match.end(), 16).lower():
+                    amount *= 100000
+                return amount
+        return None
+
+    def _explicit_remaining_amount(self, text: str) -> float | None:
+        match = re.search(
+            r"(?:left|leftover|remaining|cash\s+left|survive\s+on|only)\D{0,18}(?:₹\s*|Rs\.?\s*)?(\d[\d,]*(?:\.\d+)?)",
+            text,
+            re.IGNORECASE,
+        )
+        if not match:
+            return None
+        amount = float(match.group(1).replace(",", ""))
+        if amount < 1000 and "lakh" in self._window(text, match.start(), match.end(), 16).lower():
+            amount *= 100000
+        return amount
 
     def _money_mentions(self, text: str) -> list[dict[str, Any]]:
         pattern = re.compile(r"(?:₹\s*|Rs\.?\s*)?(\d[\d,]*(?:\.\d+)?)\s*(lakh|lakhs|crore|crores|k)?", re.IGNORECASE)

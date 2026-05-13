@@ -298,9 +298,9 @@ class VisualDirectorTestCase(unittest.TestCase):
             ("Lifestyle inflation is a silent killer. As salary increases, expenses rise on luxuries, not necessities.", "lifestyle_inflation", "LifestyleCreepVisualizer"),
             ("Inflation quietly erodes your purchasing power over 10 years.", "inflation_erosion", "InflationErosionVisualizer"),
             ("Expense leakage from subscriptions and food apps eats your salary.", "expense_leakage", "SmallLeaksAccumulator"),
-            ("Emergency fund protects you when a medical bill hits.", "emergency_fund", "FlowDiagram"),
+            ("Emergency fund protects you when a medical bill hits.", "emergency_fund", "EmergencyFundVisualizer"),
             ("Diversification spreads your investments across asset classes.", "diversification", "PortfolioDiversificationVisualizer"),
-            ("Risk and return move together in investing.", "risk_return", "SplitComparison"),
+            ("Risk and return move together in investing.", "risk_return", "RiskReturnVisualizer"),
             ("Tax saving under 80C can reduce your tax bill.", "tax_saving", "SplitComparison"),
             ("FOMO investing is not investing. It is speculation. Do not put your life savings into something you don't understand.", "definition", "FOMOPriceCrashVisualizer"),
         ]

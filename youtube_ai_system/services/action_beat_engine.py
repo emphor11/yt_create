@@ -16,6 +16,9 @@ class ActionBeatEngine:
         "FOMOPriceCrashVisualizer",
         "PortfolioDiversificationVisualizer",
         "SmallLeaksAccumulator",
+        "RiskReturnVisualizer",
+        "EmergencyFundVisualizer",
+        "OutroRecapVisualizer",
     }
 
     ACTION_PHASES = {
@@ -39,6 +42,18 @@ class ActionBeatEngine:
         "value_anchor": "today",
         "inflation_erodes": "erosion",
         "time_exposes_loss": "future",
+        "safe_asset_anchors": "fd_anchor",
+        "growth_asset_rises": "equity_growth",
+        "risk_arrives": "volatility_price",
+        "risk_choice_revealed": "chosen_risk",
+        "buffer_waits": "boring_buffer",
+        "shock_hits": "shock_focus",
+        "debt_blocked": "debt_prevention",
+        "plan_survives": "plan_survives",
+        "track_leaks": "track",
+        "protect_buffer": "protect",
+        "invest_consistently": "invest",
+        "start_now": "start",
     }
 
     ACTION_TEXT = {
@@ -53,6 +68,18 @@ class ActionBeatEngine:
         "debt_appears": "debt balance",
         "interest_rate_attaches": "interest pressure",
         "interest_accumulates": "interest grows",
+        "safe_asset_anchors": "safe return",
+        "growth_asset_rises": "upside appears",
+        "risk_arrives": "volatility arrives",
+        "risk_choice_revealed": "choose your risk",
+        "buffer_waits": "cash buffer",
+        "shock_hits": "shock hits",
+        "debt_blocked": "debt blocked",
+        "plan_survives": "plan survives",
+        "track_leaks": "track leaks",
+        "protect_buffer": "protect buffer",
+        "invest_consistently": "invest consistently",
+        "start_now": "start now",
         "minimum_payment_fails": "payment falls short",
         "emi_stacks": "EMI stacks",
         "income_baseline": "old income",

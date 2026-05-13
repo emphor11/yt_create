@@ -184,13 +184,39 @@ const momentPresence = (progress: number, moment: EMIFocalMoment) => {
 	return enter * exit;
 };
 
-const getEmiData = (beat: BeatComponentProps['beat']) => {
+const parseMoneyAmount = (text: string) => {
+	const match = text.match(/(?:₹\s*|rs\.?\s*)?(\d[\d,]*(?:\.\d+)?)/i);
+	if (!match) {
+		return null;
+	}
+	const amount = Number(match[1].replace(/,/g, ''));
+	return Number.isFinite(amount) ? amount : null;
+};
+
+const explicitSalaryAmount = (text: string) => {
+	const patterns = [
+		/(?:salary|income|paycheck|pay)\D{0,18}(?:₹\s*|rs\.?\s*)?(\d[\d,]*(?:\.\d+)?)/i,
+		/(?:₹\s*|rs\.?\s*)?(\d[\d,]*(?:\.\d+)?)\D{0,18}(?:salary|income|paycheck|pay)/i,
+	];
+	for (const pattern of patterns) {
+		const match = text.match(pattern);
+		if (match) {
+			const amount = Number(match[1].replace(/,/g, ''));
+			if (Number.isFinite(amount)) {
+				return amount;
+			}
+		}
+	}
+	return null;
+};
+
+const getEmiData = (beat: BeatComponentProps['beat'], narration = '') => {
 	const data = getBeatData<Record<string, unknown>>(beat) ?? {};
 	const salary = data.salary as {value?: string; amount?: number} | undefined;
 	const totalEmi = data.total_emi as {value?: string; amount?: number} | undefined;
 	const remaining = data.remaining as {value?: string; amount?: number; is_critical?: boolean} | undefined;
 	const rawEmis = Array.isArray(data.emis) ? (data.emis as EMIItem[]) : [];
-	const salaryAmount = Number(salary?.amount ?? 50000);
+	let salaryAmount = Number(salary?.amount ?? 50000);
 	const emis = (rawEmis.length ? rawEmis : [
 		{label: 'Phone EMI', amount: 4000},
 		{label: 'Bike EMI', amount: 6500},
@@ -202,15 +228,28 @@ const getEmiData = (beat: BeatComponentProps['beat']) => {
 		keywords: keywordsForEmi(String(item.label ?? `EMI ${index + 1}`)),
 	}));
 	const totalAmount = Number(totalEmi?.amount ?? emis.reduce((sum, item) => sum + item.amount, 0));
+	const explicitSalary = explicitSalaryAmount(narration);
+	const salaryLooksLikeEmiTotal = salaryAmount <= totalAmount * 1.05 && !explicitSalary;
+	if (salaryLooksLikeEmiTotal) {
+		salaryAmount = Math.max(50000, Math.round(totalAmount * 2.6 / 1000) * 1000);
+	} else if (explicitSalary) {
+		salaryAmount = explicitSalary;
+	}
+	const explicitRemaining = remaining?.amount ?? (
+		/(?:left|remaining|cash\s+left|leftover)\D{0,18}(?:₹\s*|rs\.?\s*)?\d/i.test(narration)
+			? parseMoneyAmount(narration.slice(Math.max(0, narration.toLowerCase().search(/left|remaining|cash\s+left|leftover/i))))
+			: null
+	);
 	const remainingAmount = Number(remaining?.amount ?? Math.max(salaryAmount - totalAmount, 0));
+	const resolvedRemainingAmount = explicitRemaining !== null && explicitRemaining !== undefined ? Number(explicitRemaining) : remainingAmount;
 	return {
-		salary: {value: salary?.value ?? formatIndianRupee(salaryAmount), amount: salaryAmount},
+		salary: {value: formatIndianRupee(salaryAmount), amount: salaryAmount},
 		emis,
 		total_emi: {value: totalEmi?.value ?? formatIndianRupee(totalAmount), amount: totalAmount},
 		remaining: {
-			value: remaining?.value ?? formatIndianRupee(remainingAmount),
-			amount: remainingAmount,
-			is_critical: Boolean(remaining?.is_critical ?? remainingAmount / Math.max(salaryAmount, 1) < 0.12),
+			value: formatIndianRupee(resolvedRemainingAmount),
+			amount: resolvedRemainingAmount,
+			is_critical: Boolean(remaining?.is_critical ?? resolvedRemainingAmount / Math.max(salaryAmount, 1) < 0.12),
 		},
 	};
 };
@@ -223,7 +262,7 @@ export const EMIStackVisualizer: React.FC<BeatComponentProps> = ({beat, scene, f
 	const narration = sceneNarrationText(scene);
 	const currentSceneSeconds = Number(beat.start_time ?? 0) + frameWithinBeat / fps;
 	const sceneProgress = clamp(currentSceneSeconds / sceneDurationSeconds(scene, beat), 0, 1);
-	const {salary, emis, total_emi, remaining} = getEmiData(beat);
+	const {salary, emis, total_emi, remaining} = getEmiData(beat, narration);
 	const reveal = spring({frame: Math.min(frameWithinBeat, 18), fps, config: SPRINGS.entry, durationInFrames: 18});
 	const rawProgress = getBeatProgress(frameWithinBeat, Math.floor(durationFrames * 0.82));
 	const stackProgress = event.kind === 'first_emi_comfort' ? 0.28 : event.kind === 'critical_leftover' || event.kind === 'salary_squeeze' ? 1 : rawProgress;

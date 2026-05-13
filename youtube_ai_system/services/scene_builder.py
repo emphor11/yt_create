@@ -37,6 +37,9 @@ COMPONENT_DURATION_WEIGHTS = {
     "FOMOPriceCrashVisualizer": 2.4,
     "PortfolioDiversificationVisualizer": 2.4,
     "SmallLeaksAccumulator": 2.3,
+    "RiskReturnVisualizer": 2.4,
+    "EmergencyFundVisualizer": 2.4,
+    "OutroRecapVisualizer": 2.2,
     "StepFlow": 1.4,
     "StepFlowScene": 1.4,
     "MoneyFlowDiagram": 1.8,
@@ -53,6 +56,9 @@ PATTERN_PRIORITY = {
     "FOMOPriceCrashVisualizer": 7,
     "PortfolioDiversificationVisualizer": 7,
     "SmallLeaksAccumulator": 7,
+    "RiskReturnVisualizer": 7,
+    "EmergencyFundVisualizer": 7,
+    "OutroRecapVisualizer": 7,
     "GrowthChart": 6,
     "SplitComparison": 6,
     "FlowDiagram": 6,
@@ -72,6 +78,8 @@ REQUIRED_BEAT_DATA = {
     "FOMOPriceCrashVisualizer": ("points",),
     "PortfolioDiversificationVisualizer": ("assets",),
     "SmallLeaksAccumulator": ("leaks", "monthly_loss"),
+    "RiskReturnVisualizer": ("safe_asset", "growth_asset"),
+    "EmergencyFundVisualizer": ("buffer_label", "shock_label"),
     "CalculationStrip": ("steps",),
     "SplitComparison": ("left", "right"),
 }
@@ -85,6 +93,9 @@ DOMINANT_COMPONENTS = {
     "FOMOPriceCrashVisualizer",
     "PortfolioDiversificationVisualizer",
     "SmallLeaksAccumulator",
+    "RiskReturnVisualizer",
+    "EmergencyFundVisualizer",
+    "OutroRecapVisualizer",
     "GrowthChart",
     "FlowDiagram",
     "SplitComparison",
@@ -471,6 +482,10 @@ class SceneBuilder:
         if component == "GrowthChart":
             return "GrowthChart", {"end": concept, "curve": "up"}, concept
         values = [str(beat.get("text") or "").strip() for beat in beats if str(beat.get("text") or "").strip()]
+        if component in {"RiskReturnVisualizer", "EmergencyFundVisualizer", "OutroRecapVisualizer"}:
+            data = self._data_from_matching_beat(item, component)
+            if data:
+                return component, data, concept
         if component == "CalculationStrip":
             flat_steps: list[Any] = []
             for beat in beats:
@@ -817,6 +832,9 @@ class SceneBuilder:
             "FOMOPriceCrashVisualizer",
             "PortfolioDiversificationVisualizer",
             "SmallLeaksAccumulator",
+            "RiskReturnVisualizer",
+            "EmergencyFundVisualizer",
+            "OutroRecapVisualizer",
             "CalculationStrip",
             "GrowthChart",
             "FlowDiagram",
@@ -923,6 +941,9 @@ class SceneBuilder:
             "FOMOPriceCrashVisualizer",
             "PortfolioDiversificationVisualizer",
             "SmallLeaksAccumulator",
+            "RiskReturnVisualizer",
+            "EmergencyFundVisualizer",
+            "OutroRecapVisualizer",
         } else 0.4
         return round(max(float(audio_duration or 0), 0.0) + tail, 2)
 

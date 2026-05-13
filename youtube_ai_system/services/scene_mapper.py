@@ -23,6 +23,9 @@ SCENE_COMPONENT_BY_PATTERN = {
     "FOMOPriceCrashVisualizer": "FOMOPriceCrashVisualizer",
     "PortfolioDiversificationVisualizer": "PortfolioDiversificationVisualizer",
     "SmallLeaksAccumulator": "SmallLeaksAccumulator",
+    "RiskReturnVisualizer": "RiskReturnVisualizer",
+    "EmergencyFundVisualizer": "EmergencyFundVisualizer",
+    "OutroRecapVisualizer": "OutroRecapVisualizer",
 }
 
 

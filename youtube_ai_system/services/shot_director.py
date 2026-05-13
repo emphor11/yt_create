@@ -99,6 +99,9 @@ class ShotDirector:
         "FOMOPriceCrashVisualizer": "pressure_closeup",
         "PortfolioDiversificationVisualizer": "comparison_focus",
         "SmallLeaksAccumulator": "pressure_closeup",
+        "RiskReturnVisualizer": "comparison_focus",
+        "EmergencyFundVisualizer": "pressure_closeup",
+        "OutroRecapVisualizer": "reward_hero",
         "CinematicScene": "emotional_pause",
     }
 

@@ -23,6 +23,9 @@ class VisualBeatExpander:
         "FOMOPriceCrashVisualizer",
         "PortfolioDiversificationVisualizer",
         "SmallLeaksAccumulator",
+        "RiskReturnVisualizer",
+        "EmergencyFundVisualizer",
+        "OutroRecapVisualizer",
     }
 
     MECHANISM_PHASES = {
@@ -35,6 +38,9 @@ class VisualBeatExpander:
         "FOMOPriceCrashVisualizer": ("rise", "crash", "crash", "crash", "loss", "loss", "loss"),
         "PortfolioDiversificationVisualizer": ("concentrated", "spread", "spread", "spread", "impact", "impact", "impact"),
         "SmallLeaksAccumulator": ("first_leak", "repeat", "repeat", "repeat", "month_end", "month_end", "month_end"),
+        "RiskReturnVisualizer": ("fd_anchor", "equity_growth", "volatility_price", "volatility_price", "chosen_risk", "chosen_risk", "chosen_risk"),
+        "EmergencyFundVisualizer": ("boring_buffer", "shock_focus", "shock_focus", "debt_prevention", "plan_survives", "plan_survives", "plan_survives"),
+        "OutroRecapVisualizer": ("track", "protect", "reduce_debt", "invest", "start", "start", "start"),
     }
 
     OBJECT_TO_VIEWER_TEXT = {
@@ -259,6 +265,9 @@ class VisualBeatExpander:
                 "FOMOPriceCrashVisualizer",
                 "PortfolioDiversificationVisualizer",
                 "SmallLeaksAccumulator",
+                "RiskReturnVisualizer",
+                "EmergencyFundVisualizer",
+                "OutroRecapVisualizer",
             } and data:
                 beat["props"] = data
             beats.append(beat)
@@ -316,6 +325,12 @@ class VisualBeatExpander:
             return "Risk gets spread"
         if pattern == "SmallLeaksAccumulator":
             return "Small leaks add up"
+        if pattern == "RiskReturnVisualizer":
+            return "Risk and return separate"
+        if pattern == "EmergencyFundVisualizer":
+            return "The buffer absorbs the shock"
+        if pattern == "OutroRecapVisualizer":
+            return "The system comes together"
         if pattern in {"GrowthChart", "InflationErosionVisualizer"}:
             return "Value path changes"
         if pattern == "SplitComparison":
@@ -400,6 +415,9 @@ class VisualBeatExpander:
                 "FOMOPriceCrashVisualizer",
                 "PortfolioDiversificationVisualizer",
                 "SmallLeaksAccumulator",
+                "RiskReturnVisualizer",
+                "EmergencyFundVisualizer",
+                "OutroRecapVisualizer",
             } and data:
                 beat["data"] = data
                 beat["props"] = data
@@ -437,6 +455,12 @@ class VisualBeatExpander:
             required_components.append("PortfolioDiversificationVisualizer")
         if pattern == "SmallLeaksAccumulator" or mechanism in {"expense_leakage", "subscription_leak"}:
             required_components.append("SmallLeaksAccumulator")
+        if pattern == "RiskReturnVisualizer" or mechanism == "risk_return":
+            required_components.append("RiskReturnVisualizer")
+        if pattern == "EmergencyFundVisualizer" or mechanism == "emergency_fund":
+            required_components.append("EmergencyFundVisualizer")
+        if pattern == "OutroRecapVisualizer" or mechanism == "outro":
+            required_components.append("OutroRecapVisualizer")
 
         result = list(expanded)
         for component in required_components:
@@ -472,6 +496,9 @@ class VisualBeatExpander:
             "FOMOPriceCrashVisualizer": ("points",),
             "PortfolioDiversificationVisualizer": ("assets",),
             "SmallLeaksAccumulator": ("leaks", "monthly_loss"),
+            "RiskReturnVisualizer": ("safe_asset", "growth_asset"),
+            "EmergencyFundVisualizer": ("buffer_label", "shock_label"),
+            "OutroRecapVisualizer": ("actions",),
         }.get(component, ("steps", "balances", "flows", "monthly_sip"))
         if isinstance(data, dict) and any(key in data for key in expected_keys):
             return True
