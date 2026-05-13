@@ -141,8 +141,8 @@
         {% for check in youtube_readiness.checks %}
           <div class="d-flex justify-content-between gap-3 py-2 border-bottom">
             <span>{{ check.label }}</span>
-            <span class="status-pill {% if check.passed %}status-live{% else %}status-muted{% endif %}">
-              {{ "OK" if check.passed else "Missing" }}
+            <span class="status-pill {% if check.passed %}status-live{% elif check.warning %}status-warning{% else %}status-muted{% endif %}">
+              {{ "OK" if check.passed else (check.action if check.action else "Missing") }}
             </span>
           </div>
         {% endfor %}

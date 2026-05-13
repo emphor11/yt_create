@@ -46,18 +46,25 @@ class YouTubeUploadService:
             },
             {
                 "key": "token",
-                "label": "YouTube OAuth token already authorized",
+                "label": "YouTube channel authorized",
                 "passed": bool(token_path) and token_path.exists(),
+                "warning": not (bool(token_path) and token_path.exists()),
+                "action": "Authorize on first upload",
             },
         ]
-        return {"passed": all(check["passed"] for check in checks), "checks": checks}
+        hard_checks = [check for check in checks if check["key"] != "token"]
+        return {"passed": all(check["passed"] for check in hard_checks), "checks": checks}
 
     def upload_private(self, project_id: int) -> str:
         project = self.repo.get_project(project_id)
         package = FinalProductionService(self.repo).build_upload_package(project_id)
         readiness = self.readiness(project_id)
         if not readiness["passed"]:
-            missing = ", ".join(check["label"] for check in readiness["checks"] if not check["passed"])
+            missing = ", ".join(
+                check["label"]
+                for check in readiness["checks"]
+                if not check["passed"] and check["key"] != "token"
+            )
             raise RuntimeError(f"YouTube upload is not ready yet: {missing}.")
 
         youtube = self._authorized_client()
