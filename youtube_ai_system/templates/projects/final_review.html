@@ -146,9 +146,15 @@
             </span>
           </div>
         {% endfor %}
-        <form class="mt-3" method="post" action="{{ url_for('publish.youtube_upload', project_id=project.id) }}">
-          <button class="btn btn-success w-100">Upload Private Video</button>
-        </form>
+        {% if project.youtube_video_id %}
+          <div class="alert alert-success mt-3 mb-0">
+            Uploaded as YouTube video <strong>{{ project.youtube_video_id }}</strong>.
+          </div>
+        {% else %}
+          <form class="mt-3" method="post" action="{{ url_for('publish.youtube_upload', project_id=project.id) }}">
+            <button class="btn btn-success w-100">Upload Private Video</button>
+          </form>
+        {% endif %}
         <form class="mt-2" method="post" action="{{ url_for('publish.stage_publish', project_id=project.id) }}">
           <button class="btn btn-outline-light w-100">Prepare Publish Record</button>
         </form>

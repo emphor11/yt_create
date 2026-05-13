@@ -2,12 +2,14 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from youtube_ai_system import create_app
 from youtube_ai_system.db import close_db
 from youtube_ai_system.models.repository import ProjectRepository
 from youtube_ai_system.services.final_production_service import FinalProductionService
 from youtube_ai_system.services.thumbnail_service import ThumbnailService
+from youtube_ai_system.services.youtube_upload_service import YouTubeUploadService
 
 
 class FinalProductionServiceTestCase(unittest.TestCase):
@@ -81,6 +83,59 @@ class FinalProductionServiceTestCase(unittest.TestCase):
         self.assertEqual(package["selected_title"], "Where Does Your Salary Go?")
         self.assertTrue(package["publish_checklist"]["checks"][0]["passed"])
         self.assertTrue(FinalProductionService(self.repo).package_path(project_id).exists())
+
+    def test_youtube_upload_records_video_when_thumbnail_permission_fails(self) -> None:
+        project_id = self.repo.create_project("Upload Test")
+        video_path = Path(self.app.config["STORAGE_ROOT"]) / "video" / str(project_id) / "final_video.mp4"
+        thumb_path = Path(self.app.config["STORAGE_ROOT"]) / "images" / str(project_id) / "thumb.jpg"
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        thumb_path.parent.mkdir(parents=True, exist_ok=True)
+        video_path.write_bytes(b"video")
+        thumb_path.write_bytes(b"thumbnail")
+        self.repo.update_project(
+            project_id,
+            state="ready_to_publish",
+            final_video_path=str(video_path),
+            selected_thumbnail_path=str(thumb_path),
+            selected_title="Upload Test",
+            selected_description="Upload description",
+        )
+
+        service = YouTubeUploadService()
+        with patch.object(service, "_authorized_client", return_value=_FakeYouTubeClient()):
+            video_id = service.upload_private(project_id)
+
+        project = self.repo.get_project(project_id)
+        self.assertEqual(video_id, "video-123")
+        self.assertEqual(project["youtube_video_id"], "video-123")
+        self.assertIn("custom thumbnail", service.last_thumbnail_warning)
+
+class _FakeInsertRequest:
+    def next_chunk(self):
+        return None, {"id": "video-123"}
+
+
+class _FakeThumbnailRequest:
+    def execute(self):
+        raise RuntimeError("thumbnail forbidden")
+
+
+class _FakeVideos:
+    def insert(self, **kwargs):
+        return _FakeInsertRequest()
+
+
+class _FakeThumbnails:
+    def set(self, **kwargs):
+        return _FakeThumbnailRequest()
+
+
+class _FakeYouTubeClient:
+    def videos(self):
+        return _FakeVideos()
+
+    def thumbnails(self):
+        return _FakeThumbnails()
 
 
 if __name__ == "__main__":

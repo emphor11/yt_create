@@ -136,9 +136,16 @@ def youtube_upload(project_id: int):
     if project["state"] not in {"ready_to_publish", "scheduled"}:
         flash("Mark the master ready before attempting a YouTube upload.", "warning")
         return redirect(url_for("publish.final_review", project_id=project_id))
+    if project.get("youtube_video_id"):
+        flash(f"This project is already uploaded as YouTube video {project['youtube_video_id']}.", "info")
+        return redirect(url_for("publish.final_review", project_id=project_id))
     try:
-        video_id = YouTubeUploadService().upload_private(project_id)
-        flash(f"Uploaded to YouTube as a private video: {video_id}", "success")
+        upload_service = YouTubeUploadService()
+        video_id = upload_service.upload_private(project_id)
+        if upload_service.last_thumbnail_warning:
+            flash(f"Uploaded to YouTube as a private video: {video_id}. {upload_service.last_thumbnail_warning}", "warning")
+        else:
+            flash(f"Uploaded to YouTube as a private video: {video_id}", "success")
     except Exception as exc:
         flash(str(exc), "danger")
     return redirect(url_for("publish.final_review", project_id=project_id))

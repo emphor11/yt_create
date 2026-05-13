@@ -15,6 +15,7 @@ class YouTubeUploadService:
 
     def __init__(self) -> None:
         self.repo = ProjectRepository()
+        self.last_thumbnail_warning = ""
 
     def readiness(self, project_id: int) -> dict[str, Any]:
         project = self.repo.get_project(project_id)
@@ -90,13 +91,20 @@ class YouTubeUploadService:
         while response is None:
             _, response = request.next_chunk()
         video_id = response["id"]
+        PublishService().mark_uploaded(project_id, video_id)
         thumbnail_path = project.get("selected_thumbnail_path")
         if thumbnail_path and Path(thumbnail_path).exists():
-            youtube.thumbnails().set(
-                videoId=video_id,
-                media_body=MediaFileUpload(thumbnail_path),
-            ).execute()
-        PublishService().mark_uploaded(project_id, video_id)
+            try:
+                youtube.thumbnails().set(
+                    videoId=video_id,
+                    media_body=MediaFileUpload(thumbnail_path),
+                ).execute()
+            except Exception as exc:
+                self.last_thumbnail_warning = (
+                    "Video uploaded, but YouTube rejected the custom thumbnail. "
+                    "Enable custom thumbnails on the channel or set it manually in YouTube Studio."
+                )
+                current_app.logger.warning("%s Original error: %s", self.last_thumbnail_warning, exc)
         return video_id
 
     def _authorized_client(self):
