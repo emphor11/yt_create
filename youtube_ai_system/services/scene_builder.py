@@ -40,6 +40,7 @@ COMPONENT_DURATION_WEIGHTS = {
     "RiskReturnVisualizer": 2.4,
     "EmergencyFundVisualizer": 2.4,
     "OutroRecapVisualizer": 2.2,
+    "UniversalMechanismRenderer": 2.3,
     "StepFlow": 1.4,
     "StepFlowScene": 1.4,
     "MoneyFlowDiagram": 1.8,
@@ -59,6 +60,7 @@ PATTERN_PRIORITY = {
     "RiskReturnVisualizer": 7,
     "EmergencyFundVisualizer": 7,
     "OutroRecapVisualizer": 7,
+    "UniversalMechanismRenderer": 6,
     "GrowthChart": 6,
     "SplitComparison": 6,
     "FlowDiagram": 6,
@@ -80,6 +82,7 @@ REQUIRED_BEAT_DATA = {
     "SmallLeaksAccumulator": ("leaks", "monthly_loss"),
     "RiskReturnVisualizer": ("safe_asset", "growth_asset"),
     "EmergencyFundVisualizer": ("buffer_label", "shock_label"),
+    "UniversalMechanismRenderer": ("cinematic_events",),
     "CalculationStrip": ("steps",),
     "SplitComparison": ("left", "right"),
 }
@@ -96,6 +99,7 @@ DOMINANT_COMPONENTS = {
     "RiskReturnVisualizer",
     "EmergencyFundVisualizer",
     "OutroRecapVisualizer",
+    "UniversalMechanismRenderer",
     "GrowthChart",
     "FlowDiagram",
     "SplitComparison",
@@ -219,6 +223,7 @@ class SceneBuilder:
                     "cinematic_intent": section.get("cinematic_intent") or self._visual_field(section, "cinematic_intent") or {},
                     "visual_story": section.get("visual_story") or {},
                     "story_state": section.get("story_state") or {},
+                    "cinematic_events": section.get("cinematic_events") or [],
                     "visual_state_sequence": visual_state_sequence or {},
                     "shot_sequence": shot_sequence or {},
                     "theme": section.get("theme") or {},
@@ -441,6 +446,8 @@ class SceneBuilder:
                     best_score = score
 
             if best_pattern:
+                if best_pattern in TEXT_COMPONENTS | {"NumericComparison"} and best_data.get("cinematic_events"):
+                    return "UniversalMechanismRenderer", self._enrich_data_with_section("UniversalMechanismRenderer", best_data, section), best_concept
                 return best_pattern, self._enrich_data_with_section(best_pattern, best_data, section), best_concept
 
             inferred = self._infer_contract_from_visual_plan(visual_plan)

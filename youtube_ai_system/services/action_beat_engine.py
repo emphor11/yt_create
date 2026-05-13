@@ -19,6 +19,7 @@ class ActionBeatEngine:
         "RiskReturnVisualizer",
         "EmergencyFundVisualizer",
         "OutroRecapVisualizer",
+        "UniversalMechanismRenderer",
     }
 
     ACTION_PHASES = {

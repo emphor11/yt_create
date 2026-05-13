@@ -4,6 +4,8 @@ import {BODY_FONT_FAMILY, DISPLAY_FONT_FAMILY, FONT_FACES} from '../fonts';
 import {BeatComponentProps} from './types';
 import {COLORS, getBeatData, getBeatProgress} from './visualUtils';
 import {currentSceneProgress, firstKeywordIndex, narrationSentences, sceneNarrationText} from './narrationTiming';
+import {activeCinematicEvent, eventPresence} from './cinematicEvents';
+import {CinematicEvent} from '../types';
 
 type EmergencyMode = 'boring_buffer' | 'shock_focus' | 'debt_prevention' | 'plan_survives';
 
@@ -62,6 +64,39 @@ const resolveMode = (progress: number, narration: string, fallback: EmergencyMod
 	return previous[previous.length - 1]?.mode ?? fallback;
 };
 
+const modeFromCinematicEvent = (event: CinematicEvent | null, fallback: EmergencyMode): EmergencyMode => {
+	const mode = String(event?.visual_mode ?? '');
+	const verb = String(event?.visual_verb ?? '');
+	if (/shock|impact/.test(mode) || verb === 'impact') {
+		return 'shock_focus';
+	}
+	if (/debt|spiral|expense/.test(mode)) {
+		return 'debt_prevention';
+	}
+	if (/protect|buffer|protection/.test(mode)) {
+		return 'boring_buffer';
+	}
+	if (/survivor|hero|reveal/.test(mode)) {
+		return 'plan_survives';
+	}
+	return fallback;
+};
+
+const shockCopy = (event: CinematicEvent | null, fallback: string) => {
+	const label = String(event?.label || fallback || 'Unexpected bill');
+	const variant = String(event?.variant ?? '');
+	if (/income_gap/.test(variant)) {
+		return {hero: 'INCOME GAP', label, sub: 'the buffer buys time'};
+	}
+	if (/repair_hit/.test(variant)) {
+		return {hero: 'REPAIR HIT', label, sub: 'life creates the bill first'};
+	}
+	if (/debt|card/.test(variant)) {
+		return {hero: 'BORROWING BLOCKED', label, sub: 'one problem does not become two'};
+	}
+	return {hero: 'SHOCK', label, sub: 'life does not wait for payday'};
+};
+
 const Ring: React.FC<{size: number; color: string; opacity: number; top: number; left: number}> = ({size, color, opacity, top, left}) => (
 	<div
 		style={{
@@ -83,12 +118,15 @@ export const EmergencyFundVisualizer: React.FC<BeatComponentProps> = ({beat, sce
 	const narration = sceneNarrationText(scene);
 	const sceneProgress = scene ? currentSceneProgress(scene, beat, frameWithinBeat, fps) : getBeatProgress(frameWithinBeat, durationFrames);
 	const fallback = String(beat.beat_phase ?? data.active_phase ?? 'boring_buffer') as EmergencyMode;
-	const mode = resolveMode(sceneProgress, narration, fallback);
+	const cinematicEvent = activeCinematicEvent(scene, beat, frameWithinBeat, fps);
+	const cinematicPresence = eventPresence(sceneProgress, cinematicEvent);
+	const mode = modeFromCinematicEvent(cinematicEvent, resolveMode(sceneProgress, narration, fallback));
 	const enter = spring({frame: frameWithinBeat, fps, config: {damping: 20, stiffness: 132, mass: 0.9}});
 	const wave = interpolate(Math.sin(frameWithinBeat / 8), [-1, 1], [0.88, 1.08]);
 	const bufferLabel = String(data.buffer_label ?? '6-month buffer');
 	const bufferValue = String(data.buffer_value ?? '6 months');
 	const shockLabel = String(data.shock_label ?? 'Unexpected bill');
+	const shock = shockCopy(cinematicEvent, shockLabel);
 
 	return (
 		<AbsoluteFill style={{background: COLORS.bg_deep, overflow: 'hidden', color: COLORS.text_primary, fontFamily: BODY_FONT_FAMILY}}>
@@ -118,9 +156,9 @@ export const EmergencyFundVisualizer: React.FC<BeatComponentProps> = ({beat, sce
 					<Ring size={520 * wave} color={COLORS.red} opacity={0.26} top={80} left={280} />
 					<Ring size={720 * wave} color={COLORS.red} opacity={0.12} top={-10} left={180} />
 					<div style={{position: 'absolute', left: 310, top: 205, transform: `translateY(${(1 - enter) * 30}px)`}}>
-						<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 132, lineHeight: 0.88, color: COLORS.red}}>SHOCK</div>
-						<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 76, lineHeight: 0.95}}>{shockLabel.toUpperCase()}</div>
-						<div style={{marginTop: 28, fontSize: 34, color: COLORS.muted}}>life does not wait for payday</div>
+						<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: shock.hero.length > 12 ? 104 : 132, lineHeight: 0.88, color: COLORS.red}}>{shock.hero}</div>
+						<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 76, lineHeight: 0.95}}>{shock.label.toUpperCase()}</div>
+						<div style={{marginTop: 28, fontSize: 34, color: COLORS.muted}}>{shock.sub}</div>
 					</div>
 				</div>
 			)}
@@ -132,18 +170,18 @@ export const EmergencyFundVisualizer: React.FC<BeatComponentProps> = ({beat, sce
 					</div>
 					<div style={{position: 'absolute', left: 500, top: 76, width: 108, height: 420, borderRadius: 32, background: COLORS.teal, boxShadow: `0 0 60px ${COLORS.teal}66`, transform: `scaleY(${0.88 + enter * 0.12})`}} />
 					<div style={{position: 'absolute', left: 672, top: 130, width: 430}}>
-						<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 86, lineHeight: 0.92}}>BUFFER BLOCKS BORROWING</div>
-						<div style={{marginTop: 28, fontSize: 32, color: COLORS.muted}}>the emergency is paid without starting a second problem</div>
+						<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 86, lineHeight: 0.92}}>{/minimum_due|card/.test(String(cinematicEvent?.variant ?? '')) ? 'CARD BILL STAYS CLOSED' : 'BUFFER BLOCKS BORROWING'}</div>
+						<div style={{marginTop: 28, fontSize: 32, color: COLORS.muted}}>{String(cinematicEvent?.text || 'the emergency is paid without starting a second problem').slice(0, 92)}</div>
 					</div>
 				</div>
 			)}
 			{mode === 'plan_survives' && (
 				<div style={{position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', textAlign: 'center'}}>
 					<div>
-						<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 118, lineHeight: 0.9, color: COLORS.text_primary}}>THE PLAN</div>
-						<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 132, lineHeight: 0.88, color: COLORS.teal}}>SURVIVES</div>
-						<div style={{marginTop: 34, fontSize: 36, color: COLORS.muted}}>breathing room is the real product</div>
-						<div style={{margin: '46px auto 0', width: 360, height: 360, borderRadius: '50%', border: `18px solid ${COLORS.teal}`, boxShadow: `0 0 64px ${COLORS.teal}44`, transform: `scale(${0.86 + enter * 0.14})`}} />
+						<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 118, lineHeight: 0.9, color: COLORS.text_primary}}>{/last_chip|tiny/.test(String(cinematicEvent?.variant ?? '')) ? 'WHAT IS' : 'THE PLAN'}</div>
+						<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 132, lineHeight: 0.88, color: COLORS.teal}}>{/last_chip|tiny/.test(String(cinematicEvent?.variant ?? '')) ? 'LEFT' : 'SURVIVES'}</div>
+						<div style={{marginTop: 34, fontSize: 36, color: COLORS.muted}}>{String(cinematicEvent?.label || 'breathing room is the real product')}</div>
+						<div style={{margin: '46px auto 0', width: 360, height: 360, borderRadius: '50%', border: `18px solid ${COLORS.teal}`, boxShadow: `0 0 ${64 + cinematicPresence * 70}px ${COLORS.teal}44`, transform: `scale(${0.86 + enter * 0.14 + cinematicPresence * 0.04})`}} />
 					</div>
 				</div>
 			)}

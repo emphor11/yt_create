@@ -36,6 +36,27 @@ export type Beat = {
 	sentence_index?: number;
 };
 
+export type CinematicEvent = {
+	id?: string;
+	sentence_index?: number;
+	text?: string;
+	entity_id?: string;
+	label?: string;
+	role?: string;
+	action?: string;
+	visual_verb?: string;
+	visual_mode?: string;
+	variant?: string;
+	start_progress?: number;
+	end_progress?: number;
+	gravity?: {
+		x?: number;
+		y?: number;
+	};
+	attention_weight?: number;
+	decay_after?: number;
+};
+
 export type Scene = {
 	id?: string;
 	scene_id?: string;
@@ -47,6 +68,7 @@ export type Scene = {
 	cinematic_intent?: Record<string, unknown>;
 	visual_story?: Record<string, unknown>;
 	story_state?: Record<string, unknown>;
+	cinematic_events?: CinematicEvent[];
 	pattern: string;
 	data?: Record<string, unknown>;
 	direction?: Record<string, unknown> | null;

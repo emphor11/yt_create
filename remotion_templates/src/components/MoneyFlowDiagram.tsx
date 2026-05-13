@@ -5,6 +5,8 @@ import {BeatComponentProps} from './types';
 import {COLORS, SPACING, SPRINGS, TYPE_SCALE, formatIndianRupee, getBeatData, getBeatProgress} from './visualUtils';
 import {ResolvedVisualEvent, resolveVisualEvent} from './visualEvents';
 import {TimedSentence, currentSceneProgress, firstKeywordIndex, narrationSentences, sceneNarrationText} from './narrationTiming';
+import {activeCinematicEvent, eventPresence} from './cinematicEvents';
+import {CinematicEvent} from '../types';
 
 type Flow = {
 	label: string;
@@ -519,6 +521,36 @@ const moneyFlowMomentPresence = (progress: number, moment: MoneyFlowMoment) => {
 	return enter * exit;
 };
 
+const momentFromCinematicEvent = (event: CinematicEvent | null, progress: number, flows: Flow[]): MoneyFlowMoment | null => {
+	if (!event) {
+		return null;
+	}
+	const start = Number(event.start_progress ?? 0);
+	const end = Number(event.end_progress ?? 0);
+	if (progress < start || progress > end) {
+		return null;
+	}
+	const mode = String(event.visual_mode ?? '');
+	const label = String(event.label ?? event.entity_id ?? '').toLowerCase();
+	const flowIndex = flows.findIndex((flow) => {
+		const flowLabel = flow.label.toLowerCase();
+		return flowLabel.includes(label) || label.includes(flowLabel) || flowLabel.split(/[^a-z0-9]+/).some((part) => part.length > 2 && label.includes(part));
+	});
+	if (/survivor|left|remainder/.test(mode)) {
+		return {startProgress: start, endProgress: end, visualMode: 'survivor_isolation'};
+	}
+	if (/salary|arrival/.test(mode)) {
+		return {startProgress: start, endProgress: end, visualMode: 'salary_anchor'};
+	}
+	if (/pressure|stack/.test(mode)) {
+		return {startProgress: start, endProgress: end, visualMode: 'compression_world'};
+	}
+	if (/expense|debt|drain/.test(mode) || flowIndex >= 0) {
+		return {flowIndex: Math.max(0, flowIndex), startProgress: start, endProgress: end, visualMode: 'expense_focus'};
+	}
+	return null;
+};
+
 export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, scene, frameWithinBeat, durationFrames}) => {
 	const {fps} = useVideoConfig();
 	const rawData = getBeatData<Record<string, unknown>>(beat) ?? {};
@@ -529,7 +561,9 @@ export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, scene, fra
 	const {source, flows, remainder} = moneyFlowData(beat);
 	const narration = sceneNarrationText(scene);
 	const sceneProgress = currentSceneProgress(scene, beat, frameWithinBeat, fps);
-	const semanticMoment = buildMoneyFlowSequence(narration, flows)
+	const cinematicEvent = activeCinematicEvent(scene, beat, frameWithinBeat, fps);
+	const cinematicMoment = eventPresence(sceneProgress, cinematicEvent) > 0 ? momentFromCinematicEvent(cinematicEvent, sceneProgress, flows) : null;
+	const semanticMoment = cinematicMoment ?? buildMoneyFlowSequence(narration, flows)
 		.filter((moment) => sceneProgress >= moment.startProgress && sceneProgress <= moment.endProgress)
 		.sort((a, b) => b.startProgress - a.startProgress)[0];
 	const semanticPresence = semanticMoment ? moneyFlowMomentPresence(sceneProgress, semanticMoment) : 0;

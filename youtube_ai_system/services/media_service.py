@@ -17,6 +17,7 @@ from PIL import Image, ImageDraw, ImageFont
 import requests
 
 from ..models.repository import ProjectRepository
+from .cinematic_event_compiler import CinematicEventCompiler
 from .concept_service import ConceptService
 from .remotion_service import RemotionService
 from .render_spec_service import RenderSpec
@@ -84,6 +85,7 @@ class MediaService:
         self.remotion = RemotionService()
         self.concepts = ConceptService()
         self.story_pipeline = StoryPipeline(logger=self.logger)
+        self.cinematic_event_compiler = CinematicEventCompiler()
 
     # -----------------------------------------------------------------------
     # Public entry points
@@ -295,9 +297,12 @@ class MediaService:
             "has_causation": bool(intelligence.get("has_causation")),
             "visual_scene": stored_visual_scene or intelligence.get("visual_scene") or {},
         }
+        section = self.cinematic_event_compiler.attach_to_section(section, duration_seconds=float(audio_duration))
         if debug_trace:
             debug_trace.snapshot("story_pipeline_section_for_render", section, owner="media_service")
             debug_trace.ownership("visual_plan", "media_service", visual_plan, "fresh intelligence visual plan preferred over stored plan")
+            if section.get("cinematic_events"):
+                debug_trace.ownership("cinematic_events", "cinematic_event_compiler", section.get("cinematic_events"), "audio-duration-aware narration event timeline")
         return section
 
 

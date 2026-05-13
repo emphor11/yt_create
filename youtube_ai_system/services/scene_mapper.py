@@ -26,6 +26,7 @@ SCENE_COMPONENT_BY_PATTERN = {
     "RiskReturnVisualizer": "RiskReturnVisualizer",
     "EmergencyFundVisualizer": "EmergencyFundVisualizer",
     "OutroRecapVisualizer": "OutroRecapVisualizer",
+    "UniversalMechanismRenderer": "UniversalMechanismRenderer",
 }
 
 

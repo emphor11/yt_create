@@ -68,6 +68,7 @@ RENDERER_COMPONENTS = {
     "EmergencyFundVisualizer",
     "OutroRecapVisualizer",
     "CinematicScene",
+    "UniversalMechanismRenderer",
 }
 
 MECHANISM_COMPONENTS = {
@@ -100,6 +101,7 @@ REQUIRED_BEAT_DATA = {
     "SmallLeaksAccumulator": ("leaks", "monthly_loss"),
     "RiskReturnVisualizer": ("safe_asset", "growth_asset"),
     "EmergencyFundVisualizer": ("buffer_label", "shock_label"),
+    "UniversalMechanismRenderer": ("cinematic_events",),
     "CalculationStrip": ("steps",),
     "SplitComparison": ("left", "right"),
 }

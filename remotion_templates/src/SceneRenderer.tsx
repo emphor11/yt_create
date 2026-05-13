@@ -29,6 +29,7 @@ import {SplitComparison} from './components/SplitComparison';
 import {StatCard} from './components/StatCard';
 import {StepFlow} from './components/StepFlow';
 import {StoryWorldOverlay} from './components/StoryWorldOverlay';
+import {UniversalMechanismRenderer} from './components/UniversalMechanismRenderer';
 import {Beat, Scene, Shot} from './types';
 import {timeToFrame} from './utils/timing';
 
@@ -62,6 +63,7 @@ export const COMPONENT_MAP = {
 	EmergencyFundVisualizer,
 	OutroRecapVisualizer,
 	CinematicScene,
+	UniversalMechanismRenderer,
 } as const;
 
 type Props = {
@@ -220,6 +222,7 @@ const DATA_HEAVY_COMPONENTS = new Set([
 	'RiskReturnVisualizer',
 	'EmergencyFundVisualizer',
 	'OutroRecapVisualizer',
+	'UniversalMechanismRenderer',
 	'FlowDiagram',
 	'FlowBar',
 	'SplitComparison',

@@ -64,6 +64,7 @@ class ProfessionalSceneAcceptanceService:
         "RiskReturnVisualizer",
         "EmergencyFundVisualizer",
         "OutroRecapVisualizer",
+        "UniversalMechanismRenderer",
     }
     WEAK_BODY_COMPONENTS = {
         "ConceptCard",
@@ -171,6 +172,7 @@ class ProfessionalSceneAcceptanceService:
         component = self._primary_component(scene)
         duration = float(scene.get("audio_duration_sec") or 0)
         moments = self._perceptual_moments(scene)
+        cinematic_events = self._cinematic_events(scene)
 
         if not narration:
             blockers.append(SceneAcceptanceIssue(order, "blocker", "missing_narration", "Scene has no narration text."))
@@ -269,6 +271,38 @@ class ProfessionalSceneAcceptanceService:
                 )
             )
 
+        if duration >= 30 and len(cinematic_events) < max(4, round(duration / 12)):
+            warnings.append(
+                SceneAcceptanceIssue(
+                    order,
+                    "warning",
+                    "low_cinematic_event_density",
+                    "Scene has too few narration-aligned cinematic events for its duration.",
+                )
+            )
+
+        repeated_mode = self._repeated_cinematic_mode(cinematic_events)
+        if repeated_mode:
+            warnings.append(
+                SceneAcceptanceIssue(
+                    order,
+                    "warning",
+                    "repeated_cinematic_event_mode",
+                    f"Scene repeats the same visual mode too long: {repeated_mode}.",
+                )
+            )
+
+        long_hold = self._long_event_hold(cinematic_events, duration)
+        if long_hold:
+            warnings.append(
+                SceneAcceptanceIssue(
+                    order,
+                    "warning",
+                    "long_cinematic_event_hold",
+                    f"One semantic visual event appears to hold for about {long_hold:.1f}s.",
+                )
+            )
+
         return blockers, warnings
 
     def _score(self, scenes: list[dict[str, Any]], blockers: list[SceneAcceptanceIssue], warnings: list[SceneAcceptanceIssue]) -> int:
@@ -315,6 +349,12 @@ class ProfessionalSceneAcceptanceService:
     def _perceptual_moments(self, scene: dict[str, Any]) -> int:
         phases: set[str] = set()
         components: set[str] = set()
+        event_modes: set[str] = set()
+        for event in self._cinematic_events(scene):
+            mode = str(event.get("visual_mode") or "").strip()
+            variant = str(event.get("variant") or "").strip()
+            if mode:
+                event_modes.add(f"{mode}:{variant}" if variant else mode)
         for item in self._visual_plan(scene):
             visual = item.get("visual") if isinstance(item, dict) else {}
             pattern = str((visual or {}).get("pattern") or "").strip()
@@ -331,7 +371,53 @@ class ProfessionalSceneAcceptanceService:
                 phase = str(beat.get("beat_phase") or data.get("active_phase") or "").strip()
                 if phase:
                     phases.add(phase)
-        return max(len(phases), len(components))
+        return max(len(phases), len(components), len(event_modes))
+
+    def _cinematic_events(self, scene: dict[str, Any]) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        for item in self._visual_plan(scene):
+            visual = item.get("visual") if isinstance(item, dict) else {}
+            data = visual.get("data") if isinstance(visual, dict) and isinstance(visual.get("data"), dict) else {}
+            visual_events = data.get("cinematic_events") if isinstance(data, dict) else None
+            if isinstance(visual_events, list):
+                events.extend(event for event in visual_events if isinstance(event, dict))
+            beats = ((item.get("beats") or {}).get("beats") or []) if isinstance(item, dict) else []
+            for beat in beats:
+                if not isinstance(beat, dict):
+                    continue
+                beat_data = beat.get("data") if isinstance(beat.get("data"), dict) else {}
+                beat_events = beat_data.get("cinematic_events") if isinstance(beat_data, dict) else None
+                if isinstance(beat_events, list):
+                    events.extend(event for event in beat_events if isinstance(event, dict))
+        unique: dict[str, dict[str, Any]] = {}
+        for index, event in enumerate(events):
+            unique[str(event.get("id") or index)] = event
+        return sorted(unique.values(), key=lambda event: float(event.get("start_progress") or 0))
+
+    def _repeated_cinematic_mode(self, events: list[dict[str, Any]]) -> str:
+        previous = ""
+        run = 0
+        for event in events:
+            mode = str(event.get("visual_mode") or "").strip()
+            if not mode:
+                continue
+            run = run + 1 if mode == previous else 1
+            if run >= 3:
+                return mode
+            previous = mode
+        return ""
+
+    def _long_event_hold(self, events: list[dict[str, Any]], duration: float) -> float:
+        if duration <= 0:
+            return 0.0
+        longest = 0.0
+        for event in events:
+            try:
+                span = float(event.get("end_progress") or 0) - float(event.get("start_progress") or 0)
+            except (TypeError, ValueError):
+                span = 0
+            longest = max(longest, span * duration)
+        return longest if longest > 11 else 0.0
 
     def _internal_language_match(self, narration: str) -> str:
         for pattern in self.INTERNAL_LANGUAGE_PATTERNS:

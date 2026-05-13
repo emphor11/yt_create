@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from .action_beat_engine import ActionBeatEngine
+from .cinematic_event_compiler import CinematicEventCompiler
 from .scene_debug import SceneDebugTrace
 
 
@@ -12,6 +13,7 @@ class VisualBeatExpander:
 
     def __init__(self, action_beat_engine: ActionBeatEngine | None = None) -> None:
         self.action_beat_engine = action_beat_engine or ActionBeatEngine()
+        self.cinematic_event_compiler = CinematicEventCompiler()
 
     PRIMARY_MECHANISM_COMPONENTS = {
         "MoneyFlowDiagram",
@@ -26,6 +28,7 @@ class VisualBeatExpander:
         "RiskReturnVisualizer",
         "EmergencyFundVisualizer",
         "OutroRecapVisualizer",
+        "UniversalMechanismRenderer",
     }
 
     MECHANISM_PHASES = {
@@ -41,6 +44,7 @@ class VisualBeatExpander:
         "RiskReturnVisualizer": ("fd_anchor", "equity_growth", "volatility_price", "volatility_price", "chosen_risk", "chosen_risk", "chosen_risk"),
         "EmergencyFundVisualizer": ("boring_buffer", "shock_focus", "shock_focus", "debt_prevention", "plan_survives", "plan_survives", "plan_survives"),
         "OutroRecapVisualizer": ("track", "protect", "reduce_debt", "invest", "start", "start", "start"),
+        "UniversalMechanismRenderer": ("focus", "shift", "pressure", "reveal", "choice", "consequence", "takeaway"),
     }
 
     OBJECT_TO_VIEWER_TEXT = {
@@ -59,13 +63,13 @@ class VisualBeatExpander:
         if not visual_plan:
             if debug_trace:
                 debug_trace.snapshot("beat_expansion_post", section, owner="visual_beat_expander", note="no visual plan")
-            return section
+            return self._attach_cinematic_events(section, debug_trace=debug_trace)
 
         item = visual_plan[0]
         beats = list(((item.get("beats") or {}).get("beats") or []))
         action_beats = self.action_beat_engine.beats_from_section(section, item, beats)
         if action_beats and len(action_beats) > len(beats):
-            return self._updated_section_with_expanded_beats(
+            return self._attach_cinematic_events(self._updated_section_with_expanded_beats(
                 section=section,
                 visual_plan=visual_plan,
                 item=item,
@@ -74,7 +78,7 @@ class VisualBeatExpander:
                 strategy="visual_action_graph",
                 confidence=0.86,
                 debug_trace=debug_trace,
-            )
+            ), debug_trace=debug_trace)
         text = str(section.get("text") or "")
         sentences = self._sentences(text)
         target = self._target_beat_count(text, sentences)
@@ -82,7 +86,7 @@ class VisualBeatExpander:
             if debug_trace:
                 debug_trace.snapshot("beat_expansion_post", section, owner="visual_beat_expander", note="unchanged; enough beats")
                 debug_trace.determinism("beat_expansion", {"section": section, "target": target}, section)
-            return section
+            return self._attach_cinematic_events(section, debug_trace=debug_trace)
 
         visual = item.get("visual") or {}
         pattern = str(visual.get("pattern") or "").strip()
@@ -90,7 +94,7 @@ class VisualBeatExpander:
             if debug_trace:
                 debug_trace.snapshot("beat_expansion_post", section, owner="visual_beat_expander", note="unchanged; primary phase plan")
                 debug_trace.determinism("beat_expansion", {"section": section, "target": target}, section)
-            return section
+            return self._attach_cinematic_events(section, debug_trace=debug_trace)
         concept = item.get("concept") or {}
         mechanism = str(section.get("concept_type") or (concept.get("type") if isinstance(concept, dict) else "") or "").strip()
         data = visual.get("data") if isinstance(visual.get("data"), dict) else {}
@@ -121,9 +125,9 @@ class VisualBeatExpander:
             if debug_trace:
                 debug_trace.snapshot("beat_expansion_post", section, owner="visual_beat_expander", note="unchanged; expansion not longer")
                 debug_trace.determinism("beat_expansion", {"section": section, "target": target}, section)
-            return section
+            return self._attach_cinematic_events(section, debug_trace=debug_trace)
 
-        return self._updated_section_with_expanded_beats(
+        return self._attach_cinematic_events(self._updated_section_with_expanded_beats(
             section=section,
             visual_plan=visual_plan,
             item=item,
@@ -133,7 +137,36 @@ class VisualBeatExpander:
             confidence=0.8 if strategy == "story_state" else 0.68,
             debug_trace=debug_trace,
             target=target,
-        )
+        ), debug_trace=debug_trace)
+
+    def _attach_cinematic_events(self, section: dict[str, Any], debug_trace: SceneDebugTrace | None = None) -> dict[str, Any]:
+        updated = self.cinematic_event_compiler.attach_to_section(section, duration_seconds=self._duration_hint(section))
+        if debug_trace and updated.get("cinematic_events"):
+            debug_trace.snapshot(
+                "cinematic_events",
+                {
+                    "event_count": len(updated.get("cinematic_events") or []),
+                    "events": updated.get("cinematic_events") or [],
+                },
+                owner="cinematic_event_compiler",
+            )
+            debug_trace.ownership(
+                "cinematic_events",
+                "cinematic_event_compiler",
+                updated.get("cinematic_events") or [],
+                "narration-driven visual attention timeline",
+            )
+        return updated
+
+    def _duration_hint(self, section: dict[str, Any]) -> float | None:
+        for key in ("audio_duration", "duration", "target_duration"):
+            try:
+                value = float(section.get(key) or 0)
+            except (TypeError, ValueError):
+                value = 0
+            if value > 0:
+                return value
+        return None
 
     def _updated_section_with_expanded_beats(
         self,
@@ -331,6 +364,8 @@ class VisualBeatExpander:
             return "The buffer absorbs the shock"
         if pattern == "OutroRecapVisualizer":
             return "The system comes together"
+        if pattern == "UniversalMechanismRenderer":
+            return "The idea changes on screen"
         if pattern in {"GrowthChart", "InflationErosionVisualizer"}:
             return "Value path changes"
         if pattern == "SplitComparison":
@@ -499,6 +534,7 @@ class VisualBeatExpander:
             "RiskReturnVisualizer": ("safe_asset", "growth_asset"),
             "EmergencyFundVisualizer": ("buffer_label", "shock_label"),
             "OutroRecapVisualizer": ("actions",),
+            "UniversalMechanismRenderer": ("cinematic_events",),
         }.get(component, ("steps", "balances", "flows", "monthly_sip"))
         if isinstance(data, dict) and any(key in data for key in expected_keys):
             return True

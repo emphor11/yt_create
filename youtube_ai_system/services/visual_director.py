@@ -1125,7 +1125,7 @@ class VisualDirector:
     def _generic_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
         direction = SceneDirection("neutral", "clarity", director_input.section_position, "neutral")
         title = director_input.concept_name or "Money Change"
-        return self._fallback_plan(director_input, concept_type, direction, "ConceptCard", title, "generic director fallback")
+        return self._fallback_plan(director_input, concept_type, direction, "UniversalMechanismRenderer", title, "generic director fallback")
 
     def _fallback_plan(
         self,
