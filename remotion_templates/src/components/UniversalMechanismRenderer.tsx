@@ -59,6 +59,7 @@ export const UniversalMechanismRenderer: React.FC<BeatComponentProps> = ({beat, 
 	const y = gy * 1080;
 	const mode = String(active?.visual_mode ?? 'generic_focus');
 	const isNegative = /expense|debt|shock|erosion|survivor|spiral/.test(mode);
+	const isDrainHook = /expense_attack/.test(mode) && /vanish|disappear|gone|day 20/i.test(String(active?.text ?? ''));
 	const title = modeLabel(active);
 	const subline = shortText(String(active?.text || beat.source_text || beat.text || ''), verbLabel(active));
 	const ringScale = 0.84 + presence * 0.28;
@@ -74,6 +75,23 @@ export const UniversalMechanismRenderer: React.FC<BeatComponentProps> = ({beat, 
 				}}
 			/>
 			<div style={{position: 'absolute', inset: 0, left: 0, width: 8, background: accent}} />
+			{isDrainHook ? (
+				<div style={{position: 'absolute', inset: 0}}>
+					<div style={{position: 'absolute', left: 220, top: 285, opacity: 0.8}}>
+						<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>Salary lands</div>
+						<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 112, lineHeight: 0.86}}>₹50,000</div>
+					</div>
+					<svg viewBox="0 0 1920 1080" style={{position: 'absolute', inset: 0}}>
+						<path d="M 560 510 C 760 510, 850 420, 1040 430 S 1230 640, 1430 630" stroke="rgba(230,57,70,0.22)" strokeWidth={62} fill="none" strokeLinecap="round" />
+						<path d="M 560 510 C 760 510, 850 420, 1040 430 S 1230 640, 1430 630" stroke={COLORS.danger} strokeWidth={38} fill="none" strokeLinecap="round" strokeDasharray="112 26" opacity={presence} />
+						<circle cx={1430} cy={630} r={62 + presence * 18} fill="none" stroke={COLORS.danger} strokeWidth={8} opacity={0.7} />
+					</svg>
+					<div style={{position: 'absolute', right: 250, top: 360, textAlign: 'right'}}>
+						<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>By day 20</div>
+						<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 126, lineHeight: 0.82, color: COLORS.danger}}>VANISHED</div>
+					</div>
+				</div>
+			) : null}
 			<div
 				style={{
 					position: 'absolute',
@@ -84,6 +102,7 @@ export const UniversalMechanismRenderer: React.FC<BeatComponentProps> = ({beat, 
 					transform: `scale(${0.88 + enter * 0.1 + presence * 0.06})`,
 					transformOrigin: 'center',
 					textAlign: gx > 0.58 ? 'right' : 'left',
+					opacity: isDrainHook ? 0 : 1,
 				}}
 			>
 				<div style={{fontSize: TYPE_SCALE.label.size, fontWeight: 950, color: accent, letterSpacing: 0}}>{verbLabel(active)}</div>

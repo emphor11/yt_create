@@ -74,6 +74,7 @@ class CinematicEventCompiler:
 
     ENTITY_PATTERNS: tuple[tuple[str, str, str, str, str, str, tuple[str, ...]], ...] = (
         ("salary", "Salary", "income", "arrives", "arrival", "salary_anchor", ("salary", "paycheck", "income", "money comes", "money arrives", "credited")),
+        ("salary_vanish", "Salary disappears", "cash_flow", "vanishes", "drain", "expense_attack", ("salary disappears", "salary vanish", "vanish", "vanishes", "gone by", "disappears", "disappear", "day 20")),
         ("raise", "Raise", "income", "expands", "arrival", "hero_arrival", ("raise", "hike", "increment", "bonus", "promotion")),
         ("rent", "Rent", "fixed_expense", "drains", "drain", "expense_attack", ("rent", "apartment", "flat", "upgrade", "house", "housing")),
         ("emi", "EMI", "fixed_expense", "stacks", "stack", "pressure_stack", ("emi", "loan", "installment", "car loan", "home loan")),
@@ -82,6 +83,8 @@ class CinematicEventCompiler:
         ("subscriptions", "Subscriptions", "recurring_expense", "repeats", "repeat", "recurring_leak", ("subscription", "subscriptions", "netflix", "spotify", "apps", "membership")),
         ("weekend", "Weekend spending", "lifestyle_expense", "drains", "drain", "expense_attack", ("weekend", "party", "trip", "night out", "outing", "comfort")),
         ("phone", "Phone cost", "lifestyle_expense", "drains", "drain", "expense_attack", ("phone", "mobile", "iphone", "device", "data plan")),
+        ("bike", "Bike EMI", "fixed_expense", "stacks", "stack", "pressure_stack", ("bike emi", "bike", "scooter", "vehicle emi", "car emi")),
+        ("personal_loan", "Personal loan", "fixed_expense", "stacks", "stack", "pressure_stack", ("personal loan", "consumer loan", "loan starts", "loan payment")),
         ("credit_card", "Credit card", "debt", "attaches", "debt", "debt_threat", ("credit card", "swipe", "card bill", "minimum due")),
         ("interest", "Interest", "debt", "compounds", "compound", "spiral", ("interest", "compound", "penalty", "late fee")),
         ("inflation", "Inflation", "erosion", "shrinks", "shrink", "erosion", ("inflation", "price rise", "expensive", "costlier", "purchasing power")),
@@ -93,6 +96,7 @@ class CinematicEventCompiler:
         ("tax", "Tax", "deduction", "drains", "drain", "expense_attack", ("tax", "tds", "gst", "deduction")),
         ("insurance", "Insurance", "protection", "protects", "protect", "protection_layer", ("insurance", "premium", "cover")),
         ("risk", "Risk", "risk", "spreads", "spread", "risk_spread", ("risk", "diversification", "portfolio", "asset allocation")),
+        ("single_stock", "One stock", "concentration", "concentrates", "concentrate", "single_bet", ("one stock", "one asset", "one bet", "single stock", "concentration", "concentrated")),
     )
 
     MODE_VARIANTS: dict[str, tuple[str, ...]] = {
@@ -111,6 +115,7 @@ class CinematicEventCompiler:
         "survivor_isolation": ("negative_space", "tiny_balance", "last_chip"),
         "protection_layer": ("shield_layer", "claim_buffer", "risk_absorb"),
         "risk_spread": ("grid_spread", "single_to_many", "impact_contained"),
+        "single_bet": ("one_big_box", "single_red_asset", "fragile_basket"),
         "generic_focus": ("center_focus", "split_choice", "reveal_card"),
     }
 
@@ -284,7 +289,7 @@ class CinematicEventCompiler:
         lowered = text.lower()
         hits: list[_EntityHit] = []
         for entity_id, label, role, action, visual_verb, visual_mode, patterns in self.ENTITY_PATTERNS:
-            hit_indexes = [lowered.find(pattern) for pattern in patterns if lowered.find(pattern) >= 0]
+            hit_indexes = [index for pattern in patterns if (index := self._pattern_index(lowered, pattern)) >= 0]
             if hit_indexes:
                 hits.append(_EntityHit(entity_id, label, role, action, visual_verb, visual_mode, min(hit_indexes)))
         money_hits = list(re.finditer(r"(?:₹\s*|rs\.?\s*)\d[\d,]*(?:\.\d+)?(?:\s*(?:lakh|lakhs|crore|crores|k))?", text, re.IGNORECASE))
@@ -297,11 +302,22 @@ class CinematicEventCompiler:
             hits.append(_EntityHit(f"rate_{match.start()}", match.group(0), "rate", "changes", "shift", "generic_focus", match.start()))
         return sorted(hits, key=lambda hit: hit.hit_index)[:4]
 
+    def _pattern_index(self, lowered: str, pattern: str) -> int:
+        normalized = pattern.lower()
+        if re.search(r"[a-z0-9]", normalized):
+            match = re.search(rf"(?<![a-z0-9]){re.escape(normalized)}(?![a-z0-9])", lowered)
+            return match.start() if match else -1
+        return lowered.find(normalized)
+
     def _generic_hit(self, text: str, index: int, component: str) -> _EntityHit:
         label = self._short_label(text)
         lowered = text.lower()
         if any(token in lowered for token in ("grow", "build", "compound", "increase")) or component == "SIPGrowthEngine":
             return _EntityHit(f"generic_growth_{index}", label, "concept", "grows", "grow", "growth_seed", 0)
+        if any(token in lowered for token in ("vanish", "disappear", "gone", "empty", "leak", "drain")):
+            return _EntityHit(f"generic_drain_{index}", label, "concept", "drains", "drain", "expense_attack", 0)
+        if any(token in lowered for token in ("one stock", "one asset", "single", "concentrated")):
+            return _EntityHit(f"generic_single_bet_{index}", label, "concept", "concentrates", "concentrate", "single_bet", 0)
         if any(token in lowered for token in ("fall", "lose", "shrink", "erode")) or component == "InflationErosionVisualizer":
             return _EntityHit(f"generic_loss_{index}", label, "concept", "shrinks", "shrink", "erosion", 0)
         if any(token in lowered for token in ("protect", "save", "survive", "safe")):

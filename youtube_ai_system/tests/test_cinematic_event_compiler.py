@@ -50,6 +50,31 @@ class CinematicEventCompilerTestCase(unittest.TestCase):
         self.assertTrue(all(event["label"] for event in events))
         self.assertTrue(all(event["visual_mode"] for event in events))
 
+    def test_hook_vanish_maps_to_drain_not_generic_card(self) -> None:
+        events = self.compiler.compile("Why does ₹50,000 vanish by day 20?", component="UniversalMechanismRenderer", duration_seconds=5, kind="hook")
+
+        self.assertIn("expense_attack", [event["visual_mode"] for event in events])
+
+    def test_single_stock_maps_to_concentration_world(self) -> None:
+        events = self.compiler.compile(
+            "Putting all your money into one stock feels exciting until one bad quarter hurts everything.",
+            component="PortfolioDiversificationVisualizer",
+            duration_seconds=35,
+        )
+
+        self.assertIn("single_bet", [event["visual_mode"] for event in events])
+
+    def test_keyword_matching_does_not_fire_inside_unrelated_words(self) -> None:
+        events = self.compiler.compile(
+            "A ₹5,000 SIP looks small in the first year. You invest about ₹12 lakh from your pocket.",
+            component="SIPGrowthEngine",
+            duration_seconds=30,
+        )
+        labels = [event["label"] for event in events]
+
+        self.assertNotIn("Shopping", labels)
+        self.assertNotIn("Interest", labels)
+
 
 if __name__ == "__main__":
     unittest.main()

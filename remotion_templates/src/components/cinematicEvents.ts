@@ -65,6 +65,9 @@ export const eventColor = (event: CinematicEvent | null, fallback: string) => {
 	if (/expense|debt|shock|spiral|erosion|survivor/.test(mode)) {
 		return '#E63946';
 	}
+	if (/single_bet/.test(mode)) {
+		return '#E63946';
+	}
 	if (/growth|hero|protect|buffer|risk_spread|protection/.test(mode)) {
 		return '#2EC4B6';
 	}

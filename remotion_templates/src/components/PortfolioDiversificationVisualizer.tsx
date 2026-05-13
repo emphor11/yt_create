@@ -4,6 +4,8 @@ import {BODY_FONT_FAMILY, DISPLAY_FONT_FAMILY, FONT_FACES} from '../fonts';
 import {BeatComponentProps} from './types';
 import {COLORS, SPACING, SPRINGS, getBeatData, getBeatProgress} from './visualUtils';
 import {TimedSentence, currentSceneProgress, firstKeywordIndex, narrationSentences, sceneNarrationText} from './narrationTiming';
+import {activeCinematicEvent, eventPresence} from './cinematicEvents';
+import {CinematicEvent} from '../types';
 
 type Asset = {
 	label?: string;
@@ -85,6 +87,41 @@ const buildPortfolioSequence = (narration: string, assets: Asset[]): PortfolioMo
 	return moments.sort((a, b) => a.startProgress - b.startProgress);
 };
 
+const momentFromCinematicEvent = (
+	event: CinematicEvent | null,
+	progress: number,
+	assets: Asset[],
+): PortfolioMoment | null => {
+	if (!event) {
+		return null;
+	}
+	const start = Number(event.start_progress ?? 0);
+	const end = Number(event.end_progress ?? 0);
+	if (progress < start || progress > end) {
+		return null;
+	}
+	const mode = String(event.visual_mode ?? '');
+	const label = String(event.label ?? event.entity_id ?? '').toLowerCase();
+	const text = String(event.text ?? '').toLowerCase();
+	const assetIndex = assets.findIndex((asset) => {
+		const terms = keywordsForAsset(String(asset.label ?? ''));
+		return terms.some((term) => term.length > 1 && (label.includes(term) || text.includes(term)));
+	});
+	if (/single_bet/.test(mode) || /one stock|one asset|single|concentrat/.test(label + text)) {
+		return {startProgress: start, endProgress: end, visualMode: 'single_bet'};
+	}
+	if (/risk_spread/.test(mode) || /spread|diversif|portfolio/.test(label + text)) {
+		return {startProgress: start, endProgress: end, visualMode: 'spread_world'};
+	}
+	if (/erosion|shock|fall|impact/.test(mode + label + text)) {
+		return {startProgress: start, endProgress: end, visualMode: 'impact_absorption'};
+	}
+	if (assetIndex >= 0) {
+		return {assetIndex, startProgress: start, endProgress: end, visualMode: 'asset_focus'};
+	}
+	return null;
+};
+
 export const PortfolioDiversificationVisualizer: React.FC<BeatComponentProps> = ({beat, scene, frameWithinBeat, durationFrames}) => {
 	const {fps} = useVideoConfig();
 	const data = getBeatData<Record<string, unknown>>(beat) ?? {};
@@ -92,17 +129,44 @@ export const PortfolioDiversificationVisualizer: React.FC<BeatComponentProps> = 
 	const assets = (Array.isArray(data.assets) ? (data.assets as Asset[]) : defaultAssets).slice(0, 6);
 	const narration = sceneNarrationText(scene);
 	const sceneProgress = currentSceneProgress(scene, beat, frameWithinBeat, fps);
+	const cinematicEvent = activeCinematicEvent(scene, beat, frameWithinBeat, fps);
 	const progress = phase === 'concentrated' ? 0.2 : phase === 'impact' ? 1 : getBeatProgress(frameWithinBeat, Math.floor(durationFrames * 0.8));
 	const reveal = spring({frame: Math.min(frameWithinBeat, 18), fps, config: SPRINGS.entry, durationInFrames: 18});
 	const gridOpacity = phase === 'concentrated' ? 0 : interpolate(progress, [0.18, 0.62], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
 	const shock = phase === 'impact' ? interpolate(frameWithinBeat % 30, [0, 15, 30], [0, 1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}) : 0;
-	const semanticMoment = buildPortfolioSequence(narration, assets)
+	const cinematicMoment = eventPresence(sceneProgress, cinematicEvent) > 0 ? momentFromCinematicEvent(cinematicEvent, sceneProgress, assets) : null;
+	const semanticMoment = cinematicMoment ?? buildPortfolioSequence(narration, assets)
 		.filter((moment) => sceneProgress >= moment.startProgress && sceneProgress <= moment.endProgress)
 		.sort((a, b) => b.startProgress - a.startProgress)[0];
 	const semanticEventProgress = semanticMoment
 		? Math.max(0, Math.min((sceneProgress - semanticMoment.startProgress) / Math.max(semanticMoment.endProgress - semanticMoment.startProgress, 0.001), 1))
 		: progress;
 	const activeAsset = typeof semanticMoment?.assetIndex === 'number' ? assets[semanticMoment.assetIndex] : undefined;
+
+	if (semanticMoment?.visualMode === 'single_bet') {
+		const focus = interpolate(semanticEventProgress, [0.06, 0.82], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+
+		return (
+			<AbsoluteFill style={{background: COLORS.bg_deep, color: COLORS.text_primary, fontFamily: BODY_FONT_FAMILY, padding: SPACING.safe, overflow: 'hidden'}}>
+				<style>{FONT_FACES}</style>
+				<div style={{position: 'absolute', inset: -140, background: 'radial-gradient(circle at 50% 48%, rgba(230,57,70,0.3), transparent 30%), linear-gradient(135deg, #05070d, #170a10 58%, #05070d)'}} />
+				<div style={{position: 'absolute', inset: 0, left: 0, width: 8, background: COLORS.danger}} />
+				<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 92, lineHeight: 0.9, maxWidth: 760}}>ONE STOCK DECIDES EVERYTHING</div>
+				<div style={{position: 'absolute', left: 675, top: 245, width: 570, height: 410, borderRadius: 8, border: `5px solid ${COLORS.danger}`, background: 'rgba(230,57,70,0.16)', boxShadow: `0 0 ${70 + focus * 86}px rgba(230,57,70,0.42)`, transform: `scale(${0.86 + focus * 0.16}) rotate(${-2 + focus * 2}deg)`, display: 'grid', placeItems: 'center', textAlign: 'center'}}>
+					<div>
+						<div style={{fontSize: 30, color: COLORS.text_secondary, fontWeight: 950}}>Concentration risk</div>
+						<div style={{marginTop: 18, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 124, lineHeight: 0.82, color: COLORS.danger}}>100%</div>
+						<div style={{marginTop: 14, fontSize: 36, fontWeight: 950}}>one asset</div>
+					</div>
+				</div>
+				<div style={{position: 'absolute', left: 200, bottom: 135, right: 200, height: 80, display: 'flex', gap: 18, justifyContent: 'center', opacity: 0.16}}>
+					{assets.map((asset, index) => (
+						<div key={`${asset.label}-${index}`} style={{width: 150, height: 62, borderRadius: 8, border: `1px solid ${asset.color ?? COLORS.stroke}`, background: 'rgba(255,255,255,0.045)'}} />
+					))}
+				</div>
+			</AbsoluteFill>
+		);
+	}
 
 	if (semanticMoment?.visualMode === 'asset_focus' && activeAsset) {
 		const focus = interpolate(semanticEventProgress, [0.06, 0.82], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});

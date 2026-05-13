@@ -2,8 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from pathlib import Path
 import re
+import shutil
+import subprocess
+import tempfile
 from typing import Any
+
+from PIL import Image, ImageChops, ImageStat
 
 from ..models.repository import ProjectRepository
 
@@ -303,6 +309,17 @@ class ProfessionalSceneAcceptanceService:
                 )
             )
 
+        static_score = self._render_static_score(scene)
+        if static_score is not None and duration >= 25 and static_score < 4.0:
+            warnings.append(
+                SceneAcceptanceIssue(
+                    order,
+                    "warning",
+                    "rendered_visual_repetition",
+                    f"Rendered scene changes too little across sampled frames (delta {static_score:.1f}).",
+                )
+            )
+
         return blockers, warnings
 
     def _score(self, scenes: list[dict[str, Any]], blockers: list[SceneAcceptanceIssue], warnings: list[SceneAcceptanceIssue]) -> int:
@@ -418,6 +435,61 @@ class ProfessionalSceneAcceptanceService:
                 span = 0
             longest = max(longest, span * duration)
         return longest if longest > 11 else 0.0
+
+    def _render_static_score(self, scene: dict[str, Any]) -> float | None:
+        path = Path(str(scene.get("visual_path") or "")).expanduser()
+        if not path.exists() or path.suffix.lower() not in {".mp4", ".mov", ".m4v"}:
+            return None
+        ffmpeg = shutil.which("ffmpeg")
+        ffprobe = shutil.which("ffprobe")
+        if not ffmpeg or not ffprobe:
+            return None
+        try:
+            probe = subprocess.run(
+                [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=nk=1:nw=1", str(path)],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=8,
+            )
+            duration = float(probe.stdout.strip() or 0)
+        except (subprocess.SubprocessError, ValueError):
+            return None
+        if duration < 8:
+            return None
+        sample_times = [duration * point for point in (0.18, 0.38, 0.58, 0.78)]
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                frames: list[Image.Image] = []
+                for index, seconds in enumerate(sample_times):
+                    frame_path = Path(tmp) / f"frame-{index}.jpg"
+                    subprocess.run(
+                        [
+                            ffmpeg,
+                            "-y",
+                            "-ss",
+                            f"{seconds:.3f}",
+                            "-i",
+                            str(path),
+                            "-frames:v",
+                            "1",
+                            "-vf",
+                            "scale=96:54",
+                            str(frame_path),
+                        ],
+                        check=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=10,
+                    )
+                    frames.append(Image.open(frame_path).convert("RGB"))
+                deltas: list[float] = []
+                for first, second in zip(frames, frames[1:]):
+                    stat = ImageStat.Stat(ImageChops.difference(first, second))
+                    deltas.append(sum(stat.mean) / 3)
+                return round(sum(deltas) / len(deltas), 2) if deltas else None
+        except (subprocess.SubprocessError, OSError):
+            return None
 
     def _internal_language_match(self, narration: str) -> str:
         for pattern in self.INTERNAL_LANGUAGE_PATTERNS:

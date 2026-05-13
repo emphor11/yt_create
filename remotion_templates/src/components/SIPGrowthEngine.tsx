@@ -5,6 +5,8 @@ import {BeatComponentProps} from './types';
 import {COLORS, SPACING, SPRINGS, TYPE_SCALE, formatIndianRupee, getBeatData, getBeatProgress} from './visualUtils';
 import {ResolvedVisualEvent, resolveVisualEvent} from './visualEvents';
 import {TimedSentence, currentSceneProgress, narrationSentences, sceneNarrationText} from './narrationTiming';
+import {activeCinematicEvent, eventPresence} from './cinematicEvents';
+import {CinematicEvent} from '../types';
 
 type VisualState = {
 	state_type?: string;
@@ -505,6 +507,32 @@ const buildSIPSequence = (narration: string): SIPMoment[] =>
 		})
 		.filter(Boolean) as SIPMoment[];
 
+const momentFromCinematicEvent = (
+	event: CinematicEvent | null,
+	progress: number,
+): SIPMoment | null => {
+	if (!event) {
+		return null;
+	}
+	const start = Number(event.start_progress ?? 0);
+	const end = Number(event.end_progress ?? 0);
+	if (progress < start || progress > end) {
+		return null;
+	}
+	const mode = String(event.visual_mode ?? '');
+	const label = String(event.label ?? event.entity_id ?? '').toLowerCase();
+	const text = String(event.text ?? '').toLowerCase();
+	const visualMode: SIPMoment['visualMode'] =
+		/sip|seed|monthly|₹5,000|5000/.test(label + text) ? 'seed_focus' :
+			/%|12|return|interest/.test(label + text) ? 'return_rate_focus' :
+				/year|time|horizon|20/.test(label + text) ? 'time_horizon_world' :
+					/corpus|₹50|50 lakh|wealth|hero_reveal|future/.test(label + text + mode) ? 'corpus_reveal' :
+						/compound|growth_seed|grow/.test(label + text + mode) ? 'compounding_world' :
+							/expense_attack|spiral/.test(mode) ? 'return_rate_focus' :
+								'seed_focus';
+	return {startProgress: start, endProgress: end, visualMode};
+};
+
 export const SIPGrowthEngine: React.FC<BeatComponentProps> = ({beat, scene, frameWithinBeat, durationFrames}) => {
 	const {fps} = useVideoConfig();
 	const data = getBeatData<Record<string, unknown>>(beat) ?? {};
@@ -512,6 +540,7 @@ export const SIPGrowthEngine: React.FC<BeatComponentProps> = ({beat, scene, fram
 	const event = resolveVisualEvent(beat, scene, 'SIPGrowthEngine');
 	const narration = sceneNarrationText(scene);
 	const sceneProgress = currentSceneProgress(scene, beat, frameWithinBeat, fps);
+	const cinematicEvent = activeCinematicEvent(scene, beat, frameWithinBeat, fps);
 	const visualState = resolveVisualState(beat, scene);
 	const activeShot = resolveShot(beat, scene);
 	const layoutTarget = layoutForEvent(layoutForShot(layoutForState(visualState), activeShot), event);
@@ -548,12 +577,35 @@ export const SIPGrowthEngine: React.FC<BeatComponentProps> = ({beat, scene, fram
 	const investedVisualOpacity = layout.investedOpacity * (1 - layout.rewardIsolation * 0.45);
 	const corpusVisualOpacity = layout.corpusOpacity;
 	const backgroundGlow = `radial-gradient(circle at ${66 + layout.rewardIsolation * 10}% ${38 - layout.backgroundLift * 18}%, rgba(46,196,182,${0.10 + layout.glowIntensity * 0.42}), transparent ${26 + layout.negativeSpace * 20}%), ${COLORS.bg_deep}`;
-	const semanticMoment = buildSIPSequence(narration)
+	const cinematicMoment = eventPresence(sceneProgress, cinematicEvent) > 0 ? momentFromCinematicEvent(cinematicEvent, sceneProgress) : null;
+	const semanticMoment = cinematicMoment ?? buildSIPSequence(narration)
 		.filter((moment) => sceneProgress >= moment.startProgress && sceneProgress <= moment.endProgress)
 		.sort((a, b) => b.startProgress - a.startProgress)[0];
 	const semanticEventProgress = semanticMoment
 		? Math.max(0, Math.min((sceneProgress - semanticMoment.startProgress) / Math.max(semanticMoment.endProgress - semanticMoment.startProgress, 0.001), 1))
 		: rawProgress;
+
+	if (semanticMoment?.visualMode === 'seed_focus') {
+		const seedPull = interpolate(semanticEventProgress, [0.06, 0.82], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+
+		return (
+			<AbsoluteFill style={{background: COLORS.bg_deep, color: COLORS.text_primary, padding: SPACING.safe, fontFamily: BODY_FONT_FAMILY, overflow: 'hidden'}}>
+				<style>{FONT_FACES}</style>
+				<div style={{position: 'absolute', inset: -140, background: 'radial-gradient(circle at 42% 46%, rgba(46,196,182,0.24), transparent 28%), linear-gradient(135deg, #05070d, #071312 58%, #05070d)'}} />
+				<div style={{position: 'absolute', inset: 0, left: 0, width: 8, background: COLORS.positive}} />
+				<div style={{fontSize: TYPE_SCALE.label.size, fontWeight: 900, color: COLORS.text_secondary}}>Small seed</div>
+				<div style={{position: 'absolute', left: 245, top: 300, width: 610, transform: `scale(${0.9 + seedPull * 0.12})`, transformOrigin: 'left center'}}>
+					<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>Monthly SIP</div>
+					<div style={{marginTop: 16, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 154, lineHeight: 0.82, color: COLORS.positive, textShadow: `0 0 ${48 + seedPull * 56}px rgba(46,196,182,0.38)`}}>{sip?.value ?? formatIndianRupee(Number(sip?.amount ?? 0))}</div>
+					<div style={{marginTop: 34, fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 800}}>boring at first, powerful over time</div>
+				</div>
+				<div style={{position: 'absolute', right: 280, top: 340, width: 430, height: 260, opacity: 0.22}}>
+					<div style={{height: 24, width: `${seedPull * 100}%`, background: COLORS.positive, borderRadius: 999}} />
+					<div style={{marginTop: 32, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 68, color: COLORS.text_secondary}}>{durationYears} years later</div>
+				</div>
+			</AbsoluteFill>
+		);
+	}
 
 	if (semanticMoment?.visualMode === 'return_rate_focus') {
 		const ratePull = interpolate(semanticEventProgress, [0.08, 0.82], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});

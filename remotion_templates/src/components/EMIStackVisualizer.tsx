@@ -4,6 +4,8 @@ import {BODY_FONT_FAMILY, DISPLAY_FONT_FAMILY, FONT_FACES} from '../fonts';
 import {BeatComponentProps} from './types';
 import {COLORS, SPACING, SPRINGS, TYPE_SCALE, formatIndianRupee, getBeatData, getBeatProgress} from './visualUtils';
 import {resolveVisualEvent} from './visualEvents';
+import {activeCinematicEvent, eventPresence} from './cinematicEvents';
+import {CinematicEvent} from '../types';
 
 type EMIItem = {
 	label?: string;
@@ -184,6 +186,41 @@ const momentPresence = (progress: number, moment: EMIFocalMoment) => {
 	return enter * exit;
 };
 
+const momentFromCinematicEvent = (
+	event: CinematicEvent | null,
+	progress: number,
+	emis: ResolvedEmiItem[],
+): EMIFocalMoment | null => {
+	if (!event) {
+		return null;
+	}
+	const start = Number(event.start_progress ?? 0);
+	const end = Number(event.end_progress ?? 0);
+	if (progress < start || progress > end) {
+		return null;
+	}
+	const mode = String(event.visual_mode ?? '');
+	const label = String(event.label ?? event.entity_id ?? '').toLowerCase();
+	const text = String(event.text ?? '').toLowerCase();
+	const emiIndex = emis.findIndex((emi) => {
+		const terms = [emi.label.toLowerCase(), ...emi.keywords];
+		return terms.some((term) => term.length > 2 && (label.includes(term) || text.includes(term)));
+	});
+	if (/survivor|left|remaining/.test(mode + label + text)) {
+		return {startProgress: start, endProgress: end, visualMode: 'critical_leftover'};
+	}
+	if (/salary_squeeze|squeeze/.test(String(event.variant ?? '') + text)) {
+		return {startProgress: start, endProgress: end, visualMode: 'salary_squeeze'};
+	}
+	if (/pressure_stack/.test(mode)) {
+		return {emiIndex: emiIndex >= 0 ? emiIndex : undefined, startProgress: start, endProgress: end, visualMode: emiIndex >= 0 ? 'single_emi_focus' : 'emi_stacking'};
+	}
+	if (/expense_attack|debt_threat/.test(mode) || emiIndex >= 0) {
+		return {emiIndex: Math.max(0, emiIndex), startProgress: start, endProgress: end, visualMode: 'single_emi_focus'};
+	}
+	return null;
+};
+
 const parseMoneyAmount = (text: string) => {
 	const match = text.match(/(?:₹\s*|rs\.?\s*)?(\d[\d,]*(?:\.\d+)?)/i);
 	if (!match) {
@@ -263,6 +300,7 @@ export const EMIStackVisualizer: React.FC<BeatComponentProps> = ({beat, scene, f
 	const currentSceneSeconds = Number(beat.start_time ?? 0) + frameWithinBeat / fps;
 	const sceneProgress = clamp(currentSceneSeconds / sceneDurationSeconds(scene, beat), 0, 1);
 	const {salary, emis, total_emi, remaining} = getEmiData(beat, narration);
+	const cinematicEvent = activeCinematicEvent(scene, beat, frameWithinBeat, fps);
 	const reveal = spring({frame: Math.min(frameWithinBeat, 18), fps, config: SPRINGS.entry, durationInFrames: 18});
 	const rawProgress = getBeatProgress(frameWithinBeat, Math.floor(durationFrames * 0.82));
 	const stackProgress = event.kind === 'first_emi_comfort' ? 0.28 : event.kind === 'critical_leftover' || event.kind === 'salary_squeeze' ? 1 : rawProgress;
@@ -274,7 +312,8 @@ export const EMIStackVisualizer: React.FC<BeatComponentProps> = ({beat, scene, f
 	const remainingScale = event.kind === 'critical_leftover' ? 1.28 : event.kind === 'salary_squeeze' ? 1.12 : 0.92;
 	const dim = event.kind === 'critical_leftover' ? 0.34 : event.kind === 'salary_squeeze' ? 0.22 : 0.06;
 	const focalSequence = buildNarrationFocalSequence(narration, emis);
-	const semanticMoment = focalSequence
+	const cinematicMoment = eventPresence(sceneProgress, cinematicEvent) > 0 ? momentFromCinematicEvent(cinematicEvent, sceneProgress, emis) : null;
+	const semanticMoment = cinematicMoment ?? focalSequence
 		.filter((moment) => sceneProgress >= moment.startProgress && sceneProgress <= moment.endProgress)
 		.sort((a, b) => b.startProgress - a.startProgress)[0];
 	const semanticEventProgress = semanticMoment

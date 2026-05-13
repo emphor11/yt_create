@@ -4,6 +4,7 @@ import {BODY_FONT_FAMILY, DISPLAY_FONT_FAMILY, FONT_FACES} from '../fonts';
 import {BeatComponentProps} from './types';
 import {COLORS, getBeatData, getBeatProgress} from './visualUtils';
 import {currentSceneProgress, firstKeywordIndex, narrationSentences, sceneNarrationText} from './narrationTiming';
+import {activeCinematicEvent, eventColor} from './cinematicEvents';
 
 type OutroAction = {
 	id: string;
@@ -78,6 +79,9 @@ const buildMoments = (narration: string, actions: OutroAction[]): OutroMoment[] 
 	}));
 };
 
+const shouldUseRecapEvent = (progress: number, label: string, text: string) =>
+	progress < 0.46 && Boolean(label) && !/(track|protect|start|invest|cut|reduce|save|allocate|review)/i.test(`${label} ${text}`);
+
 export const OutroRecapVisualizer: React.FC<BeatComponentProps> = ({beat, scene, frameWithinBeat, durationFrames}) => {
 	const {fps} = useVideoConfig();
 	const data = getBeatData<Record<string, unknown>>(beat) ?? scene?.data ?? {};
@@ -85,12 +89,42 @@ export const OutroRecapVisualizer: React.FC<BeatComponentProps> = ({beat, scene,
 	const progress = scene ? currentSceneProgress(scene, beat, frameWithinBeat, fps) : getBeatProgress(frameWithinBeat, durationFrames);
 	const actions = resolveActions(data);
 	const moments = buildMoments(narration, actions);
+	const cinematicEvent = activeCinematicEvent(scene, beat, frameWithinBeat, fps);
+	const eventLabel = String(cinematicEvent?.label ?? '').replace(/_/g, ' ');
+	const eventText = String(cinematicEvent?.text ?? '');
+	const eventAccent = eventColor(cinematicEvent, COLORS.warning);
 	const previousMoments = moments.filter((moment) => moment.startProgress <= progress);
 	const active = moments.find((moment) => progress >= moment.startProgress && progress <= moment.endProgress) ?? previousMoments[previousMoments.length - 1] ?? moments[0];
 	const activeIndex = actions.findIndex((action) => action.id === active.action.id);
 	const finalMode = progress > 0.88;
 	const enter = spring({frame: frameWithinBeat, fps, config: {damping: 21, stiffness: 142, mass: 0.9}});
 	const orbit = Math.sin(frameWithinBeat / 12) * 8;
+
+	if (shouldUseRecapEvent(progress, eventLabel, eventText)) {
+		return (
+			<AbsoluteFill style={{background: COLORS.bg_deep, overflow: 'hidden', color: COLORS.text_primary, fontFamily: BODY_FONT_FAMILY}}>
+				<style>{FONT_FACES}</style>
+				<AbsoluteFill style={{background: `radial-gradient(circle at 48% 44%, ${eventAccent}30, rgba(10,10,20,0.98) 62%)`}} />
+				<div style={{position: 'absolute', inset: 90}}>
+					<div style={{position: 'absolute', left: 0, top: 0, display: 'flex', gap: 14}}>
+						{actions.map((action) => (
+							<div key={action.id} style={{padding: '12px 18px', borderRadius: 999, border: '2px solid rgba(255,255,255,0.12)', color: COLORS.muted, background: 'rgba(255,255,255,0.035)', fontWeight: 800, fontSize: 22, opacity: 0.24}}>
+								{action.shortLabel}
+							</div>
+						))}
+					</div>
+					<div style={{position: 'absolute', left: 105, top: 178, width: 920, transform: `translateY(${(1 - enter) * 28}px)`}}>
+						<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 118, lineHeight: 0.9, color: eventAccent}}>RECAP</div>
+						<div style={{marginTop: 28, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 96, lineHeight: 0.9, color: COLORS.text_primary, textTransform: 'uppercase'}}>{eventLabel || 'Money system'}</div>
+						<div style={{marginTop: 30, fontSize: 34, color: COLORS.muted, fontWeight: 800, lineHeight: 1.2, maxWidth: 900}}>{eventText.slice(0, 115)}</div>
+					</div>
+					<div style={{position: 'absolute', right: 72, bottom: 90, width: 420, height: 14, borderRadius: 999, background: 'rgba(255,255,255,0.12)', overflow: 'hidden'}}>
+						<div style={{height: '100%', width: `${Math.max(10, progress * 100)}%`, background: eventAccent}} />
+					</div>
+				</div>
+			</AbsoluteFill>
+		);
+	}
 
 	return (
 		<AbsoluteFill style={{background: COLORS.bg_deep, overflow: 'hidden', color: COLORS.text_primary, fontFamily: BODY_FONT_FAMILY}}>
