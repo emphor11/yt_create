@@ -136,7 +136,7 @@ export const visualEventFixtureScenes: Scene[] = [
 		timedBeat('EMIStackVisualizer', 'EMIs stack', 3, 6, 'stacking', 'emi_stacks', 'emi_group', emi, 'pressure_closeup'),
 		timedBeat('EMIStackVisualizer', 'Salary gets squeezed', 6, 9, 'stacking', 'salary_squeezed', 'salary_income', emi, 'pressure_closeup'),
 		timedBeat('EMIStackVisualizer', 'Only ₹6,000 left', 9, 12, 'pressure', 'balance_revealed', 'remaining_balance', emi, 'survivor_isolation'),
-	]),
+	], 'One phone EMI looks harmless. Then the bike EMI joins. A personal loan stacks on top. Salary gets squeezed by fixed payments. Only ₹6,000 is left after EMIs.'),
 	scene('fixture_inflation', 'InflationErosionVisualizer', [
 		timedBeat('InflationErosionVisualizer', '₹1,00,000 today', 0, 3, 'today', 'value_anchor', 'today_value', inflation, 'wide_context'),
 		timedBeat('InflationErosionVisualizer', 'Inflation silently erodes', 3, 6, 'erosion', 'inflation_erodes', 'inflation_rate', inflation, 'pressure_closeup'),

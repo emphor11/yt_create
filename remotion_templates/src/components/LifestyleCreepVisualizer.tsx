@@ -51,7 +51,17 @@ type LifestyleFocalMoment = {
 	decay: number;
 	gravityCenter: GravityCenter;
 	attentionWeight: number;
-	visualMode: 'entity_attack' | 'compression' | 'salary_anchor' | 'raise_hero' | 'savings_isolation';
+	visualMode:
+		| 'entity_attack'
+		| 'compression'
+		| 'salary_anchor'
+		| 'raise_hero'
+		| 'savings_isolation'
+		| 'rationalization_world'
+		| 'permanence_lock_world'
+		| 'paper_vs_real_world'
+		| 'capture_raise_world'
+		| 'protected_savings_world';
 };
 
 type TimedSentence = {
@@ -283,16 +293,34 @@ const entityMentionsForSentence = (sentence: string, entities: LifestyleFocalEnt
 };
 
 const semanticModeForSentence = (sentence: string): LifestyleFocalMoment['visualMode'] | null => {
-	if (/\bsavings?\b|\bgap\b|flat|captured|protected|freedom/i.test(sentence)) {
+	if (/next\s+raise.*captur|captur(e|ed)\s+the\s+raise|lifestyle\s+negotiates|save\s+the\s+difference|automate.*raise|allocate.*raise/i.test(sentence)) {
+		return 'capture_raise_world';
+	}
+	if (/save before lifestyle|savings?\s+(jump|first)|decide\s+the\s+savings|protected?\s+at|protect(ed)?\s+the\s+raise|captured?\s+before|capture(d)?\s+before/i.test(sentence)) {
+		return 'protected_savings_world';
+	}
+	if (/income\s+rises?.*paper|on\s+paper|savings?\s+(stays?|remain|stayed).*(flat|same)|flat\s+in\s+real\s+life|gap.*story|paper.*real/i.test(sentence)) {
+		return 'paper_vs_real_world';
+	}
+	if (/becomes?\s+permanent|permanent\s+(bills?|costs?)|fixed\s+(bills?|costs?)|locked\s+in|recurring|monthly\s+bills?|routine\s+bill/i.test(sentence)) {
+		return 'permanence_lock_world';
+	}
+	if (/problem\s+is\s+not\s+earning|not\s+earning\s+more|problem\s+is\s+giving.*new\s+expense/i.test(sentence)) {
+		return 'compression';
+	}
+	if (/deserved?|normal|reward|irresponsible|earned|feels?\s+(good|fine|harmless|reasonable)|nothing\s+feels/i.test(sentence)) {
+		return 'rationalization_world';
+	}
+	if (/never\s+reaches?\s+savings?|did\s+not\s+reach\s+savings|left\s+for\s+savings/i.test(sentence)) {
 		return 'savings_isolation';
 	}
 	if (/absorbs?|new expense|permanent|lifestyle inflation|permanent bills|comfort quietly converts/i.test(sentence)) {
 		return 'compression';
 	}
-	if (/\bsalary\b|\bincome\b|earning more|rises?|paper/i.test(sentence)) {
+	if (/\bsalary\b.*rises?|\bincome\b.*rises?|earning more/i.test(sentence)) {
 		return 'salary_anchor';
 	}
-	if (/\braise\b|extra\s*₹|extra\s+rs|progress|arrives?/i.test(sentence)) {
+	if (/feels?\s+like\s+progress|raise\s+(arrives?|comes|hits)|extra\s*₹|extra\s+rs/i.test(sentence)) {
 		return 'raise_hero';
 	}
 	return null;
@@ -308,6 +336,11 @@ const momentForSentence = (
 		salary_anchor: {x: 960, y: 470},
 		raise_hero: {x: 1120, y: 390},
 		savings_isolation: {x: 960, y: 430},
+		rationalization_world: {x: 960, y: 470},
+		permanence_lock_world: {x: 960, y: 500},
+		paper_vs_real_world: {x: 960, y: 500},
+		capture_raise_world: {x: 960, y: 500},
+		protected_savings_world: {x: 960, y: 500},
 	};
 	return {
 		entityId: visualMode,
@@ -330,9 +363,21 @@ const buildNarrationFocalSequence = (
 	const seen = new Set<string>();
 
 	for (const sentence of sentences) {
+		const semanticMode = semanticModeForSentence(sentence.text);
+		const semanticFirstModes: Array<LifestyleFocalMoment['visualMode']> = [
+			'rationalization_world',
+			'permanence_lock_world',
+			'paper_vs_real_world',
+			'capture_raise_world',
+			'protected_savings_world',
+			'savings_isolation',
+		];
+		if (semanticMode && semanticFirstModes.includes(semanticMode)) {
+			moments.push(momentForSentence(sentence, semanticMode));
+			continue;
+		}
 		const mentioned = entityMentionsForSentence(sentence.text, entities);
 		if (mentioned.length === 0) {
-			const semanticMode = semanticModeForSentence(sentence.text);
 			if (semanticMode) {
 				moments.push(momentForSentence(sentence, semanticMode));
 			}
@@ -380,8 +425,22 @@ const buildNarrationFocalSequence = (
 		});
 	}
 
+	const hasLateSemanticCoverage = moments.some(
+		(moment) =>
+			moment.startProgress > 0.34 &&
+			[
+				'rationalization_world',
+				'permanence_lock_world',
+				'paper_vs_real_world',
+				'capture_raise_world',
+				'protected_savings_world',
+				'savings_isolation',
+				'compression',
+			].includes(moment.visualMode),
+	);
+
 	for (const entity of entities) {
-		if (seen.has(entity.id) || moments.length >= 7) {
+		if (hasLateSemanticCoverage || seen.has(entity.id) || moments.length >= 7) {
 			continue;
 		}
 		const fallbackStart = Math.min(0.76, finalEntityEnd + 0.04 + moments.length * 0.035);
@@ -632,6 +691,276 @@ export const LifestyleCreepVisualizer: React.FC<BeatComponentProps> = ({beat, sc
 							opacity: interpolate(raiseEventProgress, [index * 0.12, 1], [0, 0.82], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
 						}}
 					/>
+				))}
+			</Shell>
+		);
+	}
+
+	if (semanticMode === 'rationalization_world') {
+		const visibleEntities = lifestyleEntities.slice(0, 3);
+		const cardLabels = ['Feels deserved', 'Feels normal', 'Feels earned'];
+
+		return (
+			<Shell title="Lifestyle logic" tone="optimistic">
+				<div
+					style={{
+						position: 'absolute',
+						left: 240,
+						top: 238,
+						width: 560,
+						zIndex: 3,
+						opacity: entry,
+						transform: `translateY(${interpolate(entry, [0, 1], [34, 0])}px)`,
+					}}
+				>
+					<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>Nothing feels irresponsible</div>
+					<div style={{marginTop: 18, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 102, lineHeight: 0.88, color: COLORS.text_primary}}>
+						Small upgrades feel harmless
+					</div>
+				</div>
+				{visibleEntities.map((entity, index) => {
+					const reveal = interpolate(semanticEventProgress, [index * 0.18, index * 0.18 + 0.34], [0, 1], {
+						extrapolateLeft: 'clamp',
+						extrapolateRight: 'clamp',
+					});
+					return (
+						<div
+							key={entity.id}
+							style={{
+								position: 'absolute',
+								left: 1020 + (index % 2) * 270,
+								top: 218 + index * 172,
+								width: 430,
+								padding: '28px 30px',
+								borderRadius: 8,
+								border: `2px solid ${entity.color}`,
+								background: 'rgba(11,12,20,0.9)',
+								boxShadow: `0 0 ${36 + reveal * 50}px ${entity.color}44`,
+								opacity: reveal,
+								transform: `translateY(${(1 - reveal) * 34}px) scale(${0.9 + reveal * 0.1})`,
+								zIndex: 4,
+							}}
+						>
+							<div style={{fontSize: TYPE_SCALE.micro.size + 2, color: entity.color, fontWeight: 950}}>{cardLabels[index] ?? 'Feels fine'}</div>
+							<div style={{marginTop: 8, fontSize: 40, lineHeight: 1, color: COLORS.text_primary, fontWeight: 950}}>{entity.label}</div>
+							<div style={{marginTop: 14, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 58, lineHeight: 0.88, color: entity.color}}>+{rupee(entity.amount)}</div>
+						</div>
+					);
+				})}
+				<div
+					style={{
+						position: 'absolute',
+						left: 750,
+						top: 610,
+						width: 330,
+						height: 330,
+						borderRadius: 165,
+						border: `3px solid ${COLORS.warning}`,
+						background: 'rgba(255,209,102,0.08)',
+						boxShadow: '0 0 80px rgba(255,209,102,0.22)',
+						opacity: interpolate(semanticEventProgress, [0.16, 0.86], [0.28, 0.84], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
+					}}
+				/>
+			</Shell>
+		);
+	}
+
+	if (semanticMode === 'permanence_lock_world') {
+		const lockedEntities = lifestyleEntities.slice(0, 5);
+		const lockProgress = interpolate(semanticEventProgress, [0.12, 0.86], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+
+		return (
+			<Shell title="Permanent bills" tone="pressure">
+				<div style={{position: 'absolute', left: 220, top: 214, width: 660, zIndex: 3}}>
+					<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>Upgrade becomes a monthly obligation</div>
+					<div style={{marginTop: 18, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 112, lineHeight: 0.86, color: COLORS.text_primary}}>Lifestyle locks in</div>
+				</div>
+				<div
+					style={{
+						position: 'absolute',
+						left: 1030,
+						top: 150,
+						width: 560,
+						height: 740,
+						borderRadius: 8,
+						border: `2px solid ${COLORS.danger}`,
+						background: 'rgba(230,57,70,0.09)',
+						boxShadow: `0 0 ${50 + lockProgress * 54}px rgba(230,57,70,0.28)`,
+						zIndex: 4,
+					}}
+				>
+					<div style={{position: 'absolute', left: 38, top: 32, fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>Recurring cost stack</div>
+					{lockedEntities.map((entity, index) => {
+						const reveal = interpolate(semanticEventProgress, [index * 0.1, index * 0.1 + 0.28], [0, 1], {
+							extrapolateLeft: 'clamp',
+							extrapolateRight: 'clamp',
+						});
+						return (
+							<div
+								key={entity.id}
+								style={{
+									position: 'absolute',
+									left: 38,
+									top: 106 + index * 112,
+									width: 484,
+									height: 76,
+									borderRadius: 8,
+									border: `2px solid ${entity.color}`,
+									background: `${entity.color}18`,
+									opacity: reveal,
+									transform: `translateX(${(1 - reveal) * 40}px)`,
+								}}
+							>
+								<div style={{position: 'absolute', left: 22, top: 15, fontSize: 30, color: COLORS.text_primary, fontWeight: 950}}>{entity.label}</div>
+								<div style={{position: 'absolute', right: 26, top: 13, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 42, color: entity.color}}>LOCKED</div>
+							</div>
+						);
+					})}
+				</div>
+				<div style={{position: 'absolute', left: 260, bottom: 190, width: 560, height: 30, borderRadius: 999, background: 'rgba(255,255,255,0.08)', overflow: 'hidden'}}>
+					<div style={{width: `${lockProgress * 100}%`, height: '100%', background: COLORS.danger}} />
+				</div>
+			</Shell>
+		);
+	}
+
+	if (semanticMode === 'paper_vs_real_world') {
+		const lineProgress = interpolate(semanticEventProgress, [0.08, 0.86], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+
+		return (
+			<Shell title="Paper vs real life" tone="warning">
+				<div style={{position: 'absolute', left: 190, top: 180, width: 690, height: 660, zIndex: 3}}>
+					<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>Income on paper</div>
+					<div style={{marginTop: 18, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 126, lineHeight: 0.86, color: COLORS.positive}}>
+						{endIncome.value}
+					</div>
+					<svg viewBox="0 0 620 310" style={{position: 'absolute', left: 0, top: 260, width: 620, height: 310, overflow: 'visible'}}>
+						<path d="M 24 250 L 596 250" stroke="rgba(255,255,255,0.14)" strokeWidth={4} />
+						<path d={`M 28 238 C 170 ${228 - lineProgress * 40}, 320 ${190 - lineProgress * 82}, 590 ${92 - lineProgress * 36}`} stroke={COLORS.positive} strokeWidth={14} strokeLinecap="round" fill="none" opacity={0.9} />
+					</svg>
+				</div>
+				<div style={{position: 'absolute', right: 190, top: 180, width: 690, height: 660, zIndex: 3}}>
+					<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>Savings in real life</div>
+					<div style={{marginTop: 18, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 126, lineHeight: 0.86, color: COLORS.danger}}>
+						{newSavings.value}
+					</div>
+					<svg viewBox="0 0 620 310" style={{position: 'absolute', left: 0, top: 260, width: 620, height: 310, overflow: 'visible'}}>
+						<path d="M 24 250 L 596 250" stroke="rgba(255,255,255,0.14)" strokeWidth={4} />
+						<path d="M 28 216 C 180 218, 330 218, 590 216" stroke={COLORS.danger} strokeWidth={14} strokeLinecap="round" fill="none" opacity={0.95} />
+					</svg>
+				</div>
+				<div
+					style={{
+						position: 'absolute',
+						left: 818,
+						top: 456,
+						width: 284,
+						padding: '28px 30px',
+						borderRadius: 8,
+						border: `2px solid ${COLORS.warning}`,
+						background: 'rgba(255,209,102,0.1)',
+						textAlign: 'center',
+						zIndex: 6,
+						opacity: interpolate(semanticEventProgress, [0.28, 0.72], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
+					}}
+				>
+					<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 72, color: COLORS.warning, lineHeight: 0.9}}>GAP</div>
+				</div>
+			</Shell>
+		);
+	}
+
+	if (semanticMode === 'capture_raise_world') {
+		const capture = interpolate(semanticEventProgress, [0.1, 0.72], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+		const leak = 1 - capture;
+
+		return (
+			<Shell title="Capture the raise" tone="optimistic">
+				<div style={{position: 'absolute', left: 190, top: 230, width: 520, zIndex: 4}}>
+					<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>Before lifestyle reacts</div>
+					<div style={{marginTop: 18, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 120, lineHeight: 0.86, color: COLORS.warning}}>{raise.value}</div>
+				</div>
+				<svg viewBox="0 0 1920 1080" style={{position: 'absolute', inset: 0, zIndex: 3, overflow: 'visible'}}>
+					<path d="M 465 520 C 750 500, 850 500, 995 500" stroke={COLORS.warning} strokeWidth={28} strokeLinecap="round" fill="none" opacity={0.92} />
+					<path d="M 995 500 C 1130 430, 1280 380, 1450 320" stroke={COLORS.positive} strokeWidth={28} strokeLinecap="round" fill="none" opacity={capture} />
+					<path d="M 995 500 C 1160 590, 1320 650, 1490 720" stroke={COLORS.danger} strokeWidth={24} strokeLinecap="round" fill="none" opacity={leak * 0.42} />
+				</svg>
+				<div
+					style={{
+						position: 'absolute',
+						left: 850,
+						top: 375,
+						width: 300,
+						height: 250,
+						borderRadius: 8,
+						border: `4px solid ${COLORS.positive}`,
+						background: 'rgba(46,196,182,0.14)',
+						boxShadow: `0 0 ${54 + capture * 58}px rgba(46,196,182,0.36)`,
+						zIndex: 5,
+						transform: `scale(${0.9 + capture * 0.12})`,
+					}}
+				>
+					<div style={{position: 'absolute', left: 34, top: 34, fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>Savings capture</div>
+					<div style={{position: 'absolute', left: 34, bottom: 38, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 74, lineHeight: 0.88, color: COLORS.positive}}>
+						FIRST
+					</div>
+				</div>
+				<div style={{position: 'absolute', right: 250, bottom: 230, width: 390, padding: '24px 30px', borderRadius: 8, border: `2px solid ${COLORS.danger}`, background: 'rgba(230,57,70,0.08)', opacity: leak * 0.7, zIndex: 4}}>
+					<div style={{fontSize: 38, color: COLORS.text_secondary, fontWeight: 950}}>Lifestyle waits outside</div>
+				</div>
+			</Shell>
+		);
+	}
+
+	if (semanticMode === 'protected_savings_world') {
+		const protect = interpolate(semanticEventProgress, [0.08, 0.78], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+		const savingsBoost = oldSavings.amount + raise.amount * protect;
+
+		return (
+			<Shell title="Protected savings" tone="calm">
+				<div
+					style={{
+						position: 'absolute',
+						left: 610,
+						top: 220,
+						width: 700,
+						height: 520,
+						borderRadius: 8,
+						border: `4px solid ${COLORS.positive}`,
+						background: 'rgba(46,196,182,0.12)',
+						boxShadow: `0 0 ${70 + protect * 70}px rgba(46,196,182,0.34)`,
+						zIndex: 4,
+						textAlign: 'center',
+					}}
+				>
+					<div style={{marginTop: 58, fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>Savings jump decided first</div>
+					<div style={{marginTop: 24, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 136, lineHeight: 0.86, color: COLORS.positive}}>
+						{rupee(savingsBoost)}
+					</div>
+					<div style={{margin: '62px auto 0', width: 470, height: 34, borderRadius: 999, background: 'rgba(255,255,255,0.1)', overflow: 'hidden'}}>
+						<div style={{height: '100%', width: `${22 + protect * 72}%`, background: COLORS.positive, boxShadow: `0 0 34px ${COLORS.positive}77`}} />
+					</div>
+				</div>
+				{lifestyleEntities.slice(0, 4).map((entity, index) => (
+					<div
+						key={entity.id}
+						style={{
+							position: 'absolute',
+							left: 178 + index * 386,
+							bottom: 120,
+							width: 290,
+							height: 88,
+							borderRadius: 8,
+							border: `2px solid ${entity.color}`,
+							background: `${entity.color}12`,
+							opacity: 0.2 + (1 - protect) * 0.36,
+							transform: `translateY(${protect * 32}px) scale(${1 - protect * 0.08})`,
+							zIndex: 2,
+						}}
+					>
+						<div style={{position: 'absolute', left: 22, top: 18, fontSize: 30, color: COLORS.text_secondary, fontWeight: 950}}>{entity.label}</div>
+						<div style={{position: 'absolute', right: 22, bottom: 18, fontSize: 24, color: entity.color, fontWeight: 950}}>after savings</div>
+					</div>
 				))}
 			</Shell>
 		);
