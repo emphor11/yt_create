@@ -1,77 +1,160 @@
 {% extends "base.html" %}
-{% block title %}Final Review{% endblock %}
+{% block title %}Final Studio{% endblock %}
 {% block content %}
+<div class="d-flex justify-content-between align-items-start mb-4">
+  <div>
+    <div class="section-label mb-2">Step 4</div>
+    <h1 class="h3 mb-1">Final Studio</h1>
+    <p class="text-secondary mb-0">Watch the full master, choose a thumbnail, and prepare the upload package.</p>
+  </div>
+  <div class="d-flex gap-2">
+    <form method="post" action="{{ url_for('publish.assemble_draft_master', project_id=project.id) }}">
+      <button class="btn btn-primary">Assemble Full Video</button>
+    </form>
+    {% if final_video_exists and project.state != "ready_to_publish" %}
+      <form method="post" action="{{ url_for('publish.mark_master_ready', project_id=project.id) }}">
+        <button class="btn btn-outline-light">Mark Ready</button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+
 <div class="row g-4">
-  <div class="col-lg-7">
-    <div class="card bg-panel border-secondary-subtle h-100">
+  <div class="col-lg-8">
+    <div class="card bg-panel border-secondary-subtle mb-4">
       <div class="card-body">
-        <div class="section-label mb-2">Step 4</div>
-        <h1 class="h4 mb-3">Final Review</h1>
-        <p><strong>Assembly output:</strong> {{ project.final_video_path or "Not assembled yet" }}</p>
-        <p class="text-secondary">Use this page to save the final title, description, thumbnail choice, upload id, and publish time.</p>
-        {% if script_payload %}
-          <h2 class="h6 mt-4">Suggested titles</h2>
-          <ul>
-            {% for title in script_payload.titles %}
-              <li>{{ title }}</li>
-            {% endfor %}
-          </ul>
+        <div class="section-label mb-2">Full Video</div>
+        {% if final_video_exists %}
+          <video class="w-100 rounded border" controls preload="metadata" src="{{ url_for('static_file_proxy', file_path=project.final_video_path) }}"></video>
+          <div class="small text-secondary mt-2">{{ project.final_video_path }}</div>
+        {% else %}
+          <div class="soft-panel p-4">
+            <h2 class="h5">No full master yet</h2>
+            <p class="mb-0 text-secondary">Assemble the full video to review every scene with the voice in one continuous pass.</p>
+          </div>
         {% endif %}
+      </div>
+    </div>
+
+    <div class="card bg-panel border-secondary-subtle mb-4">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <div>
+            <div class="section-label mb-2">Thumbnail</div>
+            <h2 class="h5 mb-0">Creator Variants</h2>
+          </div>
+          <form method="post" action="{{ url_for('publish.regenerate_thumbnails', project_id=project.id) }}">
+            <button class="btn btn-outline-light btn-sm">Regenerate</button>
+          </form>
+        </div>
+        <div class="row g-3">
+          {% for option in thumbnail_options %}
+            <div class="col-md-4">
+              <form method="post" action="{{ url_for('publish.select_thumbnail', project_id=project.id) }}" class="thumbnail-option h-100">
+                <input type="hidden" name="selected_thumbnail_path" value="{{ option.path }}">
+                <button class="thumb-button {% if option.path == project.selected_thumbnail_path %}selected{% endif %}" type="submit">
+                  <img src="{{ url_for('static_file_proxy', file_path=option.path) }}" alt="{{ option.headline }}" class="img-fluid rounded">
+                  <span>{{ option.headline }}</span>
+                </button>
+              </form>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <div class="card bg-panel border-secondary-subtle">
+      <div class="card-body">
+        <div class="section-label mb-2">Scene Timeline</div>
+        <div class="table-responsive">
+          <table class="table align-middle">
+            <thead>
+              <tr>
+                <th>Scene</th>
+                <th>Voice</th>
+                <th>Visual</th>
+                <th>Duration</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for scene in scenes %}
+                <tr>
+                  <td>{{ scene.scene_order }}</td>
+                  <td>{{ scene.audio_source or "not generated" }}</td>
+                  <td>{{ scene.visual_source or "not generated" }}</td>
+                  <td>{{ "%.1f"|format(scene.audio_duration_sec or 0) }}s</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
 
-  <div class="col-lg-5">
+  <div class="col-lg-4">
     <div class="card bg-panel border-secondary-subtle mb-4">
       <div class="card-body">
-        <h2 class="h5">Publish Metadata</h2>
+        <div class="section-label mb-2">Publish Readiness</div>
+        {% for check in publish_readiness.checks %}
+          <div class="d-flex justify-content-between gap-3 py-2 border-bottom">
+            <span>{{ check.label }}</span>
+            <span class="status-pill {% if check.passed %}status-live{% elif check.warning %}status-warning{% else %}status-muted{% endif %}">
+              {{ "OK" if check.passed else "Check" }}
+            </span>
+          </div>
+        {% endfor %}
+        {% if publish_readiness.blocking_issues %}
+          <div class="small text-secondary mt-3">
+            {% for issue in publish_readiness.blocking_issues[:3] %}
+              <div>{{ issue.message }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card bg-panel border-secondary-subtle mb-4">
+      <div class="card-body">
+        <div class="section-label mb-2">Upload Metadata</div>
         <form method="post" action="{{ url_for('publish.save_final_review', project_id=project.id) }}">
           <div class="mb-3">
-            <label class="form-label">Selected title</label>
-            <input class="form-control" name="selected_title" value="{{ project.selected_title or (script_payload.titles[0] if script_payload and script_payload.titles else '') }}">
+            <label class="form-label">Title</label>
+            <input class="form-control" name="selected_title" value="{{ project.selected_title or upload_package.selected_title }}">
           </div>
           <div class="mb-3">
             <label class="form-label">Description</label>
-            <textarea class="form-control" rows="4" name="selected_description">{{ project.selected_description or (script_payload.description if script_payload else '') }}</textarea>
+            <textarea class="form-control" rows="9" name="selected_description">{{ project.selected_description or upload_package.description }}</textarea>
           </div>
           <div class="mb-3">
             <label class="form-label">Thumbnail path</label>
-            <input class="form-control" name="selected_thumbnail_path" value="{{ project.selected_thumbnail_path or '' }}" placeholder="/path/to/thumbnail.jpg">
+            <input class="form-control" name="selected_thumbnail_path" value="{{ project.selected_thumbnail_path or (thumbnail_options[0].path if thumbnail_options else '') }}">
           </div>
-          {% if thumbnail_options %}
-            <div class="mb-3">
-              <label class="form-label">Generated thumbnail options</label>
-              <div class="list-group">
-                {% for option in thumbnail_options %}
-                  <label class="list-group-item bg-transparent text-light border-secondary-subtle">
-                    <input class="form-check-input me-2" type="radio" name="selected_thumbnail_path" value="{{ option }}" {% if option == project.selected_thumbnail_path or (not project.selected_thumbnail_path and loop.first) %}checked{% endif %}>
-                    {{ option }}
-                  </label>
-                {% endfor %}
-              </div>
-            </div>
-          {% endif %}
-          <button class="btn btn-primary">Save Metadata</button>
+          <button class="btn btn-primary w-100">Save Upload Package</button>
         </form>
       </div>
     </div>
 
     <div class="card bg-panel border-secondary-subtle">
       <div class="card-body">
-        <h2 class="h5">Publish Actions</h2>
-        <p class="small text-secondary">The real YouTube upload API is not wired yet, so this section stores metadata and a mock upload id for now.</p>
-        <form class="mb-3" method="post" action="{{ url_for('publish.stage_publish', project_id=project.id) }}">
+        <div class="section-label mb-2">YouTube</div>
+        {% for check in youtube_readiness.checks %}
+          <div class="d-flex justify-content-between gap-3 py-2 border-bottom">
+            <span>{{ check.label }}</span>
+            <span class="status-pill {% if check.passed %}status-live{% else %}status-muted{% endif %}">
+              {{ "OK" if check.passed else "Missing" }}
+            </span>
+          </div>
+        {% endfor %}
+        <form class="mt-3" method="post" action="{{ url_for('publish.youtube_upload', project_id=project.id) }}">
+          <button class="btn btn-success w-100">Upload Private Video</button>
+        </form>
+        <form class="mt-2" method="post" action="{{ url_for('publish.stage_publish', project_id=project.id) }}">
           <button class="btn btn-outline-light w-100">Prepare Publish Record</button>
         </form>
-        <form class="mb-3" method="post" action="{{ url_for('publish.mock_upload', project_id=project.id) }}">
-          <label class="form-label">YouTube video id</label>
-          <input class="form-control mb-2" name="youtube_video_id" value="{{ project.youtube_video_id or '' }}" placeholder="demo-123">
-          <button class="btn btn-outline-light w-100">Store Upload ID</button>
-        </form>
-        <form method="post" action="{{ url_for('publish.schedule_publish', project_id=project.id) }}">
-          <label class="form-label">Schedule publish time (ISO 8601)</label>
-          <input class="form-control mb-2" name="publish_at" value="{{ project.scheduled_publish_at or '' }}" placeholder="2026-04-20T12:30:00+00:00">
-          <button class="btn btn-success w-100">Schedule Publish</button>
+        <form class="mt-2" method="post" action="{{ url_for('publish.mock_upload', project_id=project.id) }}">
+          <input class="form-control mb-2" name="youtube_video_id" value="{{ project.youtube_video_id or '' }}" placeholder="Manual YouTube video id">
+          <button class="btn btn-outline-light w-100">Store Manual ID</button>
         </form>
       </div>
     </div>

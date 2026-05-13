@@ -378,7 +378,7 @@ def project_actions(state: str) -> dict[str, bool]:
         "generate_media": state == "script_approved",
         "scene_review": state in {"scene_review", "assets_ready", "media_generating"},
         "assemble": state == "assets_ready",
-        "final_review": state in {"ready_to_publish", "scheduled", "published", "analyzed", "assembling"},
+        "final_review": state in {"scene_review", "assets_ready", "ready_to_publish", "scheduled", "published", "analyzed", "assembling"},
     }
 
 

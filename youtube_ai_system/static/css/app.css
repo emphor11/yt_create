@@ -150,3 +150,25 @@
 .helper-list li {
   margin-bottom: 0.4rem;
 }
+
+.thumb-button {
+  border: 1px solid #dbe3ef;
+  border-radius: 12px;
+  background: #f8fafc;
+  display: block;
+  padding: 0.5rem;
+  text-align: left;
+  width: 100%;
+}
+
+.thumb-button.selected {
+  border-color: #1d4ed8;
+  box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.15);
+}
+
+.thumb-button span {
+  color: #0f172a;
+  display: block;
+  font-weight: 700;
+  margin-top: 0.5rem;
+}
