@@ -8,6 +8,7 @@ venv/
 node_modules/
 remotion_templates/node_modules/
 remotion_templates/public/render-assets/
+remotion_templates/youtube_ai_system/
 youtube_ai_system/instance/
 youtube_ai_system/storage/
 *.db

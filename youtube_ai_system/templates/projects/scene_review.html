@@ -63,6 +63,40 @@
   </div>
 </div>
 
+<div class="card bg-panel border-secondary-subtle mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start gap-3">
+      <div>
+        <div class="section-label mb-2">Professional Scene QA</div>
+        <h2 class="h5 mb-1">{{ "Passed" if acceptance_report.passed else "Needs fixes before assembly" }}</h2>
+        <p class="text-secondary mb-0">Score: {{ acceptance_report.score }} / 100 · Scenes checked: {{ acceptance_report.scene_count }}</p>
+      </div>
+      <span class="status-pill {{ 'status-live' if acceptance_report.passed else 'status-warning' }}">
+        {{ "Ready" if acceptance_report.passed else "Blocked" }}
+      </span>
+    </div>
+    {% if acceptance_report.blocking_issues %}
+      <div class="alert alert-danger mt-3 mb-0">
+        <strong>Blocking issues</strong>
+        <ul class="small mb-0 mt-2">
+          {% for issue in acceptance_report.blocking_issues %}
+            <li>{% if issue.scene_order is not none %}Scene {{ issue.scene_order }}: {% endif %}{{ issue.message }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% elif acceptance_report.warnings %}
+      <div class="alert alert-warning mt-3 mb-0">
+        <strong>Warnings</strong>
+        <ul class="small mb-0 mt-2">
+          {% for issue in acceptance_report.warnings %}
+            <li>{% if issue.scene_order is not none %}Scene {{ issue.scene_order }}: {% endif %}{{ issue.message }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
 <div class="row g-4">
   {% for scene in scenes %}
     <div class="col-lg-6">

@@ -5,6 +5,7 @@ from flask import Blueprint, flash, redirect, render_template, request, url_for
 from ..models.repository import ProjectRepository
 from ..services.assembly_service import AssemblyService
 from ..services.media_service import MediaService
+from ..services.professional_scene_acceptance import ProfessionalSceneAcceptanceService
 from ..services.state_machine import InvalidTransitionError, StateMachine
 
 media_bp = Blueprint("media", __name__)
@@ -64,6 +65,7 @@ def scene_review(project_id: int):
     media_service = MediaService()
     ratio, _ = media_service.compute_dynamic_visual_ratio(project_id)
     media_summary = media_service.project_media_summary(project_id)
+    acceptance_report = ProfessionalSceneAcceptanceService(repo).evaluate_project(project_id)
     return render_template(
         "projects/scene_review.html",
         project=project,
@@ -71,6 +73,7 @@ def scene_review(project_id: int):
         ratio=ratio,
         threshold=0.6,
         media_summary=media_summary,
+        acceptance_report=acceptance_report.to_dict(),
     )
 
 
@@ -87,6 +90,14 @@ def approve_scenes(project_id: int):
         return redirect(url_for("media.scene_review", project_id=project_id))
     if ratio < 0.6:
         flash("At least 60% of scenes must use dynamic visuals before approval.", "danger")
+        return redirect(url_for("media.scene_review", project_id=project_id))
+    acceptance_report = ProfessionalSceneAcceptanceService().evaluate_project(project_id)
+    if not acceptance_report.passed:
+        issue_text = "; ".join(
+            f"Scene {issue.scene_order}: {issue.message}" if issue.scene_order is not None else issue.message
+            for issue in acceptance_report.blocking_issues[:3]
+        )
+        flash(f"Professional scene QA failed. {issue_text}", "danger")
         return redirect(url_for("media.scene_review", project_id=project_id))
     try:
         StateMachine().transition(project_id, "assets_ready", "Scene review approved.")
@@ -115,6 +126,10 @@ def assemble_project(project_id: int):
     if project["state"] != "assets_ready":
         flash("Assembly is only available after scenes are approved.", "warning")
         return redirect(url_for("projects.project_detail", project_id=project_id))
+    acceptance_report = ProfessionalSceneAcceptanceService().evaluate_project(project_id)
+    if not acceptance_report.passed:
+        flash("Assembly blocked because professional scene QA no longer passes. Review and regenerate weak scenes.", "danger")
+        return redirect(url_for("media.scene_review", project_id=project_id))
 
     state_machine = StateMachine()
     try:
