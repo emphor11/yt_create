@@ -77,6 +77,8 @@ BODY_MIN_WORDS = 160
 BODY_MAX_WORDS = 200
 OUTRO_MIN_WORDS = 110
 OUTRO_MAX_WORDS = 150
+TOTAL_WORD_APPROVAL_TOLERANCE_RATIO = 0.02
+TOTAL_WORD_APPROVAL_TOLERANCE_MIN_WORDS = 15
 DUPLICATE_SCENE_SIMILARITY = 0.92
 VALID_TENSION_TYPES = {
     "curiosity_gap",
@@ -258,7 +260,8 @@ class ScriptService:
 
         total_words = self._payload_word_count(payload)
         minimum_total = self._minimum_total_words_for_target(target_minutes)
-        if total_words < minimum_total:
+        minimum_total_for_approval = self._minimum_total_words_for_approval(target_minutes)
+        if total_words < minimum_total_for_approval:
             errors.append(
                 (
                     f"Target duration is {target_minutes} minutes, but the script has only "
@@ -320,6 +323,14 @@ class ScriptService:
     def _minimum_total_words_for_target(self, target_minutes: int) -> int:
         body_scene_count = max(MIN_BODY_SCENES_FOR_LONG_FORM, int(target_minutes))
         return body_scene_count * BODY_MIN_WORDS + HOOK_MIN_WORDS + OUTRO_MIN_WORDS
+
+    def _minimum_total_words_for_approval(self, target_minutes: int) -> int:
+        target = self._minimum_total_words_for_target(target_minutes)
+        tolerance = max(
+            TOTAL_WORD_APPROVAL_TOLERANCE_MIN_WORDS,
+            round(target * TOTAL_WORD_APPROVAL_TOLERANCE_RATIO),
+        )
+        return max(0, target - tolerance)
 
     def _word_count(self, text: str) -> int:
         return len(re.findall(r"[A-Za-z0-9₹%]+(?:[.,][A-Za-z0-9]+)*", text))

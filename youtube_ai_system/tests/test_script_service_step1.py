@@ -28,6 +28,14 @@ def _find_visual_keys(value, path="root"):
     return found
 
 
+def _spoken_words(count: int, sentence_size: int = 20) -> str:
+    sentences = []
+    for start in range(0, count, sentence_size):
+        end = min(start + sentence_size, count)
+        sentences.append(" ".join(f"word{index}" for index in range(start, end)) + ".")
+    return " ".join(sentences)
+
+
 class ScriptServiceStep1TestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -117,6 +125,44 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
 
         self.assertIn("Generate EXACTLY 10 body scenes", prompt)
         self.assertIn("Total script including hook and outro should be around 1718-2185 spoken words", prompt)
+
+    def test_long_form_total_word_gate_allows_small_generation_shortfall(self) -> None:
+        repo = ProjectRepository()
+        project_id = repo.create_project("near target long script")
+        repo.update_project(project_id, target_duration_minutes=8)
+        body_scenes = [{"kind": "body", "narration": _spoken_words(160)} for _ in range(8)]
+        payload = {
+            "hook": {"narration": _spoken_words(8)},
+            "scenes": body_scenes,
+            "outro": {"narration": _spoken_words(98)},
+        }
+
+        errors = self.service._validate_long_form_depth(
+            {"video_project_id": project_id},
+            payload,
+            body_scenes,
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_long_form_total_word_gate_still_blocks_material_shortfall(self) -> None:
+        repo = ProjectRepository()
+        project_id = repo.create_project("short long script")
+        repo.update_project(project_id, target_duration_minutes=8)
+        body_scenes = [{"kind": "body", "narration": _spoken_words(160)} for _ in range(8)]
+        payload = {
+            "hook": {"narration": _spoken_words(8)},
+            "scenes": body_scenes,
+            "outro": {"narration": _spoken_words(80)},
+        }
+
+        errors = self.service._validate_long_form_depth(
+            {"video_project_id": project_id},
+            payload,
+            body_scenes,
+        )
+
+        self.assertTrue(any("spoken words" in error for error in errors))
 
     def test_groq_rate_limit_wait_parser_uses_error_message(self) -> None:
         response = Mock()
