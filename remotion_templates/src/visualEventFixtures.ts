@@ -118,13 +118,45 @@ const debt = {
 	})),
 };
 
+const leaks = {
+	leaks: [
+		{label: 'Food apps', value: '₹2,400', amount: 2400},
+		{label: 'Subscriptions', value: '₹1,200', amount: 1200},
+		{label: 'Impulse buys', value: '₹3,500', amount: 3500},
+		{label: 'Convenience fees', value: '₹900', amount: 900},
+	],
+	monthly_loss: 8000,
+};
+
+const fomo = {
+	points: [
+		{x: 0.02, y: 0.68},
+		{x: 0.18, y: 0.58},
+		{x: 0.34, y: 0.42},
+		{x: 0.52, y: 0.18},
+		{x: 0.66, y: 0.28},
+		{x: 0.82, y: 0.62},
+		{x: 0.98, y: 0.78},
+	],
+};
+
+const portfolio = {
+	assets: [
+		{label: 'Equity', allocation: 45, color: '#2EC4B6'},
+		{label: 'Debt', allocation: 25, color: '#A7B0C0'},
+		{label: 'FD', allocation: 15, color: '#FF9F1C'},
+		{label: 'Gold', allocation: 10, color: '#B8A44C'},
+		{label: 'Cash', allocation: 5, color: '#77839A'},
+	],
+};
+
 export const visualEventFixtureScenes: Scene[] = [
 	scene('fixture_money_flow', 'MoneyFlowDiagram', [
 		timedBeat('MoneyFlowDiagram', '₹50,000 salary lands', 0, 3, 'intro', 'salary_arrives', 'salary_income', moneyFlow, 'wide_context'),
 		timedBeat('MoneyFlowDiagram', '₹4,000 phone EMI hits', 3, 6, 'drain', 'expense_drains', 'phone_emi', moneyFlow, 'pressure_closeup'),
 		timedBeat('MoneyFlowDiagram', 'Rent and food compress it', 6, 9, 'drain', 'expense_drains', 'rent_expense', moneyFlow, 'pressure_closeup'),
 		timedBeat('MoneyFlowDiagram', '₹6,000 left', 9, 12, 'remainder', 'balance_revealed', 'remaining_balance', moneyFlow, 'survivor_isolation'),
-	]),
+	], 'Salary lands. Phone EMI hits first. Rent drains the account. Food apps compress the balance. Only ₹6,000 is left.'),
 	scene('fixture_lifestyle', 'LifestyleCreepVisualizer', [
 		timedBeat('LifestyleCreepVisualizer', 'Old lifestyle baseline', 0, 3, 'income_base', 'income_baseline', 'old_income', lifestyle, 'wide_context'),
 		timedBeat('LifestyleCreepVisualizer', 'Raise arrives', 3, 6, 'raise_arrives', 'income_rises', 'raise_amount', lifestyle, 'upward_momentum'),
@@ -142,17 +174,35 @@ export const visualEventFixtureScenes: Scene[] = [
 		timedBeat('InflationErosionVisualizer', 'Inflation silently erodes', 3, 6, 'erosion', 'inflation_erodes', 'inflation_rate', inflation, 'pressure_closeup'),
 		timedBeat('InflationErosionVisualizer', 'Basket shrinks', 6, 9, 'erosion', 'basket_shrinks', 'basket_units', inflation, 'focused_growth'),
 		timedBeat('InflationErosionVisualizer', 'Future buying power falls', 9, 12, 'future', 'time_exposes_loss', 'future_value', inflation, 'survivor_isolation'),
-	]),
+	], '₹1,00,000 feels stable today. Inflation silently raises prices. The basket of groceries shrinks. After 5 years, the same money has less buying power.'),
 	scene('fixture_sip', 'SIPGrowthEngine', [
 		timedBeat('SIPGrowthEngine', '₹5,000 seed starts', 0, 3, 'contribution', 'contribution_starts', 'monthly_sip', sip, 'wide_context'),
 		timedBeat('SIPGrowthEngine', 'Returns activate', 3, 6, 'growth', 'return_rate_activates', 'corpus_growth', sip, 'upward_momentum'),
 		timedBeat('SIPGrowthEngine', 'Compounding layers', 6, 9, 'growth', 'contributions_accumulate', 'compounding_layers', sip, 'focused_growth'),
 		timedBeat('SIPGrowthEngine', 'Corpus reveal', 9, 12, 'corpus', 'corpus_revealed', 'final_corpus', sip, 'reward_hero'),
-	]),
+	], 'A small ₹5,000 SIP starts quietly. The 12% return rate begins lifting the corpus. Time gives compounding more layers. After 20 years, the corpus becomes ₹50,00,000.'),
 	scene('fixture_debt', 'DebtSpiralVisualizer', [
 		timedBeat('DebtSpiralVisualizer', '₹1,00,000 principal', 0, 3, 'principal', 'debt_appears', 'principal_balance', debt, 'wide_context'),
 		timedBeat('DebtSpiralVisualizer', 'Interest attaches', 3, 6, 'spiral', 'interest_rate_attaches', 'monthly_interest', debt, 'pressure_closeup'),
 		timedBeat('DebtSpiralVisualizer', 'Spiral accelerates', 6, 9, 'spiral', 'interest_accumulates', 'debt_spiral', debt, 'pressure_closeup'),
 		timedBeat('DebtSpiralVisualizer', 'Trap consequence', 9, 12, 'consequence', 'minimum_payment_fails', 'remaining_balance', debt, 'survivor_isolation'),
-	]),
+	], 'A ₹1,00,000 principal balance starts the spiral. Interest attaches every month. The minimum payment is not enough. The unpaid gap accelerates the spiral. After 12 months, you owe more.'),
+	scene('fixture_leaks', 'SmallLeaksAccumulator', [
+		timedBeat('SmallLeaksAccumulator', 'Food apps start the leak', 0, 3, 'first_leak', 'leak_appears', 'food_apps', leaks, 'wide_context'),
+		timedBeat('SmallLeaksAccumulator', 'Subscriptions and impulse buys repeat', 3, 6, 'repeat', 'leaks_repeat', 'leak_group', leaks, 'pressure_closeup'),
+		timedBeat('SmallLeaksAccumulator', 'Convenience fees add up', 6, 9, 'repeat', 'leaks_repeat', 'leak_group', leaks, 'pressure_closeup'),
+		timedBeat('SmallLeaksAccumulator', 'Month end loss is exposed', 9, 12, 'month_end', 'month_end_loss', 'monthly_loss', leaks, 'survivor_isolation'),
+	], 'Food apps start as one small leak. Subscriptions repeat in the background. Impulse buys join next. Convenience fees keep adding up. By month end, ₹8,000 is gone.'),
+	scene('fixture_fomo', 'FOMOPriceCrashVisualizer', [
+		timedBeat('FOMOPriceCrashVisualizer', 'Hype runs first', 0, 3, 'rise', 'hype_rises', 'price_rise', fomo, 'upward_momentum'),
+		timedBeat('FOMOPriceCrashVisualizer', 'FOMO buys the peak', 3, 6, 'rise', 'buy_peak', 'peak_entry', fomo, 'pressure_closeup'),
+		timedBeat('FOMOPriceCrashVisualizer', 'The crash arrives', 6, 9, 'crash', 'price_crashes', 'crash_drop', fomo, 'pressure_closeup'),
+		timedBeat('FOMOPriceCrashVisualizer', 'Loss gets locked', 9, 12, 'loss', 'loss_locks', 'panic_loss', fomo, 'survivor_isolation'),
+	], 'Hype runs first and the chart gets loud. FOMO buys at the peak. Then the crash drops fast. Panic after entry locks the loss.'),
+	scene('fixture_portfolio', 'PortfolioDiversificationVisualizer', [
+		timedBeat('PortfolioDiversificationVisualizer', 'One stock decides everything', 0, 3, 'concentrated', 'single_bet', 'one_stock', portfolio, 'wide_context'),
+		timedBeat('PortfolioDiversificationVisualizer', 'Equity, debt, FD, gold, and cash spread risk', 3, 6, 'spread', 'risk_spreads', 'asset_mix', portfolio, 'comparison_focus'),
+		timedBeat('PortfolioDiversificationVisualizer', 'One asset falls', 6, 9, 'impact', 'asset_falls', 'falling_asset', portfolio, 'pressure_closeup'),
+		timedBeat('PortfolioDiversificationVisualizer', 'The portfolio absorbs impact', 9, 12, 'impact', 'impact_absorbed', 'portfolio_mix', portfolio, 'survivor_isolation'),
+	], 'One stock decides everything. Equity gets one allocation. Debt gets another. FD, gold, and cash spread the risk. When one asset falls, the portfolio absorbs the impact.'),
 ];

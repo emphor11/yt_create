@@ -4,8 +4,14 @@ import {BODY_FONT_FAMILY, DISPLAY_FONT_FAMILY, FONT_FACES} from '../fonts';
 import {BeatComponentProps} from './types';
 import {COLORS, SPACING, SPRINGS, TYPE_SCALE, formatIndianRupee, getBeatData, getBeatProgress} from './visualUtils';
 import {resolveVisualEvent} from './visualEvents';
+import {TimedSentence, currentSceneProgress, narrationSentences, sceneNarrationText} from './narrationTiming';
 
 type BalancePoint = {month: number; balance: number; interest: number; principal_paid: number};
+type DebtMoment = {
+	startProgress: number;
+	endProgress: number;
+	visualMode: 'principal_anchor' | 'interest_focus' | 'minimum_payment_gap' | 'spiral_acceleration' | 'trap_consequence';
+};
 
 const spiralPoints = (count: number, progress: number) => {
 	const points: string[] = [];
@@ -21,11 +27,46 @@ const spiralPoints = (count: number, progress: number) => {
 	return points.join(' ');
 };
 
+const semanticModeForSentence = (sentence: string): DebtMoment['visualMode'] | null => {
+	if (/trap|consequence|owe\s+more|still\s+growing|stuck|worse|after\s+\d+|month\s+\d+/i.test(sentence)) {
+		return 'trap_consequence';
+	}
+	if (/minimum|payment|not\s+enough|gap|unpaid|shortfall/i.test(sentence)) {
+		return 'minimum_payment_gap';
+	}
+	if (/spiral|accelerat|keeps?\s+growing|rolls?\s+over|snowball|grows?/i.test(sentence)) {
+		return 'spiral_acceleration';
+	}
+	if (/interest|rate|charges?|attaches?|added/i.test(sentence)) {
+		return 'interest_focus';
+	}
+	if (/principal|borrowed|balance|debt\s+starts?|starting|original/i.test(sentence)) {
+		return 'principal_anchor';
+	}
+	return null;
+};
+
+const momentForSentence = (sentence: TimedSentence, visualMode: DebtMoment['visualMode']): DebtMoment => ({
+	startProgress: Math.max(0, sentence.startProgress - 0.004),
+	endProgress: Math.min(1, sentence.endProgress + 0.01),
+	visualMode,
+});
+
+const buildDebtSequence = (narration: string): DebtMoment[] =>
+	narrationSentences(narration)
+		.map((sentence) => {
+			const visualMode = semanticModeForSentence(sentence.text);
+			return visualMode ? momentForSentence(sentence, visualMode) : null;
+		})
+		.filter(Boolean) as DebtMoment[];
+
 export const DebtSpiralVisualizer: React.FC<BeatComponentProps> = ({beat, scene, frameWithinBeat, durationFrames}) => {
 	const {fps} = useVideoConfig();
 	const data = getBeatData<Record<string, unknown>>(beat) ?? {};
 	const phase = String(beat.beat_phase ?? data.active_phase ?? 'spiral');
 	const event = resolveVisualEvent(beat, scene, 'DebtSpiralVisualizer');
+	const narration = sceneNarrationText(scene);
+	const sceneProgress = currentSceneProgress(scene, beat, frameWithinBeat, fps);
 	const principal = data.principal as {value?: string; amount?: number} | undefined;
 	const balances = Array.isArray(data.balances) ? (data.balances as BalancePoint[]) : [];
 	const monthlyInterest = Number(data.monthly_interest ?? 0);
@@ -51,6 +92,64 @@ export const DebtSpiralVisualizer: React.FC<BeatComponentProps> = ({beat, scene,
 					: 0.42;
 	const sidePanelDominance = event.kind === 'interest_attachment' ? 1.16 : event.kind === 'trap_consequence' ? 0.72 : 0.9;
 	const dim = event.kind === 'trap_consequence' ? 0.34 : event.kind === 'spiral_acceleration' ? 0.16 : 0.05;
+	const semanticMoment = buildDebtSequence(narration)
+		.filter((moment) => sceneProgress >= moment.startProgress && sceneProgress <= moment.endProgress)
+		.sort((a, b) => b.startProgress - a.startProgress)[0];
+	const semanticEventProgress = semanticMoment
+		? Math.max(0, Math.min((sceneProgress - semanticMoment.startProgress) / Math.max(semanticMoment.endProgress - semanticMoment.startProgress, 0.001), 1))
+		: rawProgress;
+
+	if (semanticMoment?.visualMode === 'interest_focus') {
+		const attach = interpolate(semanticEventProgress, [0.06, 0.82], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+
+		return (
+			<AbsoluteFill style={{background: COLORS.bg_deep, color: COLORS.text_primary, padding: SPACING.safe, fontFamily: BODY_FONT_FAMILY, overflow: 'hidden'}}>
+				<style>{FONT_FACES}</style>
+				<div style={{position: 'absolute', inset: -140, background: 'radial-gradient(circle at 68% 42%, rgba(230,57,70,0.34), transparent 31%), linear-gradient(125deg, #070711, #171018 58%, #080811)'}} />
+				<div style={{position: 'absolute', inset: 0, left: 0, width: 8, background: COLORS.danger}} />
+				<div style={{fontSize: TYPE_SCALE.label.size, fontWeight: 900, color: COLORS.text_secondary}}>Interest attaches</div>
+				<div style={{position: 'absolute', left: 220, top: 320, width: 520, opacity: 0.48}}>
+					<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>Starting balance</div>
+					<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 108, lineHeight: 0.88}}>{principal?.value ?? formatIndianRupee(Number(principal?.amount ?? 0))}</div>
+				</div>
+				<div style={{position: 'absolute', right: 250, top: 250, width: 610, padding: '44px 52px', borderRadius: 8, border: `4px solid ${COLORS.danger}`, background: 'rgba(20,8,11,0.95)', boxShadow: `0 0 ${70 + attach * 82}px rgba(230,57,70,0.38)`, transform: `scale(${0.9 + attach * 0.13})`}}>
+					<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 950}}>Monthly interest</div>
+					<div style={{marginTop: 18, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 142, lineHeight: 0.82, color: COLORS.danger}}>{formatIndianRupee(monthlyInterest)}</div>
+					<div style={{marginTop: 32, height: 24, borderRadius: 999, background: 'rgba(255,255,255,0.09)', overflow: 'hidden'}}>
+						<div style={{height: '100%', width: `${34 + attach * 58}%`, background: COLORS.danger}} />
+					</div>
+				</div>
+				<svg viewBox="0 0 1920 1080" style={{position: 'absolute', inset: 0}}>
+					<path d="M 725 510 C 850 510, 970 510, 1120 510" stroke={COLORS.danger} strokeWidth="26" strokeLinecap="round" fill="none" opacity={attach} />
+				</svg>
+			</AbsoluteFill>
+		);
+	}
+
+	if (semanticMoment?.visualMode === 'minimum_payment_gap') {
+		const gapPull = interpolate(semanticEventProgress, [0.08, 0.84], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+
+		return (
+			<AbsoluteFill style={{background: COLORS.bg_deep, color: COLORS.text_primary, padding: SPACING.safe, fontFamily: BODY_FONT_FAMILY, overflow: 'hidden'}}>
+				<style>{FONT_FACES}</style>
+				<div style={{position: 'absolute', inset: -140, background: 'radial-gradient(circle at 54% 48%, rgba(230,57,70,0.28), transparent 30%), linear-gradient(130deg, #070711, #151018 58%, #080811)'}} />
+				<div style={{position: 'absolute', inset: 0, left: 0, width: 8, background: COLORS.danger}} />
+				<div style={{fontSize: TYPE_SCALE.label.size, fontWeight: 900, color: COLORS.text_secondary}}>Payment gap</div>
+				<div style={{position: 'absolute', left: 260, top: 275, width: 500, padding: '34px 38px', borderRadius: 8, background: COLORS.bg_surface, border: `2px solid ${COLORS.warning}`}}>
+					<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>Minimum payment</div>
+					<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 104, lineHeight: 0.86, color: COLORS.warning}}>{minimumPayment ? formatIndianRupee(minimumPayment) : 'too small'}</div>
+				</div>
+				<div style={{position: 'absolute', right: 260, top: 275, width: 500, padding: '34px 38px', borderRadius: 8, background: 'rgba(230,57,70,0.15)', border: `3px solid ${COLORS.danger}`, boxShadow: `0 0 ${48 + gapPull * 68}px rgba(230,57,70,0.32)`}}>
+					<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>Interest charged</div>
+					<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 104, lineHeight: 0.86, color: COLORS.danger}}>{formatIndianRupee(monthlyInterest)}</div>
+				</div>
+				<div style={{position: 'absolute', left: 0, right: 0, bottom: 190, textAlign: 'center', transform: `scale(${0.92 + gapPull * 0.1})`}}>
+					<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>unpaid gap survives</div>
+					<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 118, lineHeight: 0.86, color: COLORS.danger, textShadow: `0 0 ${50 + gapPull * 68}px rgba(230,57,70,0.42)`}}>{formatIndianRupee(monthlyGap)}</div>
+				</div>
+			</AbsoluteFill>
+		);
+	}
 
 	return (
 		<AbsoluteFill

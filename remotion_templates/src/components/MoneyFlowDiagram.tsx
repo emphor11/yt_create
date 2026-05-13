@@ -4,6 +4,7 @@ import {BODY_FONT_FAMILY, DISPLAY_FONT_FAMILY, FONT_FACES} from '../fonts';
 import {BeatComponentProps} from './types';
 import {COLORS, SPACING, SPRINGS, TYPE_SCALE, formatIndianRupee, getBeatData, getBeatProgress} from './visualUtils';
 import {ResolvedVisualEvent, resolveVisualEvent} from './visualEvents';
+import {TimedSentence, currentSceneProgress, firstKeywordIndex, narrationSentences, sceneNarrationText} from './narrationTiming';
 
 type Flow = {
 	label: string;
@@ -65,6 +66,13 @@ type LayoutProfile = {
 	remainderScale: number;
 	remainderOpacityBoost: number;
 	backgroundDim: number;
+};
+
+type MoneyFlowMoment = {
+	flowIndex?: number;
+	startProgress: number;
+	endProgress: number;
+	visualMode: 'salary_anchor' | 'expense_focus' | 'compression_world' | 'survivor_isolation';
 };
 
 const DEFAULT_LAYOUT: LayoutProfile = {
@@ -443,6 +451,74 @@ const activeFlowIndex = (flows: Flow[], event: ResolvedVisualEvent) => {
 	return -1;
 };
 
+const keywordsForFlow = (label: string) =>
+	Array.from(new Set([
+		label.toLowerCase(),
+		...label.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 2),
+	]));
+
+const semanticModeForSentence = (sentence: string): MoneyFlowMoment['visualMode'] | null => {
+	if (/left\s+over|only\s+₹|only\s+rs|survives?|remaining|remainder|balance\s+left|cash\s+left/i.test(sentence)) {
+		return 'survivor_isolation';
+	}
+	if (/compress|pile|pressure|expenses?\s+(hit|attack|drain|eat|consume)|drain|gone|leaves?/i.test(sentence)) {
+		return 'compression_world';
+	}
+	if (/salary|income|money\s+(arrives?|lands?|comes\s+in)|paycheck/i.test(sentence)) {
+		return 'salary_anchor';
+	}
+	return null;
+};
+
+const momentForSentence = (sentence: TimedSentence, visualMode: MoneyFlowMoment['visualMode']): MoneyFlowMoment => ({
+	startProgress: Math.max(0, sentence.startProgress - 0.004),
+	endProgress: Math.min(1, sentence.endProgress + 0.01),
+	visualMode,
+});
+
+const buildMoneyFlowSequence = (narration: string, flows: Flow[]): MoneyFlowMoment[] => {
+	const sentences = narrationSentences(narration);
+	const moments: MoneyFlowMoment[] = [];
+
+	for (const sentence of sentences) {
+		const lowered = sentence.text.toLowerCase();
+		const mentioned = flows
+			.map((flow, index) => ({index, hit: firstKeywordIndex(lowered, keywordsForFlow(flow.label))}))
+			.filter((item) => item.hit >= 0)
+			.sort((a, b) => a.hit - b.hit);
+		if (mentioned.length > 0) {
+			const span = sentence.endProgress - sentence.startProgress;
+			const slot = span / mentioned.length;
+			mentioned.forEach((item, order) => {
+				moments.push({
+					flowIndex: item.index,
+					startProgress: Math.max(0, sentence.startProgress + slot * order - 0.004),
+					endProgress: Math.min(1, sentence.startProgress + slot * (order + 1) + 0.006),
+					visualMode: 'expense_focus',
+				});
+			});
+			continue;
+		}
+		const semanticMode = semanticModeForSentence(sentence.text);
+		if (semanticMode) {
+			moments.push(momentForSentence(sentence, semanticMode));
+		}
+	}
+
+	return moments.sort((a, b) => a.startProgress - b.startProgress);
+};
+
+const moneyFlowMomentPresence = (progress: number, moment: MoneyFlowMoment) => {
+	if (progress < moment.startProgress || progress > moment.endProgress) {
+		return 0;
+	}
+	const enterEnd = moment.startProgress + (moment.endProgress - moment.startProgress) * 0.32;
+	const exitStart = moment.startProgress + (moment.endProgress - moment.startProgress) * 0.72;
+	const enter = interpolate(progress, [moment.startProgress, enterEnd], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+	const exit = interpolate(progress, [exitStart, moment.endProgress], [1, 0.64], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+	return enter * exit;
+};
+
 export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, scene, frameWithinBeat, durationFrames}) => {
 	const {fps} = useVideoConfig();
 	const rawData = getBeatData<Record<string, unknown>>(beat) ?? {};
@@ -451,6 +527,13 @@ export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, scene, fra
 	const visualState = resolveVisualState(beat, scene);
 	const activeShot = resolveShot(beat, scene);
 	const {source, flows, remainder} = moneyFlowData(beat);
+	const narration = sceneNarrationText(scene);
+	const sceneProgress = currentSceneProgress(scene, beat, frameWithinBeat, fps);
+	const semanticMoment = buildMoneyFlowSequence(narration, flows)
+		.filter((moment) => sceneProgress >= moment.startProgress && sceneProgress <= moment.endProgress)
+		.sort((a, b) => b.startProgress - a.startProgress)[0];
+	const semanticPresence = semanticMoment ? moneyFlowMomentPresence(sceneProgress, semanticMoment) : 0;
+	const semanticFlow = typeof semanticMoment?.flowIndex === 'number' ? flows[semanticMoment.flowIndex] : undefined;
 	const focusFlow = activeFlowIndex(flows, event);
 	const layoutTarget = layoutForEvent(layoutForShot(layoutForState(visualState), activeShot), event);
 	const layoutMix = spring({frame: Math.min(frameWithinBeat, 22), fps, config: SPRINGS.entry, durationInFrames: 22});
@@ -472,6 +555,72 @@ export const MoneyFlowDiagram: React.FC<BeatComponentProps> = ({beat, scene, fra
 	const shotType = String(activeShot?.shot_type ?? 'default');
 	const focusTarget = String(activeShot?.focus_target ?? 'default');
 	const framingProfile = String(activeShot?.framing_profile ?? 'default');
+
+	if (semanticMoment?.visualMode === 'expense_focus' && semanticFlow) {
+		const flowColor = semanticFlow.color === 'red' ? COLORS.danger : semanticFlow.color === 'teal' ? COLORS.positive : COLORS.warning;
+
+		return (
+			<AbsoluteFill style={{background: COLORS.bg_deep, color: COLORS.text_primary, padding: SPACING.safe, fontFamily: BODY_FONT_FAMILY, overflow: 'hidden'}}>
+				<style>{FONT_FACES}</style>
+				<div style={{position: 'absolute', inset: -120, background: `radial-gradient(circle at 70% 42%, ${flowColor}30, transparent 30%), linear-gradient(120deg, #070711, #15101a 58%, #080811)`}} />
+				<div style={{position: 'absolute', inset: 0, left: 0, width: 8, background: flowColor}} />
+				<div style={{fontSize: TYPE_SCALE.label.size, fontWeight: 900, color: COLORS.text_secondary}}>Expense focus</div>
+				<div style={{position: 'absolute', left: 210, top: 330, width: 390, opacity: 0.46}}>
+					<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>{source.label}</div>
+					<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 94, lineHeight: 0.9}}>{source.value}</div>
+				</div>
+				<svg viewBox="0 0 1920 1080" style={{position: 'absolute', inset: 0, zIndex: 2, overflow: 'visible'}}>
+					<path d="M 555 510 C 760 510, 880 506, 1015 506" stroke="rgba(255,255,255,0.12)" strokeWidth={34} strokeLinecap="round" fill="none" />
+					<path d="M 555 510 C 760 510, 880 506, 1015 506" stroke={flowColor} strokeWidth={28} strokeLinecap="round" fill="none" opacity={semanticPresence} />
+				</svg>
+				<div
+					style={{
+						position: 'absolute',
+						left: 900,
+						top: 304,
+						width: 560,
+						padding: '42px 48px',
+						borderRadius: 8,
+						border: `4px solid ${flowColor}`,
+						background: 'rgba(8,8,14,0.96)',
+						boxShadow: `0 0 ${70 + semanticPresence * 80}px ${flowColor}55`,
+						transform: `scale(${0.9 + semanticPresence * 0.14})`,
+						zIndex: 5,
+					}}
+				>
+					<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 950}}>This drain hits now</div>
+					<div style={{marginTop: 10, fontSize: 46, color: COLORS.text_primary, fontWeight: 950}}>{semanticFlow.label}</div>
+					<div style={{marginTop: 20, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 112, lineHeight: 0.86, color: flowColor}}>{semanticFlow.value}</div>
+				</div>
+				<div style={{position: 'absolute', right: 230, bottom: 170, opacity: 0.76}}>
+					<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>left over</div>
+					<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 86, lineHeight: 0.9, color: accentColor}}>{remainder.value}</div>
+				</div>
+			</AbsoluteFill>
+		);
+	}
+
+	if (semanticMoment?.visualMode === 'survivor_isolation') {
+		return (
+			<AbsoluteFill style={{background: COLORS.bg_deep, color: COLORS.text_primary, padding: SPACING.safe, fontFamily: BODY_FONT_FAMILY, overflow: 'hidden'}}>
+				<style>{FONT_FACES}</style>
+				<div style={{position: 'absolute', inset: 0, background: 'black', opacity: 0.42}} />
+				<div style={{position: 'absolute', inset: -140, background: `radial-gradient(circle at 50% 52%, ${accentColor}24, transparent 25%), linear-gradient(135deg, #04050a, #0c0a12 60%, #04050a)`}} />
+				<div style={{position: 'absolute', inset: 0, left: 0, width: 8, background: accentColor}} />
+				<div style={{fontSize: TYPE_SCALE.label.size, fontWeight: 900, color: COLORS.text_secondary}}>What survives</div>
+				<div style={{position: 'absolute', left: 0, right: 0, top: 310, textAlign: 'center', zIndex: 4}}>
+					<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>Left after the drains</div>
+					<div style={{marginTop: 14, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 158, lineHeight: 0.84, color: accentColor, textShadow: `0 0 ${70 + semanticPresence * 70}px ${accentColor}66`}}>{remainder.value}</div>
+					<div style={{margin: '58px auto 0', width: 160, height: 20, borderRadius: 999, background: 'rgba(255,255,255,0.09)', overflow: 'hidden'}}>
+						<div style={{height: '100%', width: `${Math.max(10, Math.min((remainder.amount / Math.max(source.amount, 1)) * 100, 100))}%`, background: accentColor}} />
+					</div>
+				</div>
+				<div style={{position: 'absolute', left: 300, bottom: 120, right: 300, display: 'flex', gap: 14, justifyContent: 'center', opacity: 0.18}}>
+					{flows.map((flow) => <div key={flow.label} style={{width: 210, height: 64, borderRadius: 8, border: `1px solid ${COLORS.danger}`, background: 'rgba(230,57,70,0.12)'}} />)}
+				</div>
+			</AbsoluteFill>
+		);
+	}
 
 	return (
 		<AbsoluteFill

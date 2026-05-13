@@ -4,6 +4,7 @@ import {BODY_FONT_FAMILY, DISPLAY_FONT_FAMILY, FONT_FACES} from '../fonts';
 import {BeatComponentProps} from './types';
 import {COLORS, SPACING, SPRINGS, TYPE_SCALE, formatIndianRupee, getBeatData, getBeatProgress} from './visualUtils';
 import {ResolvedVisualEvent, resolveVisualEvent} from './visualEvents';
+import {TimedSentence, currentSceneProgress, narrationSentences, sceneNarrationText} from './narrationTiming';
 
 type VisualState = {
 	state_type?: string;
@@ -63,6 +64,12 @@ type GrowthLayout = {
 	ratioY: number;
 	ratioScale: number;
 	backgroundLift: number;
+};
+
+type SIPMoment = {
+	startProgress: number;
+	endProgress: number;
+	visualMode: 'seed_focus' | 'return_rate_focus' | 'time_horizon_world' | 'compounding_world' | 'corpus_reveal';
 };
 
 const DEFAULT_LAYOUT: GrowthLayout = {
@@ -465,11 +472,46 @@ const mixedLayout = (target: GrowthLayout, amount: number): GrowthLayout => ({
 	backgroundLift: mix(DEFAULT_LAYOUT.backgroundLift, target.backgroundLift, amount),
 });
 
+const semanticModeForSentence = (sentence: string): SIPMoment['visualMode'] | null => {
+	if (/compound|compounding|snowball|layers?|multiplies?|growth\s+on\s+growth/i.test(sentence)) {
+		return 'compounding_world';
+	}
+	if (/returns?|rate|percent|%|interest|market/i.test(sentence)) {
+		return 'return_rate_focus';
+	}
+	if (/final|wealth|lakh|crore|goal|corpus\s+(becomes?|turns?|lands?|reaches?)|becomes?\s+₹|turns?\s+into|ends?\s+at/i.test(sentence)) {
+		return 'corpus_reveal';
+	}
+	if (/years?|time|long\s+term|decade|horizon|20|15|10/i.test(sentence)) {
+		return 'time_horizon_world';
+	}
+	if (/sip|seed|small|monthly|invest|contribution|starts?|begin/i.test(sentence)) {
+		return 'seed_focus';
+	}
+	return null;
+};
+
+const momentForSentence = (sentence: TimedSentence, visualMode: SIPMoment['visualMode']): SIPMoment => ({
+	startProgress: Math.max(0, sentence.startProgress - 0.004),
+	endProgress: Math.min(1, sentence.endProgress + 0.01),
+	visualMode,
+});
+
+const buildSIPSequence = (narration: string): SIPMoment[] =>
+	narrationSentences(narration)
+		.map((sentence) => {
+			const visualMode = semanticModeForSentence(sentence.text);
+			return visualMode ? momentForSentence(sentence, visualMode) : null;
+		})
+		.filter(Boolean) as SIPMoment[];
+
 export const SIPGrowthEngine: React.FC<BeatComponentProps> = ({beat, scene, frameWithinBeat, durationFrames}) => {
 	const {fps} = useVideoConfig();
 	const data = getBeatData<Record<string, unknown>>(beat) ?? {};
 	const phase = String(beat.beat_phase ?? data.active_phase ?? 'growth');
 	const event = resolveVisualEvent(beat, scene, 'SIPGrowthEngine');
+	const narration = sceneNarrationText(scene);
+	const sceneProgress = currentSceneProgress(scene, beat, frameWithinBeat, fps);
 	const visualState = resolveVisualState(beat, scene);
 	const activeShot = resolveShot(beat, scene);
 	const layoutTarget = layoutForEvent(layoutForShot(layoutForState(visualState), activeShot), event);
@@ -506,6 +548,114 @@ export const SIPGrowthEngine: React.FC<BeatComponentProps> = ({beat, scene, fram
 	const investedVisualOpacity = layout.investedOpacity * (1 - layout.rewardIsolation * 0.45);
 	const corpusVisualOpacity = layout.corpusOpacity;
 	const backgroundGlow = `radial-gradient(circle at ${66 + layout.rewardIsolation * 10}% ${38 - layout.backgroundLift * 18}%, rgba(46,196,182,${0.10 + layout.glowIntensity * 0.42}), transparent ${26 + layout.negativeSpace * 20}%), ${COLORS.bg_deep}`;
+	const semanticMoment = buildSIPSequence(narration)
+		.filter((moment) => sceneProgress >= moment.startProgress && sceneProgress <= moment.endProgress)
+		.sort((a, b) => b.startProgress - a.startProgress)[0];
+	const semanticEventProgress = semanticMoment
+		? Math.max(0, Math.min((sceneProgress - semanticMoment.startProgress) / Math.max(semanticMoment.endProgress - semanticMoment.startProgress, 0.001), 1))
+		: rawProgress;
+
+	if (semanticMoment?.visualMode === 'return_rate_focus') {
+		const ratePull = interpolate(semanticEventProgress, [0.08, 0.82], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+
+		return (
+			<AbsoluteFill style={{background: COLORS.bg_deep, color: COLORS.text_primary, padding: SPACING.safe, fontFamily: BODY_FONT_FAMILY, overflow: 'hidden'}}>
+				<style>{FONT_FACES}</style>
+				<div style={{position: 'absolute', inset: -140, background: 'radial-gradient(circle at 68% 40%, rgba(46,196,182,0.32), transparent 30%), linear-gradient(125deg, #05070d, #081417 58%, #05070d)'}} />
+				<div style={{position: 'absolute', inset: 0, left: 0, width: 8, background: COLORS.positive}} />
+				<div style={{fontSize: TYPE_SCALE.label.size, fontWeight: 900, color: COLORS.text_secondary}}>Return rate takes focus</div>
+				<div style={{position: 'absolute', left: 220, top: 300, width: 470, opacity: 0.48}}>
+					<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>Monthly seed</div>
+					<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 104, lineHeight: 0.88}}>{sip?.value ?? formatIndianRupee(Number(sip?.amount ?? 0))}</div>
+				</div>
+				<div style={{position: 'absolute', right: 250, top: 240, width: 620, padding: '46px 54px', borderRadius: 8, border: `4px solid ${COLORS.positive}`, background: 'rgba(7,18,18,0.94)', boxShadow: `0 0 ${70 + ratePull * 86}px rgba(46,196,182,0.38)`, transform: `scale(${0.9 + ratePull * 0.13})`}}>
+					<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 950}}>Annual return assumption</div>
+					<div style={{marginTop: 18, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 148, lineHeight: 0.82, color: COLORS.positive}}>{annualReturn}%</div>
+					<div style={{marginTop: 34, height: 24, borderRadius: 999, background: 'rgba(255,255,255,0.09)', overflow: 'hidden'}}>
+						<div style={{height: '100%', width: `${32 + ratePull * 58}%`, background: COLORS.positive}} />
+					</div>
+				</div>
+				<div style={{position: 'absolute', left: 710, top: 535, width: 380, height: 3, background: COLORS.positive, boxShadow: '0 0 34px rgba(46,196,182,0.7)', transform: `scaleX(${ratePull})`, transformOrigin: 'left center'}} />
+			</AbsoluteFill>
+		);
+	}
+
+	if (semanticMoment?.visualMode === 'time_horizon_world') {
+		const timePull = interpolate(semanticEventProgress, [0.06, 0.84], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+		const markers = [0, 5, 10, 15, durationYears];
+
+		return (
+			<AbsoluteFill style={{background: COLORS.bg_deep, color: COLORS.text_primary, padding: SPACING.safe, fontFamily: BODY_FONT_FAMILY, overflow: 'hidden'}}>
+				<style>{FONT_FACES}</style>
+				<div style={{position: 'absolute', inset: -140, background: 'radial-gradient(circle at 50% 52%, rgba(255,209,102,0.2), transparent 29%), linear-gradient(135deg, #05070d, #0d1018 58%, #05070d)'}} />
+				<div style={{position: 'absolute', inset: 0, left: 0, width: 8, background: COLORS.warning}} />
+				<div style={{fontSize: TYPE_SCALE.label.size, fontWeight: 900, color: COLORS.text_secondary}}>Time becomes the engine</div>
+				<div style={{position: 'absolute', left: 0, right: 0, top: 250, textAlign: 'center'}}>
+					<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>Investment horizon</div>
+					<div style={{marginTop: 16, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 166, lineHeight: 0.82, color: COLORS.warning, textShadow: '0 0 60px rgba(255,209,102,0.36)'}}>{durationYears} years</div>
+				</div>
+				<div style={{position: 'absolute', left: 260, right: 260, bottom: 265, height: 18, borderRadius: 999, background: 'rgba(255,255,255,0.1)', overflow: 'hidden'}}>
+					<div style={{height: '100%', width: `${timePull * 100}%`, background: COLORS.warning, boxShadow: '0 0 40px rgba(255,209,102,0.62)'}} />
+				</div>
+				{markers.map((marker, index) => (
+					<div key={`${marker}-${index}`} style={{position: 'absolute', left: 260 + index * 350, bottom: 200, opacity: interpolate(timePull, [index * 0.12, index * 0.12 + 0.2], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'})}}>
+						<div style={{width: 3, height: 52, background: COLORS.warning, marginBottom: 16}} />
+						<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 44, color: COLORS.warning}}>{marker}y</div>
+					</div>
+				))}
+			</AbsoluteFill>
+		);
+	}
+
+	if (semanticMoment?.visualMode === 'compounding_world') {
+		const layerPull = interpolate(semanticEventProgress, [0.06, 0.86], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+
+		return (
+			<AbsoluteFill style={{background: COLORS.bg_deep, color: COLORS.text_primary, padding: SPACING.safe, fontFamily: BODY_FONT_FAMILY, overflow: 'hidden'}}>
+				<style>{FONT_FACES}</style>
+				<div style={{position: 'absolute', inset: -160, background: 'radial-gradient(circle at 58% 48%, rgba(46,196,182,0.34), transparent 32%), linear-gradient(130deg, #05070d, #081817 58%, #05070d)'}} />
+				<div style={{position: 'absolute', inset: 0, left: 0, width: 8, background: COLORS.positive}} />
+				<div style={{fontSize: TYPE_SCALE.label.size, fontWeight: 900, color: COLORS.text_secondary}}>Compounding layers</div>
+				{[0, 1, 2, 3, 4].map((index) => {
+					const revealLayer = interpolate(layerPull, [index * 0.12, index * 0.12 + 0.28], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+					return (
+						<div key={index} style={{position: 'absolute', left: 520 + index * 122, top: 565 - index * 72, width: 320, height: 112, borderRadius: 8, border: `2px solid ${COLORS.positive}`, background: `rgba(46,196,182,${0.08 + index * 0.018})`, boxShadow: `0 0 ${34 + index * 16}px rgba(46,196,182,0.24)`, opacity: revealLayer, transform: `translateY(${(1 - revealLayer) * 44}px) scale(${0.86 + revealLayer * 0.14})`}} />
+					);
+				})}
+				<div style={{position: 'absolute', left: 225, top: 300, width: 520}}>
+					<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>Returns start earning returns</div>
+					<div style={{marginTop: 18, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 102, lineHeight: 0.88, color: COLORS.positive}}>growth on growth</div>
+				</div>
+				<div style={{position: 'absolute', right: 230, bottom: 170, textAlign: 'right'}}>
+					<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>returns earned</div>
+					<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 82, lineHeight: 0.9, color: COLORS.positive}}>{formatIndianRupee(returnsEarned)}</div>
+				</div>
+			</AbsoluteFill>
+		);
+	}
+
+	if (semanticMoment?.visualMode === 'corpus_reveal') {
+		const heroPull = interpolate(semanticEventProgress, [0.05, 0.78], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'});
+
+		return (
+			<AbsoluteFill style={{background: COLORS.bg_deep, color: COLORS.text_primary, padding: SPACING.safe, fontFamily: BODY_FONT_FAMILY, overflow: 'hidden'}}>
+				<style>{FONT_FACES}</style>
+				<div style={{position: 'absolute', inset: 0, background: 'black', opacity: 0.22}} />
+				<div style={{position: 'absolute', inset: -140, background: 'radial-gradient(circle at 50% 50%, rgba(46,196,182,0.36), transparent 27%), linear-gradient(135deg, #03080a, #071211 58%, #03080a)'}} />
+				<div style={{position: 'absolute', inset: 0, left: 0, width: 8, background: COLORS.positive}} />
+				<div style={{fontSize: TYPE_SCALE.label.size, fontWeight: 900, color: COLORS.text_secondary}}>Corpus reveal</div>
+				<div style={{position: 'absolute', left: 0, right: 0, top: 300, textAlign: 'center', transform: `scale(${0.9 + heroPull * 0.12})`}}>
+					<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>Final corpus</div>
+					<div style={{marginTop: 16, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 164, lineHeight: 0.82, color: COLORS.positive, textShadow: `0 0 ${70 + heroPull * 82}px rgba(46,196,182,0.48)`}}>{formatIndianRupee(finalCorpus)}</div>
+					<div style={{marginTop: 44, fontFamily: DISPLAY_FONT_FAMILY, fontSize: 68, color: COLORS.text_secondary}}>{aweRatio.toFixed(1)}x the money invested</div>
+				</div>
+				<div style={{position: 'absolute', left: 260, bottom: 120, opacity: 0.24}}>
+					<div style={{fontSize: TYPE_SCALE.subtext.size, color: COLORS.text_secondary, fontWeight: 900}}>you invested</div>
+					<div style={{fontFamily: DISPLAY_FONT_FAMILY, fontSize: 64}}>{formatIndianRupee(totalInvested)}</div>
+				</div>
+			</AbsoluteFill>
+		);
+	}
 
 	return (
 		<AbsoluteFill
