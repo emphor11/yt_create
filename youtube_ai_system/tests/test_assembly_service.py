@@ -46,8 +46,41 @@ class AssemblyServiceTestCase(unittest.TestCase):
         self.assertIn("yuv420p", command)
         self.assertIn("-movflags", command)
         self.assertIn("+faststart", command)
-        self.assertIn("-crf", command)
-        self.assertIn("18", command)
+        self.assertIn("-b:v", command)
+        self.assertIn("8M", command)
+        self.assertIn("-maxrate", command)
+        self.assertIn("10M", command)
+        self.assertIn("-bufsize", command)
+        self.assertIn("16M", command)
+        self.assertIn("fps=30,setpts=N/(30*TB)", " ".join(command))
+        self.assertIn("-fps_mode", command)
+        self.assertIn("cfr", command)
+
+    def test_concat_segments_forces_constant_30fps_master(self) -> None:
+        manifest_path = Path(self.temp_dir.name) / "segments.txt"
+        output_path = Path(self.temp_dir.name) / "assembled_timeline.mp4"
+        manifest_path.write_text("file 'scene-00.mp4'\n", encoding="utf-8")
+
+        with patch.object(self.service, "_run_ffmpeg") as run:
+            self.service._concat_segments("ffmpeg", manifest_path, output_path, Path(self.temp_dir.name))
+
+        command = run.call_args.args[0]
+        command_text = " ".join(command)
+        self.assertIn("-fflags", command)
+        self.assertIn("+genpts", command)
+        self.assertIn("fps=30,setpts=N/(30*TB)", command_text)
+        self.assertIn("aresample=async=1:first_pts=0", command_text)
+        self.assertIn("-b:v", command)
+        self.assertIn("8M", command)
+        self.assertIn("-maxrate", command)
+        self.assertIn("10M", command)
+        self.assertIn("-bufsize", command)
+        self.assertIn("16M", command)
+        self.assertIn("-r", command)
+        self.assertIn("30", command)
+        self.assertIn("-fps_mode", command)
+        self.assertIn("cfr", command)
+        self.assertEqual(run.call_args.kwargs["cwd"], Path(self.temp_dir.name))
 
     def test_music_and_caption_pipeline_runs_before_final_export(self) -> None:
         input_path = Path(self.temp_dir.name) / "timeline.mp4"

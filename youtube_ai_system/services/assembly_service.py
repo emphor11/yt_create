@@ -19,6 +19,10 @@ class AssemblyService:
     TARGET_LOUDNESS = "-16"
     TRUE_PEAK = "-1.5"
     LOUDNESS_RANGE = "11"
+    FINAL_FPS = "30"
+    FINAL_VIDEO_BITRATE = "8M"
+    FINAL_MAXRATE = "10M"
+    FINAL_BUFSIZE = "16M"
 
     def __init__(self) -> None:
         self.repo = ProjectRepository()
@@ -89,22 +93,54 @@ class AssemblyService:
             "\n".join(f"file '{segment_path.name}'" for segment_path in segment_paths)
         )
         assembled_path = output_dir / "assembled_timeline.mp4"
+        self._concat_segments(ffmpeg_bin, concat_manifest, assembled_path, output_dir)
+
+        self.logger.log("assembly", "running", "Applying music mix and burned captions when configured.", project_id)
+        voice_srt = output_dir / "voice_captions.srt"
+        self._write_caption_srt(scenes, voice_srt, intro_offset=3.0, transition_sec=0.5)
+        final_path = output_dir / "final_video.mp4"
+        processed_path = self._apply_music_and_captions(ffmpeg_bin, assembled_path, voice_srt, final_path)
+        self._assert_final_master_quality(processed_path)
+        self.repo.update_project(project_id, final_video_path=str(processed_path))
+        self.logger.log("assembly", "completed", "Rendered V2 pre-CapCut master MP4 with ffmpeg.", project_id)
+        return str(processed_path)
+
+    def _concat_segments(self, ffmpeg_bin: str, concat_manifest: Path, output_path: Path, cwd: Path) -> None:
         self._run_ffmpeg(
             [
                 ffmpeg_bin,
                 "-y",
+                "-fflags",
+                "+genpts",
                 "-f",
                 "concat",
                 "-safe",
                 "0",
                 "-i",
                 concat_manifest.name,
+                "-filter_complex",
+                (
+                    f"[0:v]fps={self.FINAL_FPS},setpts=N/({self.FINAL_FPS}*TB),format=yuv420p[v];"
+                    "[0:a]aresample=async=1:first_pts=0[a]"
+                ),
+                "-map",
+                "[v]",
+                "-map",
+                "[a]",
                 "-c:v",
                 "libx264",
                 "-preset",
                 self.FINAL_PRESET,
-                "-crf",
-                self.FINAL_CRF,
+                "-b:v",
+                self.FINAL_VIDEO_BITRATE,
+                "-maxrate",
+                self.FINAL_MAXRATE,
+                "-bufsize",
+                self.FINAL_BUFSIZE,
+                "-r",
+                self.FINAL_FPS,
+                "-fps_mode",
+                "cfr",
                 "-pix_fmt",
                 "yuv420p",
                 "-c:a",
@@ -117,20 +153,11 @@ class AssemblyService:
                 "2",
                 "-movflags",
                 "+faststart",
-                assembled_path.name,
+                output_path.name,
             ],
-            cwd=output_dir,
+            cwd=cwd,
             timeout=180,
         )
-
-        self.logger.log("assembly", "running", "Applying music mix and burned captions when configured.", project_id)
-        voice_srt = output_dir / "voice_captions.srt"
-        self._write_caption_srt(scenes, voice_srt, intro_offset=3.0, transition_sec=0.5)
-        final_path = output_dir / "final_video.mp4"
-        processed_path = self._apply_music_and_captions(ffmpeg_bin, assembled_path, voice_srt, final_path)
-        self.repo.update_project(project_id, final_video_path=str(processed_path))
-        self.logger.log("assembly", "completed", "Rendered V2 pre-CapCut master MP4 with ffmpeg.", project_id)
-        return str(processed_path)
 
     def _visual_path_for_scene(self, project_id: int, scene: dict) -> str:
         storage_root = Path(current_app.config["STORAGE_ROOT"])
@@ -423,13 +450,24 @@ class AssemblyService:
                 "-i",
                 str(input_path),
                 "-vf",
-                f"subtitles='{safe_srt}':force_style='Fontsize=28,Outline=2,PrimaryColour=&HFFFFFF&,Alignment=2,MarginV=90'",
+                (
+                    f"fps={self.FINAL_FPS},"
+                    f"subtitles='{safe_srt}':force_style='Fontsize=28,Outline=2,PrimaryColour=&HFFFFFF&,Alignment=2,MarginV=90'"
+                ),
                 "-c:v",
                 "libx264",
                 "-preset",
                 self.FINAL_PRESET,
-                "-crf",
-                self.FINAL_CRF,
+                "-b:v",
+                self.FINAL_VIDEO_BITRATE,
+                "-maxrate",
+                self.FINAL_MAXRATE,
+                "-bufsize",
+                self.FINAL_BUFSIZE,
+                "-r",
+                self.FINAL_FPS,
+                "-fps_mode",
+                "cfr",
                 "-pix_fmt",
                 "yuv420p",
                 "-c:a",
@@ -449,8 +487,10 @@ class AssemblyService:
                 str(input_path),
                 "-filter_complex",
                 (
-                    "[0:v]eq=contrast=1.05:saturation=0.94:brightness=-0.01[v];"
-                    f"[0:a]loudnorm=I={self.TARGET_LOUDNESS}:TP={self.TRUE_PEAK}:LRA={self.LOUDNESS_RANGE}[a]"
+                    f"[0:v]fps={self.FINAL_FPS},setpts=N/({self.FINAL_FPS}*TB),"
+                    "eq=contrast=1.05:saturation=0.94:brightness=-0.01,format=yuv420p[v];"
+                    f"[0:a]aresample=async=1:first_pts=0,"
+                    f"loudnorm=I={self.TARGET_LOUDNESS}:TP={self.TRUE_PEAK}:LRA={self.LOUDNESS_RANGE}[a]"
                 ),
                 "-map",
                 "[v]",
@@ -460,8 +500,16 @@ class AssemblyService:
                 "libx264",
                 "-preset",
                 self.FINAL_PRESET,
-                "-crf",
-                self.FINAL_CRF,
+                "-b:v",
+                self.FINAL_VIDEO_BITRATE,
+                "-maxrate",
+                self.FINAL_MAXRATE,
+                "-bufsize",
+                self.FINAL_BUFSIZE,
+                "-r",
+                self.FINAL_FPS,
+                "-fps_mode",
+                "cfr",
                 "-pix_fmt",
                 "yuv420p",
                 "-c:a",
@@ -474,6 +522,51 @@ class AssemblyService:
             ],
             timeout=int(current_app.config.get("ASSEMBLY_FFMPEG_TIMEOUT", 600)),
         )
+
+    def _assert_final_master_quality(self, path: Path) -> None:
+        ffprobe_bin = shutil.which("ffprobe")
+        if not ffprobe_bin:
+            return
+        try:
+            result = subprocess.run(
+                [
+                    ffprobe_bin,
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v:0",
+                    "-count_frames",
+                    "-show_entries",
+                    "stream=nb_read_frames,avg_frame_rate,duration,bit_rate",
+                    "-of",
+                    "json",
+                    str(path),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            stream = (json.loads(result.stdout or "{}").get("streams") or [{}])[0]
+            duration = float(stream.get("duration") or 0)
+            frames = int(stream.get("nb_read_frames") or 0)
+            bitrate = int(stream.get("bit_rate") or 0)
+            avg_rate = str(stream.get("avg_frame_rate") or "0/1")
+            numerator, denominator = avg_rate.split("/", 1)
+            fps = float(numerator) / max(float(denominator), 1.0)
+        except (subprocess.SubprocessError, ValueError, json.JSONDecodeError, IndexError):
+            return
+
+        if duration >= 10 and fps < 24:
+            raise RuntimeError(f"Final master failed quality gate: expected 30fps video, got {fps:.2f}fps.")
+        if duration >= 10 and frames and frames < duration * 24:
+            raise RuntimeError(
+                f"Final master failed quality gate: expected at least {int(duration * 24)} frames, got {frames}."
+            )
+        if duration >= 60 and bitrate and bitrate < 50_000:
+            raise RuntimeError(
+                f"Final master failed quality gate: video bitrate is too low for upload ({bitrate} bps)."
+            )
 
     def _probe_duration(self, path: Path) -> float:
         ffprobe_bin = shutil.which("ffprobe")

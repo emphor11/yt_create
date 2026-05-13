@@ -136,7 +136,8 @@ def youtube_upload(project_id: int):
     if project["state"] not in {"ready_to_publish", "scheduled"}:
         flash("Mark the master ready before attempting a YouTube upload.", "warning")
         return redirect(url_for("publish.final_review", project_id=project_id))
-    if project.get("youtube_video_id"):
+    force_upload = request.form.get("force_upload") == "1"
+    if project.get("youtube_video_id") and not force_upload:
         flash(f"This project is already uploaded as YouTube video {project['youtube_video_id']}.", "info")
         return redirect(url_for("publish.final_review", project_id=project_id))
     try:

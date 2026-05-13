@@ -150,6 +150,10 @@
           <div class="alert alert-success mt-3 mb-0">
             Uploaded as YouTube video <strong>{{ project.youtube_video_id }}</strong>.
           </div>
+          <form class="mt-3" method="post" action="{{ url_for('publish.youtube_upload', project_id=project.id) }}">
+            <input type="hidden" name="force_upload" value="1">
+            <button class="btn btn-warning w-100">Upload New Private Copy</button>
+          </form>
         {% else %}
           <form class="mt-3" method="post" action="{{ url_for('publish.youtube_upload', project_id=project.id) }}">
             <button class="btn btn-success w-100">Upload Private Video</button>
