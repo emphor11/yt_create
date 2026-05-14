@@ -56,21 +56,27 @@ class AssemblyService:
         segment_paths: list[Path] = []
         concat_manifest = output_dir / "segments.txt"
 
-        self.logger.log("assembly", "running", "Rendering intro, scene timeline, transitions, and end card.", project_id)
-        intro_path = output_dir / "intro.mp4"
-        self._render_timeline_card(
-            ffmpeg_bin,
-            self.render_specs.intro_spec(project["working_title"]),
-            intro_path,
-            label="intro",
-        )
-        segment_paths.append(intro_path)
+        include_intro = bool(current_app.config.get("ASSEMBLY_INCLUDE_INTRO", False))
+        include_transitions = bool(current_app.config.get("ASSEMBLY_INCLUDE_TRANSITIONS", False))
+        include_end_card = bool(current_app.config.get("ASSEMBLY_INCLUDE_END_CARD", True))
+
+        self.logger.log("assembly", "running", "Rendering ordered scene timeline and end card.", project_id)
+        if include_intro:
+            intro_title = project.get("selected_title") or project.get("working_title") or "YTCreate Finance"
+            intro_path = output_dir / "intro.mp4"
+            self._render_timeline_card(
+                ffmpeg_bin,
+                self.render_specs.intro_spec(intro_title),
+                intro_path,
+                label="intro",
+            )
+            segment_paths.append(intro_path)
 
         for scene in scenes:
             segment_path = output_dir / f"scene-{scene['scene_order']:02d}.mp4"
             segment_paths.append(segment_path)
             self._render_scene_video(ffmpeg_bin, self._visual_path_for_scene(project_id, scene), scene["audio_path"], segment_path)
-            if scene != scenes[-1]:
+            if include_transitions and scene != scenes[-1]:
                 transition_path = output_dir / f"transition-{scene['scene_order']:02d}.mp4"
                 self._render_timeline_card(
                     ffmpeg_bin,
@@ -80,24 +86,27 @@ class AssemblyService:
                 )
                 segment_paths.append(transition_path)
 
-        end_path = output_dir / "end-card.mp4"
-        self._render_timeline_card(
-            ffmpeg_bin,
-            self.render_specs.end_card_spec(),
-            end_path,
-            label="end-card",
-        )
-        segment_paths.append(end_path)
+        if include_end_card:
+            end_path = output_dir / "end-card.mp4"
+            self._render_timeline_card(
+                ffmpeg_bin,
+                self.render_specs.end_card_spec(),
+                end_path,
+                label="end-card",
+            )
+            segment_paths.append(end_path)
 
         concat_manifest.write_text(
             "\n".join(f"file '{segment_path.name}'" for segment_path in segment_paths)
         )
         assembled_path = output_dir / "assembled_timeline.mp4"
-        self._concat_segments(ffmpeg_bin, concat_manifest, assembled_path, output_dir)
+        self._concat_segments(ffmpeg_bin, segment_paths, assembled_path, output_dir)
 
         self.logger.log("assembly", "running", "Applying music mix and burned captions when configured.", project_id)
         voice_srt = output_dir / "voice_captions.srt"
-        self._write_caption_srt(scenes, voice_srt, intro_offset=3.0, transition_sec=0.5)
+        intro_offset = 3.0 if include_intro else 0.0
+        transition_sec = 0.5 if include_transitions else 0.0
+        self._write_caption_srt(scenes, voice_srt, intro_offset=intro_offset, transition_sec=transition_sec)
         final_path = output_dir / "final_video.mp4"
         processed_path = self._apply_music_and_captions(ffmpeg_bin, assembled_path, voice_srt, final_path)
         self._assert_final_master_quality(processed_path)
@@ -105,24 +114,32 @@ class AssemblyService:
         self.logger.log("assembly", "completed", "Rendered V2 pre-CapCut master MP4 with ffmpeg.", project_id)
         return str(processed_path)
 
-    def _concat_segments(self, ffmpeg_bin: str, concat_manifest: Path, output_path: Path, cwd: Path) -> None:
+    def _concat_segments(self, ffmpeg_bin: str, segment_paths: list[Path], output_path: Path, cwd: Path) -> None:
+        if not segment_paths:
+            raise RuntimeError("No rendered scene segments are available for assembly.")
+        inputs: list[str] = []
+        video_audio_filters: list[str] = []
+        concat_inputs: list[str] = []
+        for index, segment_path in enumerate(segment_paths):
+            inputs.extend(["-i", segment_path.name])
+            video_audio_filters.append(
+                f"[{index}:v]fps={self.FINAL_FPS},setpts=PTS-STARTPTS,format=yuv420p[v{index}];"
+                f"[{index}:a]aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS[a{index}]"
+            )
+            concat_inputs.append(f"[v{index}][a{index}]")
+        filter_complex = (
+            ";".join(video_audio_filters)
+            + ";"
+            + "".join(concat_inputs)
+            + f"concat=n={len(segment_paths)}:v=1:a=1[v][a]"
+        )
         self._run_ffmpeg(
             [
                 ffmpeg_bin,
                 "-y",
-                "-fflags",
-                "+genpts",
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                concat_manifest.name,
+                *inputs,
                 "-filter_complex",
-                (
-                    f"[0:v]fps={self.FINAL_FPS},setpts=N/({self.FINAL_FPS}*TB),format=yuv420p[v];"
-                    "[0:a]aresample=async=1:first_pts=0[a]"
-                ),
+                filter_complex,
                 "-map",
                 "[v]",
                 "-map",
