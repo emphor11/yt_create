@@ -110,6 +110,35 @@ class FinalProductionServiceTestCase(unittest.TestCase):
         self.assertEqual(project["youtube_video_id"], "video-123")
         self.assertIn("custom thumbnail", service.last_thumbnail_warning)
 
+    def test_youtube_client_refreshes_expired_saved_token_without_oauth_prompt(self) -> None:
+        token_path = Path(self.app.config["INSTANCE_PATH"]) / "youtube_token.json"
+        client_secret_path = Path(self.app.config["INSTANCE_PATH"]) / "client_secret.json"
+        token_path.parent.mkdir(parents=True, exist_ok=True)
+        token_path.write_text("{}", encoding="utf-8")
+        client_secret_path.write_text("{}", encoding="utf-8")
+        self.app.config.update(
+            {
+                "YOUTUBE_TOKEN_PATH": str(token_path),
+                "YOUTUBE_CLIENT_SECRETS": str(client_secret_path),
+            }
+        )
+        credentials = _FakeCredentials()
+
+        with patch(
+            "google.oauth2.credentials.Credentials.from_authorized_user_file",
+            return_value=credentials,
+        ), patch("google.auth.transport.requests.Request", return_value=object()) as request_cls, patch(
+            "google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file"
+        ) as flow_factory, patch("googleapiclient.discovery.build", return_value="youtube-client") as build:
+            client = YouTubeUploadService()._authorized_client()
+
+        self.assertEqual(client, "youtube-client")
+        self.assertTrue(credentials.refresh_called)
+        self.assertFalse(flow_factory.called)
+        self.assertTrue(request_cls.called)
+        self.assertIn("refreshed-token", token_path.read_text(encoding="utf-8"))
+        build.assert_called_once()
+
 class _FakeInsertRequest:
     def next_chunk(self):
         return None, {"id": "video-123"}
@@ -136,6 +165,23 @@ class _FakeYouTubeClient:
 
     def thumbnails(self):
         return _FakeThumbnails()
+
+
+class _FakeCredentials:
+    expired = True
+    valid = False
+    refresh_token = "refresh-token"
+
+    def __init__(self) -> None:
+        self.refresh_called = False
+
+    def refresh(self, request):
+        self.refresh_called = True
+        self.expired = False
+        self.valid = True
+
+    def to_json(self):
+        return '{"token": "refreshed-token", "refresh_token": "refresh-token"}'
 
 
 if __name__ == "__main__":
