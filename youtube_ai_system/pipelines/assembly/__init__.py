@@ -1,0 +1,2 @@
+"""Assembly pipeline package."""
+
