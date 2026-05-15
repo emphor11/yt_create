@@ -3,61 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
-FINANCE_PHRASES = (
-    "minimum payment",
-    "minimum dues",
-    "debt trap",
-    "credit card",
-    "interest rate",
-    "interest",
-    "principal amount",
-    "principal",
-    "emergency fund",
-    "income shocks",
-    "income shock",
-    "financial freedom",
-    "budgeting",
-    "inflation",
-    "savings",
-    "equity",
-    "debt",
-    "returns",
-    "investment",
-)
-
-STOPWORDS = {
-    "a",
-    "an",
-    "the",
-    "this",
-    "that",
-    "these",
-    "those",
-    "you",
-    "your",
-    "are",
-    "is",
-    "was",
-    "were",
-    "be",
-    "being",
-    "been",
-    "can",
-    "could",
-    "would",
-    "should",
-    "just",
-    "only",
-    "really",
-    "very",
-    "into",
-    "with",
-    "from",
-    "have",
-    "has",
-    "had",
-}
+from ..pipelines.visual.beat_planner_constants import FINANCE_PHRASES, STOPWORDS
 
 
 def generate_beats(concept_item: dict[str, Any], sentence: str) -> dict[str, list[dict[str, str]]]:

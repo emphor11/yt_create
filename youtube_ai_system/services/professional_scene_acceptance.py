@@ -1,128 +1,36 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
-import shutil
-import subprocess
 import tempfile
 from typing import Any
 
 from PIL import Image, ImageChops, ImageStat
 
+from ..infrastructure.ffmpeg import FfmpegExecutor
 from ..models.repository import ProjectRepository
-
-
-@dataclass(frozen=True)
-class SceneAcceptanceIssue:
-    scene_order: int | None
-    severity: str
-    code: str
-    message: str
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "scene_order": self.scene_order,
-            "severity": self.severity,
-            "code": self.code,
-            "message": self.message,
-        }
-
-
-@dataclass(frozen=True)
-class SceneAcceptanceReport:
-    passed: bool
-    score: int
-    scene_count: int
-    blocking_issues: list[SceneAcceptanceIssue]
-    warnings: list[SceneAcceptanceIssue]
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "passed": self.passed,
-            "score": self.score,
-            "scene_count": self.scene_count,
-            "blocking_issues": [issue.to_dict() for issue in self.blocking_issues],
-            "warnings": [issue.to_dict() for issue in self.warnings],
-        }
-
-    @property
-    def status_label(self) -> str:
-        if self.passed:
-            return "Professional QA passed"
-        return "Needs scene fixes"
+from ..quality.scene_quality import (
+    CONCRETE_FINANCE_TERMS,
+    INTERNAL_LANGUAGE_PATTERNS,
+    STRONG_COMPONENTS,
+    WEAK_BODY_COMPONENTS,
+    SceneAcceptanceIssue,
+    SceneAcceptanceReport,
+)
 
 
 class ProfessionalSceneAcceptanceService:
     """Reusable gate that prevents generic or internally-worded scenes from final assembly."""
 
-    STRONG_COMPONENTS = {
-        "MoneyFlowDiagram",
-        "LifestyleCreepVisualizer",
-        "EMIStackVisualizer",
-        "InflationErosionVisualizer",
-        "SIPGrowthEngine",
-        "DebtSpiralVisualizer",
-        "FOMOPriceCrashVisualizer",
-        "PortfolioDiversificationVisualizer",
-        "SmallLeaksAccumulator",
-        "RiskReturnVisualizer",
-        "EmergencyFundVisualizer",
-        "OutroRecapVisualizer",
-        "UniversalMechanismRenderer",
-    }
-    WEAK_BODY_COMPONENTS = {
-        "ConceptCard",
-        "ConceptCardScene",
-        "HighlightText",
-        "StatCard",
-        "RiskCard",
-        "RiskCardScene",
-        "SplitComparison",
-        "SplitComparisonScene",
-        "FlowDiagram",
-        "FlowBar",
-        "StepFlow",
-        "StepFlowScene",
-    }
-    CONCRETE_FINANCE_TERMS = {
-        "salary",
-        "income",
-        "rent",
-        "emi",
-        "loan",
-        "debt",
-        "interest",
-        "inflation",
-        "sip",
-        "invest",
-        "investment",
-        "savings",
-        "buffer",
-        "emergency",
-        "tax",
-        "food",
-        "shopping",
-        "subscription",
-        "credit",
-        "expense",
-        "rupee",
-        "₹",
-        "rs",
-    }
-    INTERNAL_LANGUAGE_PATTERNS = (
-        r"\bthe\s+topic\s+is\b",
-        r"\bthis\s+scene\s+(?:shows|needs|should|will)\b",
-        r"\bthe\s+viewer\s+(?:is|will|should|sees|notices)\b",
-        r"\bvisual\s+(?:should|needs|will)\b",
-        r"\bnarration\s+(?:says|introduces|mentions)\b",
-        r"\bconcrete\s+mechanism\b",
-        r"\binternal\s+logic\b",
-    )
+    STRONG_COMPONENTS = STRONG_COMPONENTS
+    WEAK_BODY_COMPONENTS = WEAK_BODY_COMPONENTS
+    CONCRETE_FINANCE_TERMS = CONCRETE_FINANCE_TERMS
+    INTERNAL_LANGUAGE_PATTERNS = INTERNAL_LANGUAGE_PATTERNS
 
     def __init__(self, repo: ProjectRepository | None = None) -> None:
         self.repo = repo or ProjectRepository()
+        self.ffmpeg = FfmpegExecutor()
 
     def evaluate_project(self, project_id: int) -> SceneAcceptanceReport:
         project = self.repo.get_project(project_id) or {}
@@ -440,20 +348,8 @@ class ProfessionalSceneAcceptanceService:
         path = Path(str(scene.get("visual_path") or "")).expanduser()
         if not path.exists() or path.suffix.lower() not in {".mp4", ".mov", ".m4v"}:
             return None
-        ffmpeg = shutil.which("ffmpeg")
-        ffprobe = shutil.which("ffprobe")
-        if not ffmpeg or not ffprobe:
-            return None
-        try:
-            probe = subprocess.run(
-                [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "default=nk=1:nw=1", str(path)],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=8,
-            )
-            duration = float(probe.stdout.strip() or 0)
-        except (subprocess.SubprocessError, ValueError):
+        duration = self.ffmpeg.probe_duration(path)
+        if duration <= 0:
             return None
         if duration < 8:
             return None
@@ -463,32 +359,15 @@ class ProfessionalSceneAcceptanceService:
                 frames: list[Image.Image] = []
                 for index, seconds in enumerate(sample_times):
                     frame_path = Path(tmp) / f"frame-{index}.jpg"
-                    subprocess.run(
-                        [
-                            ffmpeg,
-                            "-y",
-                            "-ss",
-                            f"{seconds:.3f}",
-                            "-i",
-                            str(path),
-                            "-frames:v",
-                            "1",
-                            "-vf",
-                            "scale=96:54",
-                            str(frame_path),
-                        ],
-                        check=True,
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        timeout=10,
-                    )
+                    if not self.ffmpeg.extract_frame(path, seconds, frame_path, scale="96:54", timeout=10):
+                        return None
                     frames.append(Image.open(frame_path).convert("RGB"))
                 deltas: list[float] = []
                 for first, second in zip(frames, frames[1:]):
                     stat = ImageStat.Stat(ImageChops.difference(first, second))
                     deltas.append(sum(stat.mean) / 3)
                 return round(sum(deltas) / len(deltas), 2) if deltas else None
-        except (subprocess.SubprocessError, OSError):
+        except OSError:
             return None
 
     def _internal_language_match(self, narration: str) -> str:

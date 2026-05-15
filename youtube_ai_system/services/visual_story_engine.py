@@ -1,109 +1,26 @@
 from __future__ import annotations
 
-import re
 from typing import Any
+
+from ..pipelines.story.visual_story_taxonomy import (
+    CONCEPT_TO_OBJECTS,
+    CONCEPT_TO_SCENE_ROLE,
+    CONCEPT_VISUAL_QUESTIONS,
+    VISUAL_STORY_OBJECTS,
+)
+from ..pipelines.story.visual_story_values import VisualStoryValueHelper
 
 
 class VisualStoryEngine:
     """Builds a deterministic video-level visual story world for finance scenes."""
 
-    OBJECTS = {
-        "phone_account",
-        "salary_balance",
-        "emi_stack",
-        "debt_pressure",
-        "inflation_basket",
-        "sip_jar",
-        "portfolio_grid",
-        "emergency_buffer",
-    }
+    OBJECTS = VISUAL_STORY_OBJECTS
+    CONCEPT_TO_SCENE_ROLE = CONCEPT_TO_SCENE_ROLE
+    CONCEPT_TO_OBJECTS = CONCEPT_TO_OBJECTS
+    CONCEPT_VISUAL_QUESTIONS = CONCEPT_VISUAL_QUESTIONS
 
-    CONCEPT_TO_SCENE_ROLE = {
-        "salary_drain": "pressure",
-        "salary_depletion": "pressure",
-        "lifestyle_inflation": "pressure",
-        "expense_leakage": "pressure",
-        "emi_pressure": "pressure",
-        "rent_burden": "pressure",
-        "tax_drain": "pressure",
-        "subscription_leak": "pressure",
-        "debt_trap": "mechanism",
-        "inflation_erosion": "mechanism",
-        "real_return": "mechanism",
-        "fd_vs_inflation": "mechanism",
-        "risk_return": "mechanism",
-        "diversification": "mechanism",
-        "opportunity_cost": "mechanism",
-        "sip_growth": "solution",
-        "compounding": "solution",
-        "compound_growth": "solution",
-        "recap_system": "resolution",
-        "emergency_fund": "solution",
-        "savings_rate": "solution",
-        "fomo_risk": "turning_point",
-        "speculation_risk": "turning_point",
-        "decay": "pressure",
-        "growth": "solution",
-        "comparison": "mechanism",
-        "risk": "mechanism",
-        "definition": "mechanism",
-        "emphasis": "turning_point",
-    }
-
-    CONCEPT_TO_OBJECTS = {
-        "salary_drain": ["phone_account", "salary_balance"],
-        "salary_depletion": ["phone_account", "salary_balance"],
-        "lifestyle_inflation": ["phone_account", "salary_balance"],
-        "expense_leakage": ["phone_account", "salary_balance"],
-        "rent_burden": ["phone_account", "salary_balance"],
-        "tax_drain": ["phone_account", "salary_balance"],
-        "subscription_leak": ["phone_account", "salary_balance"],
-        "emi_pressure": ["emi_stack", "salary_balance"],
-        "debt_trap": ["debt_pressure", "phone_account"],
-        "inflation_erosion": ["inflation_basket"],
-        "real_return": ["inflation_basket", "salary_balance"],
-        "fd_vs_inflation": ["inflation_basket", "salary_balance"],
-        "sip_growth": ["sip_jar"],
-        "compounding": ["sip_jar"],
-        "compound_growth": ["sip_jar"],
-        "recap_system": ["salary_balance", "emi_stack", "sip_jar", "portfolio_grid", "emergency_buffer"],
-        "savings_rate": ["sip_jar", "salary_balance"],
-        "emergency_fund": ["emergency_buffer"],
-        "fomo_risk": ["portfolio_grid"],
-        "speculation_risk": ["portfolio_grid"],
-        "risk_return": ["portfolio_grid"],
-        "diversification": ["portfolio_grid"],
-        "opportunity_cost": ["sip_jar", "salary_balance"],
-        "decay": ["salary_balance"],
-        "growth": ["sip_jar"],
-        "comparison": ["phone_account"],
-        "risk": ["debt_pressure"],
-        "definition": ["phone_account"],
-        "emphasis": ["phone_account"],
-    }
-
-    CONCEPT_VISUAL_QUESTIONS = {
-        "salary_drain": "Where did the salary go?",
-        "salary_depletion": "Where did the salary go?",
-        "lifestyle_inflation": "Why does a raise not create savings?",
-        "expense_leakage": "What invisible drain is eating the salary?",
-        "emi_pressure": "How do small EMIs become one big leak?",
-        "debt_trap": "Why does paying not reduce the balance?",
-        "inflation_erosion": "Why does the same balance buy less?",
-        "real_return": "What is the actual return after inflation?",
-        "fd_vs_inflation": "Is the FD actually growing or shrinking?",
-        "sip_growth": "What changes when returns start earning returns?",
-        "compounding": "Why does time matter more than amount?",
-        "compound_growth": "What changes when returns start earning returns?",
-        "recap_system": "What system keeps the money plan alive?",
-        "savings_rate": "How much is actually getting saved each month?",
-        "emergency_fund": "What absorbs the next financial shock?",
-        "fomo_risk": "What happens when emotion becomes the strategy?",
-        "speculation_risk": "What happens when emotion becomes the strategy?",
-        "risk_return": "What is the risk that comes with the return?",
-        "diversification": "What changes when one bet becomes a system?",
-        "opportunity_cost": "What is the cost of not investing?",
-    }
+    def __init__(self) -> None:
+        self.value_helper = VisualStoryValueHelper()
 
     def attach_visual_story(self, story_plan: dict[str, Any]) -> dict[str, Any]:
         sections = story_plan.get("sections") or []
@@ -576,55 +493,19 @@ class VisualStoryEngine:
             section_intent["scene_role"] = str(story_state.get("scene_role") or "")
 
     def _read_nested(self, data: dict[str, Any], path: str) -> Any:
-        value: Any = data
-        for part in path.split("."):
-            if not isinstance(value, dict):
-                return None
-            value = value.get(part)
-        return value
+        return self.value_helper.read_nested(data, path)
 
     def _as_text(self, value: Any) -> str:
-        if value is None:
-            return ""
-        if isinstance(value, float) and value.is_integer():
-            return str(int(value))
-        return str(value).strip()
+        return self.value_helper.as_text(value)
 
     def _format_money_like(self, value: Any) -> str:
-        if value is None or value == "":
-            return ""
-        if isinstance(value, str):
-            return value if "₹" in value else value.strip()
-        try:
-            amount = float(value)
-        except (TypeError, ValueError):
-            return str(value)
-        rounded = int(round(amount))
-        digits = str(abs(rounded))
-        if len(digits) <= 3:
-            formatted = digits
-        else:
-            formatted = digits[-3:]
-            digits = digits[:-3]
-            while digits:
-                formatted = digits[-2:] + "," + formatted
-                digits = digits[:-2]
-        return ("-" if rounded < 0 else "") + "₹" + formatted
+        return self.value_helper.format_money_like(value)
 
     def _first_money(self, text: str) -> str:
-        values = self._money_values(text)
-        return values[0] if values else ""
+        return self.value_helper.first_money(text)
 
     def _money_values(self, text: str) -> list[str]:
-        pattern = re.compile(r"(?:₹\s*|Rs\.?\s*)\d[\d,]*(?:\.\d+)?\s*(?:lakh|lakhs|crore|crores|k)?", re.IGNORECASE)
-        return [match.group(0).replace(" ", "") for match in pattern.finditer(text)]
+        return self.value_helper.money_values(text)
 
     def _dedupe(self, items: list[str]) -> list[str]:
-        result: list[str] = []
-        seen: set[str] = set()
-        for item in items:
-            if item in seen:
-                continue
-            seen.add(item)
-            result.append(item)
-        return result
+        return self.value_helper.dedupe(items)

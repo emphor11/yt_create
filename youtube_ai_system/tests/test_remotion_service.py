@@ -95,7 +95,7 @@ class RemotionServiceTestCase(unittest.TestCase):
         self.app.config["REMOTION_CONCURRENCY"] = 3
 
         with patch.object(RemotionService, "is_available", return_value=True), patch(
-            "youtube_ai_system.services.remotion_service.subprocess.run"
+            "youtube_ai_system.infrastructure.remotion.executor.subprocess.run"
         ) as run:
             RemotionService().render_video(spec, output_path)
 
@@ -117,7 +117,7 @@ class RemotionServiceTestCase(unittest.TestCase):
         self.app.config["REMOTION_RENDER_TIMEOUT"] = 7
 
         with patch.object(RemotionService, "is_available", return_value=True), patch(
-            "youtube_ai_system.services.remotion_service.subprocess.run",
+            "youtube_ai_system.infrastructure.remotion.executor.subprocess.run",
             side_effect=TimeoutExpired(cmd=["npx"], timeout=7),
         ):
             with self.assertRaisesRegex(RuntimeError, "timed out after 7s"):
@@ -133,7 +133,7 @@ class RemotionServiceTestCase(unittest.TestCase):
         output_path = Path(self.temp_dir.name) / "thumb.jpg"
 
         with patch.object(RemotionService, "is_available", return_value=True), patch(
-            "youtube_ai_system.services.remotion_service.subprocess.run"
+            "youtube_ai_system.infrastructure.remotion.executor.subprocess.run"
         ) as run:
             RemotionService().render_still(spec, output_path)
 

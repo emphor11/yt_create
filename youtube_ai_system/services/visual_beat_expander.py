@@ -6,6 +6,7 @@ from typing import Any
 from .action_beat_engine import ActionBeatEngine
 from .cinematic_event_compiler import CinematicEventCompiler
 from .scene_debug import SceneDebugTrace
+from ..pipelines.visual import BeatExpansionTextHelper, MECHANISM_PHASES, OBJECT_TO_VIEWER_TEXT, PRIMARY_MECHANISM_COMPONENTS
 
 
 class VisualBeatExpander:
@@ -14,49 +15,11 @@ class VisualBeatExpander:
     def __init__(self, action_beat_engine: ActionBeatEngine | None = None) -> None:
         self.action_beat_engine = action_beat_engine or ActionBeatEngine()
         self.cinematic_event_compiler = CinematicEventCompiler()
+        self.text_helper = BeatExpansionTextHelper()
 
-    PRIMARY_MECHANISM_COMPONENTS = {
-        "MoneyFlowDiagram",
-        "DebtSpiralVisualizer",
-        "SIPGrowthEngine",
-        "InflationErosionVisualizer",
-        "LifestyleCreepVisualizer",
-        "EMIStackVisualizer",
-        "FOMOPriceCrashVisualizer",
-        "PortfolioDiversificationVisualizer",
-        "SmallLeaksAccumulator",
-        "RiskReturnVisualizer",
-        "EmergencyFundVisualizer",
-        "OutroRecapVisualizer",
-        "UniversalMechanismRenderer",
-    }
-
-    MECHANISM_PHASES = {
-        "MoneyFlowDiagram": ("intro", "drain", "drain", "drain", "remainder", "remainder", "remainder"),
-        "DebtSpiralVisualizer": ("principal", "spiral", "spiral", "spiral", "consequence", "consequence", "consequence"),
-        "SIPGrowthEngine": ("contribution", "growth", "growth", "growth", "corpus", "corpus", "corpus"),
-        "InflationErosionVisualizer": ("today", "erosion", "erosion", "erosion", "future", "future", "future"),
-        "LifestyleCreepVisualizer": ("income_base", "raise_arrives", "expenses_follow", "expenses_follow", "gap_revealed", "gap_revealed", "gap_revealed"),
-        "EMIStackVisualizer": ("first_emi", "stacking", "stacking", "stacking", "pressure", "pressure", "pressure"),
-        "FOMOPriceCrashVisualizer": ("rise", "crash", "crash", "crash", "loss", "loss", "loss"),
-        "PortfolioDiversificationVisualizer": ("concentrated", "spread", "spread", "spread", "impact", "impact", "impact"),
-        "SmallLeaksAccumulator": ("first_leak", "repeat", "repeat", "repeat", "month_end", "month_end", "month_end"),
-        "RiskReturnVisualizer": ("fd_anchor", "equity_growth", "volatility_price", "volatility_price", "chosen_risk", "chosen_risk", "chosen_risk"),
-        "EmergencyFundVisualizer": ("boring_buffer", "shock_focus", "shock_focus", "debt_prevention", "plan_survives", "plan_survives", "plan_survives"),
-        "OutroRecapVisualizer": ("track", "protect", "reduce_debt", "invest", "start", "start", "start"),
-        "UniversalMechanismRenderer": ("focus", "shift", "pressure", "reveal", "choice", "consequence", "takeaway"),
-    }
-
-    OBJECT_TO_VIEWER_TEXT = {
-        "phone_account": "Money hits the account",
-        "salary_balance": "Salary lands",
-        "emi_stack": "Fixed payments stack up",
-        "debt_pressure": "Debt starts compounding",
-        "inflation_basket": "Buying power starts shrinking",
-        "sip_jar": "Compounding starts working",
-        "portfolio_grid": "Risk gets distributed",
-        "emergency_buffer": "Safety net absorbs the shock",
-    }
+    PRIMARY_MECHANISM_COMPONENTS = PRIMARY_MECHANISM_COMPONENTS
+    MECHANISM_PHASES = MECHANISM_PHASES
+    OBJECT_TO_VIEWER_TEXT = OBJECT_TO_VIEWER_TEXT
 
     def expand_section(self, section: dict[str, Any], debug_trace: SceneDebugTrace | None = None) -> dict[str, Any]:
         visual_plan = section.get("visual_plan") or []
@@ -375,40 +338,10 @@ class VisualBeatExpander:
         return mechanism.replace("_", " ").title()
 
     def _sanitize_viewer_text(self, text: str) -> str:
-        clean = " ".join(str(text or "").replace("_", " ").split()).strip()
-        if not clean:
-            return ""
-        lowered = clean.lower()
-        if lowered == "state changes":
-            return ""
-        internal_map = {
-            "phone account": "Money hits the account",
-            "salary balance": "Salary lands",
-            "emi stack": "Fixed payments stack up",
-            "debt pressure": "Debt starts compounding",
-            "inflation basket": "Buying power starts shrinking",
-            "sip jar": "Compounding starts working",
-            "portfolio grid": "Risk gets distributed",
-            "emergency buffer": "Safety net absorbs the shock",
-        }
-        return internal_map.get(lowered, clean)
+        return self.text_helper.sanitize_viewer_text(text)
 
     def _target_beat_count(self, text: str, sentences: list[str]) -> int:
-        words = len(text.split())
-        sentence_target = max(len(sentences), 1)
-        if words >= 70:
-            word_target = 8
-        elif words >= 55:
-            word_target = 7
-        elif words >= 40:
-            word_target = 6
-        elif words >= 26:
-            word_target = 5
-        elif words >= 16:
-            word_target = 4
-        else:
-            word_target = 3
-        return max(3, min(9, max(sentence_target, word_target)))
+        return self.text_helper.target_beat_count(text, sentences)
 
     def _beats_from_sentences(
         self,
@@ -568,79 +501,25 @@ class VisualBeatExpander:
         return "StatCard"
 
     def _beat_text(self, sentence: str, mechanism: str, is_last: bool) -> str:
-        clean = " ".join(sentence.strip().strip(".!?").split())
-        lowered = clean.lower()
-        money = re.search(r"₹\s?\d[\d,]*(?:\.\d+)?(?:\s*(?:lakh|lakhs|crore|crores|k))?", clean, re.IGNORECASE)
-        pct = re.search(r"\d+(?:\.\d+)?\s*%", clean)
-        if money:
-            tail = self._money_tail(lowered)
-            return f"{money.group(0).replace(' ', '')} {tail}".strip()
-        if pct:
-            return f"{pct.group(0)} {self._percent_tail(lowered)}".strip()
-        if is_last:
-            return self._consequence_text(clean, mechanism)
-        return self._short_phrase(clean)
+        return self.text_helper.beat_text(sentence, mechanism, is_last)
 
     def _money_tail(self, lowered: str) -> str:
-        for token, label in (
-            ("emi", "EMI"),
-            ("rent", "rent"),
-            ("interest", "interest"),
-            ("leaves", "leaves first"),
-            ("leak", "leak"),
-            ("sip", "SIP"),
-            ("invest", "invested"),
-            ("salary", "salary"),
-        ):
-            if token in lowered:
-                return label
-        return ""
+        return self.text_helper.money_tail(lowered)
 
     def _percent_tail(self, lowered: str) -> str:
-        if "interest" in lowered:
-            return "interest"
-        if "return" in lowered:
-            return "return"
-        if "inflation" in lowered:
-            return "inflation"
-        return ""
+        return self.text_helper.percent_tail(lowered)
 
     def _consequence_text(self, clean: str, mechanism: str) -> str:
-        if mechanism == "emi_pressure":
-            return "Five small payments become one leak"
-        if mechanism == "expense_leakage":
-            return "The leak is the system"
-        if mechanism == "debt_trap":
-            return "Interest is still winning"
-        if mechanism == "inflation_erosion":
-            return "Real value keeps falling"
-        if mechanism in {"sip_growth", "compounding"}:
-            return "Time does the heavy lifting"
-        if mechanism == "speculation_risk":
-            return "Do not buy what you cannot explain"
-        return self._short_phrase(clean, max_words=6)
+        return self.text_helper.consequence_text(clean, mechanism)
 
     def _short_phrase(self, text: str, max_words: int = 5) -> str:
-        words = [word.strip(" ,.-") for word in text.split() if word.strip(" ,.-")]
-        if not words:
-            return "Key idea"
-        phrase = " ".join(words[:max_words])
-        return phrase[:1].upper() + phrase[1:]
+        return self.text_helper.short_phrase(text, max_words)
 
     def _fallback_texts(self, beats: list[dict[str, Any]], count: int) -> list[str]:
-        texts = [str(beat.get("text") or "").strip() for beat in beats if str(beat.get("text") or "").strip()]
-        return texts[:count]
+        return self.text_helper.fallback_texts(beats, count)
 
     def _sentences(self, text: str) -> list[str]:
-        return [part.strip() for part in re.split(r"(?<=[.!?])\s+", str(text or "").strip()) if part.strip()]
+        return self.text_helper.sentences(text)
 
     def _dedupe_adjacent(self, beats: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        deduped: list[dict[str, Any]] = []
-        previous = ""
-        for beat in beats:
-            text = str(beat.get("text") or "").lower()
-            if text == previous:
-                continue
-            previous = text
-            deduped.append(beat)
-        return deduped
+        return self.text_helper.dedupe_adjacent(beats)

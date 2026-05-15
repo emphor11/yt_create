@@ -1,13 +1,17 @@
 from __future__ import annotations
 
-import json
-import shutil
-import subprocess
 from pathlib import Path
+from typing import Any
 
 from flask import current_app
 
+from ..infrastructure.ffmpeg import FfmpegExecutor
+from ..infrastructure.filesystem.storage import FileStorage
 from ..models.repository import ProjectRepository
+from ..pipelines.assembly.captions import CaptionWriter
+from ..pipelines.assembly.ffmpeg_commands import AssemblyEncodingProfile, AssemblyFfmpegCommands
+from ..pipelines.assembly.manifest import TimelineManifestBuilder
+from ..pipelines.assembly.quality import MasterQualityGate
 from .remotion_service import RemotionService, RemotionUnavailableError
 from .render_spec_service import RenderSpecService
 from .run_log import RunLogger
@@ -29,21 +33,32 @@ class AssemblyService:
         self.logger = RunLogger()
         self.render_specs = RenderSpecService()
         self.remotion = RemotionService()
+        self.ffmpeg = FfmpegExecutor()
+        self.commands = AssemblyFfmpegCommands(
+            AssemblyEncodingProfile(
+                final_crf=self.FINAL_CRF,
+                final_preset=self.FINAL_PRESET,
+                target_loudness=self.TARGET_LOUDNESS,
+                true_peak=self.TRUE_PEAK,
+                loudness_range=self.LOUDNESS_RANGE,
+                final_fps=self.FINAL_FPS,
+                final_video_bitrate=self.FINAL_VIDEO_BITRATE,
+                final_maxrate=self.FINAL_MAXRATE,
+                final_bufsize=self.FINAL_BUFSIZE,
+            )
+        )
+        self.caption_writer = CaptionWriter()
+        self.manifest_builder = TimelineManifestBuilder()
+        self.quality_gate = MasterQualityGate(self.ffmpeg)
 
     def assemble_project(self, project_id: int) -> str:
         project = self.repo.get_project(project_id)
         scenes = self.repo.list_scenes(project_id)
-        output_dir = Path(current_app.config["STORAGE_ROOT"]) / "video" / str(project_id)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        ffmpeg_bin = shutil.which("ffmpeg")
+        output_dir = FileStorage(Path(current_app.config["STORAGE_ROOT"])).project_video_dir(project_id)
+        ffmpeg_bin = self.ffmpeg.which("ffmpeg")
         if not ffmpeg_bin:
             summary_path = output_dir / "assembly_manifest.txt"
-            lines = [f"Project: {project['working_title']}", ""]
-            for scene in scenes:
-                lines.append(
-                    f"{scene['scene_order']:02d} | {scene['kind']} | {scene['audio_path']} | {scene['visual_path']}"
-                )
-            summary_path.write_text("\n".join(lines))
+            summary_path.write_text(self.manifest_builder.text_manifest(project, scenes))
             self.repo.update_project(project_id, final_video_path=str(summary_path))
             self.logger.log(
                 "assembly",
@@ -96,9 +111,7 @@ class AssemblyService:
             )
             segment_paths.append(end_path)
 
-        concat_manifest.write_text(
-            "\n".join(f"file '{segment_path.name}'" for segment_path in segment_paths)
-        )
+        concat_manifest.write_text(self.manifest_builder.ffmpeg_concat_manifest(segment_paths))
         assembled_path = output_dir / "assembled_timeline.mp4"
         self._concat_segments(ffmpeg_bin, segment_paths, assembled_path, output_dir)
 
@@ -117,61 +130,8 @@ class AssemblyService:
     def _concat_segments(self, ffmpeg_bin: str, segment_paths: list[Path], output_path: Path, cwd: Path) -> None:
         if not segment_paths:
             raise RuntimeError("No rendered scene segments are available for assembly.")
-        inputs: list[str] = []
-        video_audio_filters: list[str] = []
-        concat_inputs: list[str] = []
-        for index, segment_path in enumerate(segment_paths):
-            inputs.extend(["-i", segment_path.name])
-            video_audio_filters.append(
-                f"[{index}:v]fps={self.FINAL_FPS},setpts=PTS-STARTPTS,format=yuv420p[v{index}];"
-                f"[{index}:a]aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS[a{index}]"
-            )
-            concat_inputs.append(f"[v{index}][a{index}]")
-        filter_complex = (
-            ";".join(video_audio_filters)
-            + ";"
-            + "".join(concat_inputs)
-            + f"concat=n={len(segment_paths)}:v=1:a=1[v][a]"
-        )
         self._run_ffmpeg(
-            [
-                ffmpeg_bin,
-                "-y",
-                *inputs,
-                "-filter_complex",
-                filter_complex,
-                "-map",
-                "[v]",
-                "-map",
-                "[a]",
-                "-c:v",
-                "libx264",
-                "-preset",
-                self.FINAL_PRESET,
-                "-b:v",
-                self.FINAL_VIDEO_BITRATE,
-                "-maxrate",
-                self.FINAL_MAXRATE,
-                "-bufsize",
-                self.FINAL_BUFSIZE,
-                "-r",
-                self.FINAL_FPS,
-                "-fps_mode",
-                "cfr",
-                "-pix_fmt",
-                "yuv420p",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "192k",
-                "-ar",
-                "48000",
-                "-ac",
-                "2",
-                "-movflags",
-                "+faststart",
-                output_path.name,
-            ],
+            self.commands.concat_segments(ffmpeg_bin, segment_paths, output_path),
             cwd=cwd,
             timeout=180,
         )
@@ -184,82 +144,7 @@ class AssemblyService:
         return str(scene["visual_path"])
 
     def _render_scene_video(self, ffmpeg_bin: str, visual_path: str, audio_path: str, output_path: Path) -> None:
-        visual_suffix = Path(visual_path).suffix.lower()
-        if visual_suffix in {".mp4", ".mov", ".mkv", ".webm"}:
-            command = [
-                ffmpeg_bin,
-                "-y",
-                "-stream_loop",
-                "-1",
-                "-i",
-                visual_path,
-                "-i",
-                audio_path,
-                "-map",
-                "0:v:0",
-                "-map",
-                "1:a:0",
-                "-shortest",
-                "-vf",
-                "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30",
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-crf",
-                self.FINAL_CRF,
-                "-pix_fmt",
-                "yuv420p",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "192k",
-                "-ar",
-                "48000",
-                "-ac",
-                "2",
-                "-movflags",
-                "+faststart",
-                str(output_path),
-            ]
-        else:
-            command = [
-                ffmpeg_bin,
-                "-y",
-                "-loop",
-                "1",
-                "-i",
-                visual_path,
-                "-i",
-                audio_path,
-                "-map",
-                "0:v:0",
-                "-map",
-                "1:a:0",
-                "-shortest",
-                "-vf",
-                "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,fps=30",
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-crf",
-                self.FINAL_CRF,
-                "-pix_fmt",
-                "yuv420p",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "192k",
-                "-ar",
-                "48000",
-                "-ac",
-                "2",
-                "-movflags",
-                "+faststart",
-                str(output_path),
-            ]
-        self._run_ffmpeg(command)
+        self._run_ffmpeg(self.commands.render_scene_video(ffmpeg_bin, visual_path, audio_path, output_path))
 
     def _render_timeline_card(self, ffmpeg_bin: str, spec, output_path: Path, label: str) -> None:
         try:
@@ -273,88 +158,13 @@ class AssemblyService:
             self._render_color_clip(ffmpeg_bin, output_path, spec.duration_sec, label)
 
     def _render_color_clip(self, ffmpeg_bin: str, output_path: Path, duration_sec: float, label: str) -> None:
-        self._run_ffmpeg(
-            [
-                ffmpeg_bin,
-                "-y",
-                "-f",
-                "lavfi",
-                "-i",
-                f"color=c=black:s=1920x1080:r=30:d={duration_sec}",
-                "-f",
-                "lavfi",
-                "-i",
-                f"anullsrc=channel_layout=stereo:sample_rate=48000:d={duration_sec}",
-                "-shortest",
-                "-c:v",
-                "libx264",
-                "-preset",
-                self.FINAL_PRESET,
-                "-crf",
-                self.FINAL_CRF,
-                "-pix_fmt",
-                "yuv420p",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "192k",
-                "-movflags",
-                "+faststart",
-                str(output_path),
-            ],
-        )
+        self._run_ffmpeg(self.commands.color_clip(ffmpeg_bin, output_path, duration_sec))
 
     def _add_silent_audio(self, ffmpeg_bin: str, input_path: Path, output_path: Path, duration_sec: float) -> None:
-        self._run_ffmpeg(
-            [
-                ffmpeg_bin,
-                "-y",
-                "-i",
-                str(input_path),
-                "-f",
-                "lavfi",
-                "-i",
-                f"anullsrc=channel_layout=stereo:sample_rate=48000:d={duration_sec}",
-                "-shortest",
-                "-c:v",
-                "copy",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "192k",
-                str(output_path),
-            ],
-        )
+        self._run_ffmpeg(self.commands.silent_audio(ffmpeg_bin, input_path, output_path, duration_sec))
 
     def _has_audio_stream(self, path: Path) -> bool:
-        if not path.exists() or path.stat().st_size == 0:
-            return False
-        ffprobe_bin = shutil.which("ffprobe")
-        if not ffprobe_bin:
-            return False
-        try:
-            result = subprocess.run(
-                [
-                    ffprobe_bin,
-                    "-v",
-                    "error",
-                    "-select_streams",
-                    "a",
-                    "-show_entries",
-                    "stream=index",
-                    "-of",
-                    "json",
-                    str(path),
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-            return False
-        payload = json.loads(result.stdout or "{}")
-        return bool(payload.get("streams"))
+        return self.ffmpeg.has_audio_stream(path)
 
     def _write_caption_srt(
         self,
@@ -363,36 +173,18 @@ class AssemblyService:
         intro_offset: float,
         transition_sec: float,
     ) -> None:
-        lines: list[str] = []
-        cursor = intro_offset
-        index = 1
-        for scene_number, scene in enumerate(scenes):
-            duration = float(scene.get("audio_duration_sec") or 0) or 2.5
-            chunks = self._caption_chunks(str(scene.get("narration_text") or ""))
-            chunk_duration = duration / max(len(chunks), 1)
-            scene_start = cursor
-            for chunk_index, chunk in enumerate(chunks):
-                start = scene_start + (chunk_index * chunk_duration)
-                end = min(start + chunk_duration, scene_start + duration)
-                lines.extend([str(index), f"{self._srt_time(start)} --> {self._srt_time(end)}", chunk, ""])
-                index += 1
-            cursor = scene_start + duration
-            if scene_number != len(scenes) - 1:
-                cursor += transition_sec
-        output_path.write_text("\n".join(lines), encoding="utf-8")
+        self.caption_writer.write(
+            scenes,
+            output_path,
+            intro_offset=intro_offset,
+            transition_sec=transition_sec,
+        )
 
     def _caption_chunks(self, text: str, words_per_line: int = 7) -> list[str]:
-        words = text.split()
-        if not words:
-            return ["YTCreate Finance"]
-        return [" ".join(words[i : i + words_per_line]) for i in range(0, len(words), words_per_line)]
+        return self.caption_writer.chunks(text, words_per_line=words_per_line)
 
     def _srt_time(self, seconds: float) -> str:
-        millis = int(round(seconds * 1000))
-        hours, millis = divmod(millis, 3_600_000)
-        minutes, millis = divmod(millis, 60_000)
-        secs, millis = divmod(millis, 1000)
-        return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+        return self.caption_writer.srt_time(seconds)
 
     def _apply_music_and_captions(
         self,
@@ -428,204 +220,32 @@ class AssemblyService:
         volume = float(current_app.config.get("BACKGROUND_MUSIC_VOLUME", 0.08))
         fade_out_start = max(duration - 3.0, duration * 0.85)
         self._run_ffmpeg(
-            [
+            self.commands.mix_background_music(
                 ffmpeg_bin,
-                "-y",
-                "-i",
-                str(input_path),
-                "-stream_loop",
-                "-1",
-                "-i",
-                str(music_path),
-                "-filter_complex",
-                (
-                    f"[1:a]atrim=0:{duration:.2f},afade=t=in:st=0:d=2,"
-                    f"afade=t=out:st={fade_out_start:.2f}:d=3,volume={volume}[music];"
-                    "[0:a][music]amix=inputs=2:duration=first:dropout_transition=2[aout]"
-                ),
-                "-map",
-                "0:v",
-                "-map",
-                "[aout]",
-                "-c:v",
-                "copy",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "192k",
-                "-shortest",
-                str(output_path),
-            ]
+                input_path,
+                music_path,
+                output_path,
+                duration=duration,
+                volume=volume,
+                fade_out_start=fade_out_start,
+            )
         )
 
     def _burn_captions(self, ffmpeg_bin: str, input_path: Path, captions_path: Path, output_path: Path) -> None:
-        safe_srt = str(captions_path).replace("'", "\\'")
-        self._run_ffmpeg(
-            [
-                ffmpeg_bin,
-                "-y",
-                "-i",
-                str(input_path),
-                "-vf",
-                (
-                    f"fps={self.FINAL_FPS},"
-                    f"subtitles='{safe_srt}':force_style='Fontsize=28,Outline=2,PrimaryColour=&HFFFFFF&,Alignment=2,MarginV=90'"
-                ),
-                "-c:v",
-                "libx264",
-                "-preset",
-                self.FINAL_PRESET,
-                "-b:v",
-                self.FINAL_VIDEO_BITRATE,
-                "-maxrate",
-                self.FINAL_MAXRATE,
-                "-bufsize",
-                self.FINAL_BUFSIZE,
-                "-r",
-                self.FINAL_FPS,
-                "-fps_mode",
-                "cfr",
-                "-pix_fmt",
-                "yuv420p",
-                "-c:a",
-                "copy",
-                "-movflags",
-                "+faststart",
-                str(output_path),
-            ]
-        )
+        self._run_ffmpeg(self.commands.burn_captions(ffmpeg_bin, input_path, captions_path, output_path))
 
     def _final_export(self, ffmpeg_bin: str, input_path: Path, output_path: Path) -> None:
         self._run_ffmpeg(
-            [
-                ffmpeg_bin,
-                "-y",
-                "-i",
-                str(input_path),
-                "-filter_complex",
-                (
-                    f"[0:v]fps={self.FINAL_FPS},setpts=N/({self.FINAL_FPS}*TB),"
-                    "eq=contrast=1.05:saturation=0.94:brightness=-0.01,format=yuv420p[v];"
-                    f"[0:a]aresample=async=1:first_pts=0,"
-                    f"loudnorm=I={self.TARGET_LOUDNESS}:TP={self.TRUE_PEAK}:LRA={self.LOUDNESS_RANGE}[a]"
-                ),
-                "-map",
-                "[v]",
-                "-map",
-                "[a]",
-                "-c:v",
-                "libx264",
-                "-preset",
-                self.FINAL_PRESET,
-                "-b:v",
-                self.FINAL_VIDEO_BITRATE,
-                "-maxrate",
-                self.FINAL_MAXRATE,
-                "-bufsize",
-                self.FINAL_BUFSIZE,
-                "-r",
-                self.FINAL_FPS,
-                "-fps_mode",
-                "cfr",
-                "-pix_fmt",
-                "yuv420p",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "192k",
-                "-movflags",
-                "+faststart",
-                str(output_path),
-            ],
+            self.commands.final_export(ffmpeg_bin, input_path, output_path),
             timeout=int(current_app.config.get("ASSEMBLY_FFMPEG_TIMEOUT", 600)),
         )
 
     def _assert_final_master_quality(self, path: Path) -> None:
-        ffprobe_bin = shutil.which("ffprobe")
-        if not ffprobe_bin:
-            return
-        try:
-            result = subprocess.run(
-                [
-                    ffprobe_bin,
-                    "-v",
-                    "error",
-                    "-select_streams",
-                    "v:0",
-                    "-count_frames",
-                    "-show_entries",
-                    "stream=nb_read_frames,avg_frame_rate,duration,bit_rate",
-                    "-of",
-                    "json",
-                    str(path),
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            stream = (json.loads(result.stdout or "{}").get("streams") or [{}])[0]
-            duration = float(stream.get("duration") or 0)
-            frames = int(stream.get("nb_read_frames") or 0)
-            bitrate = int(stream.get("bit_rate") or 0)
-            avg_rate = str(stream.get("avg_frame_rate") or "0/1")
-            numerator, denominator = avg_rate.split("/", 1)
-            fps = float(numerator) / max(float(denominator), 1.0)
-        except (subprocess.SubprocessError, ValueError, json.JSONDecodeError, IndexError):
-            return
-
-        if duration >= 10 and fps < 24:
-            raise RuntimeError(f"Final master failed quality gate: expected 30fps video, got {fps:.2f}fps.")
-        if duration >= 10 and frames and frames < duration * 24:
-            raise RuntimeError(
-                f"Final master failed quality gate: expected at least {int(duration * 24)} frames, got {frames}."
-            )
-        if duration >= 60 and bitrate and bitrate < 50_000:
-            raise RuntimeError(
-                f"Final master failed quality gate: video bitrate is too low for upload ({bitrate} bps)."
-            )
+        self.quality_gate.assert_final_master_quality(path)
 
     def _probe_duration(self, path: Path) -> float:
-        ffprobe_bin = shutil.which("ffprobe")
-        if not ffprobe_bin:
-            return 0.0
-        try:
-            result = subprocess.run(
-                [
-                    ffprobe_bin,
-                    "-v",
-                    "error",
-                    "-show_entries",
-                    "format=duration",
-                    "-of",
-                    "json",
-                    str(path),
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            payload = json.loads(result.stdout or "{}")
-            return float((payload.get("format") or {}).get("duration") or 0.0)
-        except (subprocess.SubprocessError, ValueError, json.JSONDecodeError):
-            return 0.0
+        return self.ffmpeg.probe_duration(path)
 
-    def _run_ffmpeg(self, command: list[str], cwd: Path | None = None, timeout: int | None = None) -> subprocess.CompletedProcess:
+    def _run_ffmpeg(self, command: list[str], cwd: Path | None = None, timeout: int | None = None) -> Any:
         timeout_sec = int(timeout or current_app.config.get("ASSEMBLY_FFMPEG_TIMEOUT", 600))
-        try:
-            return subprocess.run(
-                command,
-                cwd=cwd,
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=timeout_sec,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise RuntimeError(f"FFmpeg assembly step timed out after {timeout_sec}s.") from exc
-        except subprocess.CalledProcessError as exc:
-            detail = (exc.stderr or exc.stdout or str(exc)).strip()
-            if len(detail) > 800:
-                detail = detail[:800].rstrip() + "...[truncated]"
-            raise RuntimeError(f"FFmpeg assembly step failed: {detail}") from exc
+        return self.ffmpeg.run(command, cwd=cwd, timeout=timeout_sec)

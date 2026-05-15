@@ -52,10 +52,23 @@ Current bugs stay unless a later commit is explicitly marked as a behavior fix.
 
 ## Current Phase
 
-Phase 1 adds the package skeleton, shared result objects, typed compatibility
-contracts, observability primitives, and use-case wrappers. Production routes
-may continue to call the old services directly until wrappers are fully covered
-by characterization tests.
+The migration has moved beyond the initial skeleton. The codebase now has
+application use-case wrappers, compatibility contracts, infrastructure adapters,
+pipeline packages, observability helpers, and renderer helper folders.
+
+Major service files have been reduced below the ~700-line target by extracting
+focused modules for assembly, media, script, rendering, scene building, story,
+concept, visual direction, publishing, and debug support.
+
+The remaining migration work is behavior-preserving hardening:
+
+- continue thinning any route logic that still coordinates workflows directly
+- move more raw dict boundaries behind typed contracts
+- keep splitting pipeline helpers when one file gains too many responsibilities
+- isolate remaining external side effects behind infrastructure adapters
+- expand characterization tests before any deeper extraction
+- classify old product/test expectation failures separately from refactor
+  regressions
 
 ## Commit Discipline
 

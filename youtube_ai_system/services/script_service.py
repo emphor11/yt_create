@@ -3,91 +3,30 @@ from __future__ import annotations
 import json
 import re
 import time
-from difflib import SequenceMatcher
 from typing import Any
 from urllib import error
 
 from flask import current_app
-import requests
 
 from ..models.repository import ProjectRepository, utcnow
+from ..pipelines.script import (
+    GroqScriptGenerator,
+    HookValidator,
+    NEGATIVE_IMPLICATION_WORDS,
+    PEOPLE_GROUP_WORDS,
+    ScriptApprovalPolicy,
+    ScriptPromptBuilder,
+    ScriptSceneRowMapper,
+    TENSION_KEYWORDS,
+    VALID_TENSION_TYPES,
+)
 from .narration_refiner import refine as refine_narration
 from .run_log import RunLogger
 from .script_scene_refiner import ScriptSceneRefiner
 from .scene_debug import SceneDebugStore, SceneDebugTrace, debug_video_pipeline_enabled
 from .financial_governance import narrative_progression_report, repetition_report
 from .story_pipeline import StoryPipeline
-from .visual_scene_normalizer import KNOWN_MECHANISMS, visual_script_prompt_contract
-
-TENSION_KEYWORDS = {
-    "?",
-    "why",
-    "how",
-    "never",
-    "secret",
-    "mistake",
-    "truth",
-    "wrong",
-    "actually",
-    "shocking",
-    "reveal",
-    "hidden",
-    "nobody",
-    "most people",
-    "what happens",
-    "find out",
-    "you think",
-    "real reason",
-}
-
-PEOPLE_GROUP_WORDS = {
-    "indians",
-    "people",
-    "salary",
-    "workers",
-    "families",
-    "earners",
-    "graduates",
-    "investors",
-}
-
-NEGATIVE_IMPLICATION_WORDS = {
-    "lose",
-    "lost",
-    "losing",
-    "paying",
-    "gone",
-    "spent",
-    "debt",
-    "broke",
-    "savings",
-    "interest",
-    "leak",
-    "drain",
-    "cost",
-}
-
-DEFAULT_TARGET_DURATION_MINUTES = 8
-DEFAULT_CHANNEL_NICHE = "personal finance India"
-DEFAULT_SCRIPT_TONE = "confident, direct, slightly provocative"
-MIN_BODY_SCENES_FOR_LONG_FORM = 8
-HOOK_MIN_WORDS = 8
-HOOK_MAX_WORDS = 35
-BODY_MIN_WORDS = 160
-BODY_MAX_WORDS = 200
-OUTRO_MIN_WORDS = 110
-OUTRO_MAX_WORDS = 150
-TOTAL_WORD_APPROVAL_TOLERANCE_RATIO = 0.02
-TOTAL_WORD_APPROVAL_TOLERANCE_MIN_WORDS = 15
-DUPLICATE_SCENE_SIMILARITY = 0.92
-VALID_TENSION_TYPES = {
-    "curiosity_gap",
-    "shocking_statistic",
-    "contrarian_claim",
-    "common_mistake_reveal",
-    "before_after",
-}
-
+from .visual_scene_normalizer import visual_script_prompt_contract
 
 class ScriptService:
     def __init__(self) -> None:
@@ -95,6 +34,19 @@ class ScriptService:
         self.logger = RunLogger()
         self.story_pipeline = StoryPipeline(logger=self.logger)
         self.scene_refiner = ScriptSceneRefiner()
+        self.hook_validator = HookValidator(
+            tension_keywords=TENSION_KEYWORDS,
+            people_group_words=PEOPLE_GROUP_WORDS,
+            negative_implication_words=NEGATIVE_IMPLICATION_WORDS,
+        )
+        self.scene_row_mapper = ScriptSceneRowMapper()
+        self.approval_policy = ScriptApprovalPolicy(
+            repo=self.repo,
+            hook_validator=self.hook_validator,
+            scene_row_mapper=self.scene_row_mapper,
+        )
+        self.groq_generator = GroqScriptGenerator(self.logger)
+        self.prompt_builder = ScriptPromptBuilder(visual_script_prompt_contract)
 
     def generate_script(
         self,
@@ -155,75 +107,15 @@ class ScriptService:
         return json.loads(raw) if isinstance(raw, str) else raw
 
     def validate_hook(self, hook: dict[str, Any]) -> list[str]:
-        errors: list[str] = []
-        if float(hook.get("duration", hook.get("estimated_duration_sec", 0)) or 0) > 30:
-            errors.append("Hook must be 30 seconds or under.")
-
-        narration = str(hook.get("narration", "")).strip()
-        narration_lower = narration.lower()
-        word_count = len(narration.split())
-
-        condition_a = any(keyword in narration_lower for keyword in TENSION_KEYWORDS)
-
-        condition_b = False
-        has_pct = "%" in narration
-        large_numbers = [int(m) for m in re.findall(r"\d+", narration) if int(m) > 1000]
-        has_large_number = len(large_numbers) > 0
-        has_people_group = any(pg in narration_lower for pg in PEOPLE_GROUP_WORDS)
-        if (has_pct or has_large_number) and word_count <= 25 and has_people_group:
-            condition_b = True
-
-        condition_c = False
-        has_rupee = "₹" in narration
-        has_negative = any(nw in narration_lower for nw in NEGATIVE_IMPLICATION_WORDS)
-        if has_rupee and has_negative:
-            condition_c = True
-
-        if not (condition_a or condition_b or condition_c):
-            guidance_lines = [
-                "Hook must include a tension signal. Satisfy ANY ONE of these:",
-                "  A) Include a tension keyword or question mark: " + ", ".join(sorted(TENSION_KEYWORDS)),
-                "  B) Include a percentage or number > 1000 AND a people group word "
-                + f"({', '.join(sorted(PEOPLE_GROUP_WORDS))}) in under 25 words",
-                "  C) Include ₹ symbol AND a negative implication word "
-                + f"({', '.join(sorted(NEGATIVE_IMPLICATION_WORDS))})",
-            ]
-            errors.append(" | ".join(guidance_lines))
-        return errors
+        return self.approval_policy.validate_hook(hook)
 
     def approval_ready(self, script_version: dict[str, Any]) -> tuple[bool, list[str], dict[str, Any]]:
         payload = self.load_script_payload(script_version)
-        errors = self.validate_hook(payload["hook"])
-        ai_generated_at = script_version.get("ai_generated_at")
-        user_edited_at = script_version.get("user_edited_at")
-        if not user_edited_at:
-            errors.append("You must edit the script before approval.")
-        elif user_edited_at <= ai_generated_at:
-            errors.append("User edits must happen after the AI draft is generated.")
-        body_scenes = [scene for scene in payload["scenes"] if scene.get("kind", "body") == "body"]
-        if not body_scenes:
-            errors.append("At least one body scene is required.")
-        errors.extend(self._validate_body_scene_count(script_version, body_scenes))
-        errors.extend(self._validate_long_form_depth(script_version, payload, body_scenes))
-        errors.extend(self._validate_visual_scene_contract(payload, body_scenes))
-        errors.extend(self._validate_duplicate_body_scenes(body_scenes))
-        errors.extend(self._validate_script_governance(body_scenes))
+        errors = self.approval_policy.approval_errors(script_version, payload)
         return (not errors, errors, payload)
 
     def _validate_body_scene_count(self, script_version: dict[str, Any], body_scenes: list[dict[str, Any]]) -> list[str]:
-        project_id = script_version.get("video_project_id")
-        if not project_id:
-            return []
-        project = self.repo.get_project(int(project_id))
-        target_minutes = int(project.get("target_duration_minutes") or DEFAULT_TARGET_DURATION_MINUTES)
-        if target_minutes >= DEFAULT_TARGET_DURATION_MINUTES and len(body_scenes) < MIN_BODY_SCENES_FOR_LONG_FORM:
-            return [
-                (
-                    f"Target duration is {target_minutes} minutes, but the script has only "
-                    f"{len(body_scenes)} body scenes. Add at least {MIN_BODY_SCENES_FOR_LONG_FORM} body scenes before approval."
-                )
-            ]
-        return []
+        return self.approval_policy.validate_body_scene_count(script_version, body_scenes)
 
     def _validate_long_form_depth(
         self,
@@ -231,216 +123,64 @@ class ScriptService:
         payload: dict[str, Any],
         body_scenes: list[dict[str, Any]],
     ) -> list[str]:
-        project_id = script_version.get("video_project_id")
-        if not project_id:
-            return []
-        project = self.repo.get_project(int(project_id))
-        target_minutes = int(project.get("target_duration_minutes") or DEFAULT_TARGET_DURATION_MINUTES)
-        if target_minutes < DEFAULT_TARGET_DURATION_MINUTES:
-            return []
-
-        errors: list[str] = []
-        for index, scene in enumerate(body_scenes, start=1):
-            word_count = self._word_count(str(scene.get("narration") or ""))
-            if word_count < BODY_MIN_WORDS:
-                errors.append(
-                    (
-                        f"Body scene {index} is too short for a professional {target_minutes}-minute video: "
-                        f"{word_count} words. Minimum: {BODY_MIN_WORDS} words."
-                    )
-                )
-            sentence_count = self._sentence_count(str(scene.get("narration") or ""))
-            if sentence_count < 8:
-                errors.append(
-                    (
-                        f"Body scene {index} has only {sentence_count} spoken sentences. "
-                        "Use 8-12 short sentences with setup, example, mechanism, consequence, and transition."
-                    )
-                )
-
-        total_words = self._payload_word_count(payload)
-        minimum_total = self._minimum_total_words_for_target(target_minutes)
-        minimum_total_for_approval = self._minimum_total_words_for_approval(target_minutes)
-        if total_words < minimum_total_for_approval:
-            errors.append(
-                (
-                    f"Target duration is {target_minutes} minutes, but the script has only "
-                    f"{total_words} spoken words. Minimum for approval: {minimum_total} words."
-                )
-            )
-        return errors
+        return self.approval_policy.validate_long_form_depth(script_version, payload, body_scenes)
 
     def _validate_visual_scene_contract(
         self,
         payload: dict[str, Any],
         body_scenes: list[dict[str, Any]],
     ) -> list[str]:
-        errors: list[str] = []
-        for index, scene in enumerate(body_scenes, start=1):
-            narration = str(scene.get("narration") or "")
-            visual_scene = self._visual_scene_for_row(payload, scene, index)
-            if not visual_scene:
-                errors.append(f"Body scene {index} is missing visual planning fields.")
-                continue
-
-            mechanism = str(visual_scene.get("mechanism") or "").strip()
-            if mechanism not in KNOWN_MECHANISMS:
-                errors.append(
-                    (
-                        f"Body scene {index} has invalid visual mechanism {mechanism!r}. "
-                        "Choose one supported finance mechanism."
-                    )
-                )
-
-            visual_intent = str(visual_scene.get("visual_intent") or "").strip()
-            if not visual_intent:
-                errors.append(f"Body scene {index} is missing visual_intent.")
-
-            visual_beats = visual_scene.get("visual_beats") or []
-            if not isinstance(visual_beats, list) or len([beat for beat in visual_beats if str(beat).strip()]) < 2:
-                errors.append(f"Body scene {index} needs at least 2 visual_beats.")
-
-            spoken_numbers = self._number_tokens(narration)
-            for raw_number in visual_scene.get("numbers") or []:
-                requested_tokens = self._number_tokens(str(raw_number))
-                if requested_tokens and not requested_tokens.issubset(spoken_numbers):
-                    errors.append(
-                        (
-                            f"Body scene {index} visual numbers include {raw_number!r}, "
-                            "but that number is not spoken in the narration."
-                        )
-                    )
-        return errors
+        return self.approval_policy.validate_visual_scene_contract(payload, body_scenes)
 
     def _payload_word_count(self, payload: dict[str, Any]) -> int:
-        texts = [
-            str((payload.get("hook") or {}).get("narration") or ""),
-            *[str(scene.get("narration") or "") for scene in payload.get("scenes") or []],
-            str((payload.get("outro") or {}).get("narration") or ""),
-        ]
-        return sum(self._word_count(text) for text in texts)
+        return self.approval_policy.payload_word_count(payload)
 
     def _minimum_total_words_for_target(self, target_minutes: int) -> int:
-        body_scene_count = max(MIN_BODY_SCENES_FOR_LONG_FORM, int(target_minutes))
-        return body_scene_count * BODY_MIN_WORDS + HOOK_MIN_WORDS + OUTRO_MIN_WORDS
+        return self.approval_policy.minimum_total_words_for_target(target_minutes)
 
     def _minimum_total_words_for_approval(self, target_minutes: int) -> int:
-        target = self._minimum_total_words_for_target(target_minutes)
-        tolerance = max(
-            TOTAL_WORD_APPROVAL_TOLERANCE_MIN_WORDS,
-            round(target * TOTAL_WORD_APPROVAL_TOLERANCE_RATIO),
-        )
-        return max(0, target - tolerance)
+        return self.approval_policy.minimum_total_words_for_approval(target_minutes)
 
     def _word_count(self, text: str) -> int:
-        return len(re.findall(r"[A-Za-z0-9₹%]+(?:[.,][A-Za-z0-9]+)*", text))
+        return self.approval_policy.word_count(text)
 
     def _sentence_count(self, text: str) -> int:
-        return len([part for part in re.split(r"(?<=[.!?])\s+", str(text or "").strip()) if part.strip()])
+        return self.approval_policy.sentence_count(text)
 
     def _number_tokens(self, text: str) -> set[str]:
-        tokens: set[str] = set()
-        for match in re.finditer(r"\d[\d,]*(?:\.\d+)?", str(text or "")):
-            token = match.group(0).replace(",", "")
-            if token.endswith(".0"):
-                token = token[:-2]
-            if token:
-                tokens.add(token)
-        return tokens
+        return self.approval_policy.number_tokens(text)
 
     def _validate_duplicate_body_scenes(self, body_scenes: list[dict[str, Any]]) -> list[str]:
-        errors: list[str] = []
-        normalized = [self._duplicate_signature(str(scene.get("narration") or "")) for scene in body_scenes]
-        for left_index, left_text in enumerate(normalized):
-            if not left_text:
-                continue
-            for right_index in range(left_index + 1, len(normalized)):
-                right_text = normalized[right_index]
-                if not right_text:
-                    continue
-                similarity = SequenceMatcher(None, left_text, right_text).ratio()
-                if similarity >= DUPLICATE_SCENE_SIMILARITY:
-                    errors.append(
-                        (
-                            f"Body scene {left_index + 1} and body scene {right_index + 1} are too similar "
-                            f"({similarity:.0%} match). Rewrite or remove the duplicate before approval."
-                        )
-                    )
-        return errors
+        return self.approval_policy.validate_duplicate_body_scenes(body_scenes)
 
     def _validate_script_governance(self, body_scenes: list[dict[str, Any]]) -> list[str]:
-        report = repetition_report(body_scenes)
-        errors: list[str] = []
-        for item in report.get("repeated_phrases") or []:
-            if int(item.get("count") or 0) >= 3:
-                errors.append(
-                    (
-                        f"Repeated narration theme {item.get('phrase')!r} appears in "
-                        f"{item.get('count')} body scenes. Rewrite repeated philosophy before approval."
-                    )
-                )
-        for leak in report.get("meta_visual_leaks") or []:
-            errors.append(
-                (
-                    f"Body scene {leak.get('scene_index')} contains meta-visual narration "
-                    f"{leak.get('phrase')!r}. Keep narration spoken-only."
-                )
-            )
-        return errors
+        return self.approval_policy.validate_script_governance(body_scenes)
 
     def _duplicate_signature(self, narration: str) -> str:
-        text = narration.lower()
-        text = re.sub(r"₹\s*", "rs ", text)
-        text = re.sub(r"[^\w\s%]", " ", text)
-        text = re.sub(r"\s+", " ", text).strip()
-        return text
+        return self.approval_policy.duplicate_signature(narration)
 
     def scene_rows_from_payload(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
-        scene_rows = [
-            {
-                "scene_order": 0,
-                "kind": "hook",
-                "narration_text": payload["hook"]["narration"],
-            }
-        ]
-        for index, scene in enumerate(payload["scenes"], start=1):
-            row = {
-                "scene_order": index,
-                "kind": scene.get("kind", "body"),
-                "narration_text": scene["narration"],
-            }
-            visual_scene = self._visual_scene_for_row(payload, scene, index)
-            if visual_scene:
-                row["visual_scene_json"] = json.dumps(visual_scene, ensure_ascii=False)
-            scene_rows.append(row)
-        scene_rows.append(
-            {
-                "scene_order": len(scene_rows),
-                "kind": "outro",
-                "narration_text": payload["outro"]["narration"],
-            }
-        )
-        return scene_rows
+        return self.scene_row_mapper.scene_rows_from_payload(payload)
 
     def _visual_scene_for_row(self, payload: dict[str, Any], scene: dict[str, Any], index: int) -> dict[str, Any]:
-        source = self._visual_scene_from_raw_scene(scene, str(scene.get("narration") or ""))
-        if source:
-            return source
-        story_sections = ((payload.get("story_plan") or {}).get("sections") or [])
-        scene_text = " ".join(str(scene.get("narration") or "").split())
-        for section in story_sections:
-            section_text = " ".join(str(section.get("text") or "").split())
-            visual_scene = section.get("visual_scene")
-            if isinstance(visual_scene, dict) and section_text and section_text == scene_text:
-                return dict(visual_scene)
-        section_index = index - 1
-        if 0 <= section_index < len(story_sections):
-            visual_scene = story_sections[section_index].get("visual_scene")
-            if isinstance(visual_scene, dict):
-                return dict(visual_scene)
-        return {}
+        return self.scene_row_mapper.visual_scene_for_row(payload, scene, index)
 
-    def _generate_payload(self, project_id: int, topic: str, angle: str, prompt: str) -> tuple[dict[str, Any], str]:
+    def _generate_payload(
+        self,
+        project_id_or_topic: int | str | None,
+        topic_or_angle: str,
+        angle_or_prompt: str,
+        prompt: str | None = None,
+    ) -> tuple[dict[str, Any], str]:
+        if prompt is None:
+            project_id = None
+            topic = str(project_id_or_topic or "")
+            angle = topic_or_angle
+            prompt = angle_or_prompt
+        else:
+            project_id = int(project_id_or_topic) if project_id_or_topic is not None else None
+            topic = topic_or_angle
+            angle = angle_or_prompt
         provider = current_app.config.get("LLM_PROVIDER", "auto")
         self.logger.log(
             "script_generation",
@@ -478,241 +218,30 @@ class ScriptService:
         niche: str | None = None,
         tone: str | None = None,
     ) -> str:
-        target_duration_minutes = target_duration_minutes or current_app.config.get(
-            "TARGET_DURATION_MINUTES",
-            DEFAULT_TARGET_DURATION_MINUTES,
-        )
-        body_scene_count = max(1, int(target_duration_minutes))
-        hook_min_words = HOOK_MIN_WORDS
-        hook_max_words = HOOK_MAX_WORDS
-        body_min_words = BODY_MIN_WORDS
-        body_max_words = BODY_MAX_WORDS
-        outro_min_words = OUTRO_MIN_WORDS
-        outro_max_words = OUTRO_MAX_WORDS
-        total_min_words = body_scene_count * body_min_words + hook_min_words + outro_min_words
-        total_max_words = body_scene_count * body_max_words + hook_max_words + outro_max_words
-        niche = niche or current_app.config.get("CHANNEL_NICHE", DEFAULT_CHANNEL_NICHE)
-        tone = tone or current_app.config.get("SCRIPT_TONE", DEFAULT_SCRIPT_TONE)
-        return (
-            "You are a world-class YouTube script writer for a finance-explanation channel in the style of 20 Minute University-style videos (e.g. “All of Economics in 20 minutes”).\n\n"
-            "Your only job is to generate raw spoken-style narration that will be processed by a deterministic system later.\n\n"
-            "---\n\n"
-            "OUTPUT REQUIREMENTS:\n\n"
-            "* Output only the required JSON object\n"
-            "* Narration fields must contain spoken narration only\n"
-            "* No markdown, no bullet points, no extra text\n"
-            "* No section labels like \"Hook\", \"Body\", or \"Outro\" inside narration text\n\n"
-            "---\n\n"
-            "TONE & STYLE:\n\n"
-            "* Direct, slightly sarcastic, warm, knowledgeable\n"
-            "* Conversational (talk to the viewer, not at them)\n"
-            "* Light humor + relatable analogies\n"
-            "* Use Indian finance context naturally (salary, EMI, SIP, inflation, debt trap, lifestyle inflation, compound interest, risk-vs-return, diversification, FOMO, etc.)\n"
-            "* Keep language simple and spoken-friendly\n\n"
-            "RECURRING FINANCIAL EXAMPLE:\n\n"
-            "* Use one recurring financial example throughout the entire video: a salaried Indian earning around ₹50,000/month in a metro city\n"
-            "* Do not create a named fictional character\n"
-            "* Do not write scenes that require realistic human acting, facial emotion, cinematic b-roll, or live-action continuity\n"
-            "* Keep the story mechanism-first: salary flows, EMI pressure, inflation erosion, SIP growth, diversification, FOMO, and emergency fund logic\n"
-            "* Refer back to earlier numbers explicitly when useful, such as salary, rent, EMI, food delivery, subscriptions, SIP, and emergency fund\n"
-            "* Every body scene should show how the same monthly money system changes over time\n"
-            "* Visuals will be diagrams, financial animations, charts, stacks, flows, comparison visuals, and mechanism visualizers\n\n"
-            "---\n\n"
-            "CORE WRITING RULES:\n\n"
-            "1. ONE CLEAR IDEA PER SENTENCE\n"
-            "Each sentence should express one clear spoken idea.\n"
-            "Avoid overloaded sentences that combine multiple finance concepts at once.\n\n"
-            "2. SHORT SENTENCES\n"
-            "Keep sentences short (ideally under 20 words).\n"
-            "Split complex thoughts into multiple short sentences.\n\n"
-            "3. CONCEPT GROUPING\n"
-            "Each concept should be expressed using 1–3 consecutive sentences.\n"
-            "Do NOT mix multiple concepts together in the same group of sentences.\n\n"
-            "4. EXPLICIT CONCEPT VISIBILITY\n"
-            "The core concept must be clearly visible from the sentence itself.\n"
-            "Avoid vague phrases like “this situation”, “this thing”, “this example”.\n"
-            "Use clear, concrete terms like:\n\n"
-            "* emergency fund\n"
-            "* debt trap\n"
-            "* inflation\n"
-            "* lifestyle inflation\n"
-            "* compound interest\n"
-            "* risk-vs-return\n"
-            "* diversification\n"
-            "* FOMO\n"
-            "* panic-selling\n"
-            "* behavioral bias\n\n"
-            "---\n\n"
-            "STRUCTURE (NATURAL FLOW ONLY):\n\n"
-            "HOOK:\n\n"
-            f"* First 1–3 sentences, {hook_min_words}-{hook_max_words} spoken words total\n"
-            "* Start with strong curiosity or tension\n"
-            "* Must pass this hook contract: under 35 words, and include either a question mark/\"why\", or a ₹ amount with a negative finance word like gone/leak/drain/debt/cost, or a percentage/big number with a people group\n"
-            "* Name the recurring ₹50,000/month situation, not a generic finance statement\n"
-            "* Prefer hooks like: \"Why does your ₹50,000 salary feel gone by day 20?\"\n"
-            "* Avoid validator-weak hooks like: \"You work hard but still struggle to save.\"\n"
-            "* No greetings, no \"hey guys\", no \"welcome back\"\n"
-            "* Make the viewer feel like they are already in the problem (salary, EMIs, lack of savings, debt, inflation, investing confusion)\n\n"
-            "BODY:\n\n"
-            "* Continuous flow of ideas with no labels, markdown, or bullet points inside narration\n"
-            f"* Generate EXACTLY {body_scene_count} body scenes. No more, no fewer\n"
-            f"* Each body scene must be {body_min_words}-{body_max_words} spoken words across 8-12 short sentences\n"
-            "* Do NOT write checklist-style scenes. Each scene is one chapter in the same money system\n"
-            "* Each body scene must focus on one finance mechanism only\n"
-            "* Do not let adjacent finance concepts contaminate the scene. Example: lifestyle inflation is spending expansion after a raise, not macro inflation or CPI erosion\n"
-            "* Each body scene must include these five elements in natural narration order, without labeling them:\n"
-            "  1. SETUP: Restate where the ₹50,000/month money system is now\n"
-            "  2. EXAMPLE: Use a concrete Indian finance situation with a specific rupee number\n"
-            "  3. MECHANISM: Explain how the financial force works using simple math or logic\n"
-            "  4. CONSEQUENCE: Show what happens to savings, debt, purchasing power, risk, or confidence\n"
-            "  5. TRANSITION: Create tension or callback that pulls into the next scene\n"
-            "* Do not write the words SETUP, EXAMPLE, MECHANISM, CONSEQUENCE, or TRANSITION inside narration\n"
-            "* Each concept should be explained in a complete visual sequence, not compressed into tiny sentences\n"
-            "* Use relatable Indian-finance examples: salary, rent, EMI, SIP, FD, mutual funds, loans, crypto, etc.\n"
-            "* Prefer light, slightly irreverent humor and analogies\n\n"
-            "OUTRO:\n\n"
-            f"* Last 6-9 sentences, {outro_min_words}-{outro_max_words} spoken words\n"
-            "* Recap the major mechanisms from the video in one line each\n"
-            "* Give one clear, practical, non-guarantee action the viewer can take today\n"
-            "* Avoid platform-specific advice unless the topic explicitly asks for it\n"
-            "* End with one strong, memorable line that sticks in the viewer’s mind\n\n"
-            "---\n\n"
-            "CONSTRAINTS:\n\n"
-            "WORD COUNT TARGETS (enforce strictly):\n"
-            f"* Hook: {hook_min_words}-{hook_max_words} words\n"
-            f"* Each body scene: {body_min_words}-{body_max_words} spoken words\n"
-            f"* Outro: {outro_min_words}-{outro_max_words} spoken words\n"
-            f"* Total script including hook and outro should be around {total_min_words}-{total_max_words} spoken words\n"
-            f"* If any body scene is under {body_min_words} words, expand it before returning JSON\n\n"
-            "* Generate semantic visual planning fields for body scenes, but keep narration fields spoken-only\n"
-            "* Do NOT write meta-visual narration like \"the viewer should see\", \"the scene should show\", \"not just hear generic advice\", or repeated philosophy like \"every rupee has a job\"\n"
-            "* Visual planning must not invent numbers. numbers[] must contain only values spoken in narration; derived calculations belong to the deterministic renderer later\n"
-            "* Do NOT add extra fields in the JSON apart from the exact ones listed in the OUTPUT FORMAT below\n"
-            "* Do NOT invent fake factual claims, guaranteed returns, or predictions (no \"guaranteed 25% returns\", no \"XYZ stock will go to 1000\")\n"
-            "* You may use simple hypothetical numbers only when clearly framed as examples\n"
-            "* Duration fields are rough estimates only, but body scenes must still contain enough narration for the target duration\n"
-            "* Do NOT request visuals that require a realistic person, actor performance, face continuity, or live-action footage\n"
-            "* Do NOT output section labels like \"Hook\", \"Body\", or \"Outro\" inside the narration text\n\n"
-            "---\n\n"
-            "INPUT VARIABLES (already passed by system):\n\n"
-            "* CHANNEL_DESCRIPTION\n"
-            "* TOPIC\n"
-            "* AUDIENCE\n"
-            "* DURATION_APPROX\n\n"
-            "Use them naturally in writing, but do NOT expose them as separate JSON keys.\n\n"
-            f"CHANNEL_DESCRIPTION: {niche}\n"
-            f"TOPIC: {topic}\n"
-            f"AUDIENCE: {angle}\n"
-            f"DURATION_APPROX: {target_duration_minutes} minutes\n"
-            f"TONE_HINT: {tone}\n\n"
-            f"{visual_script_prompt_contract()}\n"
-            "OUTPUT FORMAT:\n"
-            "Return one valid JSON object only.\n"
-            "{\n"
-            f'  "hook": {{"narration": "<{hook_min_words}-{hook_max_words} word spoken hook>", "duration": "<estimated seconds, usually 6-10>", "tension_type": "<curiosity_gap | shocking_statistic | contrarian_claim | common_mistake_reveal | before_after>"}},\n'
-            f'  "scenes": [{{"scene_index": "<1-based scene number>", "kind": "body", "narration": "<{body_min_words}-{body_max_words} words, 8-12 short spoken sentences, one finance mechanism only, includes setup/example/mechanism/consequence/transition>", "duration": "<estimated seconds, usually 55-75>", "visual_intent": "<one sentence describing what visibly changes on screen>", "visual_beats": ["<object/action setup>", "<money or mechanism changes>", "<consequence or emotional payoff>"], "numbers": ["<only numbers actually spoken in narration>"], "emotion": "<anxiety | shock | clarity | confidence | urgency>", "mechanism": "<specific mechanism from the allowed list above>"}}],\n'
-            f'  "outro": {{"narration": "<{outro_min_words}-{outro_max_words} words, 6-9 spoken recap sentences with one practical takeaway>", "duration": "<estimated seconds, usually 35-50>"}},\n'
-            '  "suggested_titles": ["title option 1", "title option 2"],\n'
-            '  "suggested_description": "string",\n'
-            '  "tags": ["tag1", "tag2"],\n'
-            '  "tension_type_used": "curiosity_gap"\n'
-            "}\n"
-            f"The total duration across hook + scenes + outro should be approximately {target_duration_minutes * 60} seconds.\n"
-            "Before returning, silently count words in every narration field and fix any scene that misses the requested range.\n"
-            f"Generate EXACTLY {body_scene_count} body scenes.\n"
-            f"Each body scene narration must be {body_min_words}-{body_max_words} words. Check word count before returning.\n"
-            f"Total script including hook and outro should be around {total_min_words}-{total_max_words} spoken words.\n"
-            "Return only JSON.\n"
+        return self.prompt_builder.build(
+            config=current_app.config,
+            topic=topic,
+            angle=angle,
+            target_duration_minutes=target_duration_minutes,
+            niche=niche,
+            tone=tone,
         )
 
     def _groq_script(self, topic: str, angle: str, prompt: str, api_key: str) -> dict[str, Any]:
-        max_tokens = int(current_app.config.get("GROQ_MAX_TOKENS", 4200))
-        rate_limit_retries = int(current_app.config.get("GROQ_RATE_LIMIT_RETRIES", 2))
-        body = {
-            "model": current_app.config["GROQ_MODEL"],
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a professional YouTube scriptwriter. "
-                        "You always return valid JSON only. "
-                        "You never add explanations, apologies, markdown formatting, or code fences."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.7,
-            "max_tokens": max_tokens,
-            "response_format": {"type": "json_object"},
-        }
-        for attempt in range(rate_limit_retries + 1):
-            try:
-                response = requests.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    json=body,
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {api_key}",
-                        "User-Agent": "YTCreate/1.0",
-                    },
-                    timeout=45,
-                )
-                response.raise_for_status()
-                response_json = response.json()
-                break
-            except requests.HTTPError as exc:
-                status_code = exc.response.status_code if exc.response is not None else "unknown"
-                error_body = exc.response.text if exc.response is not None else str(exc)
-                if status_code == 429 and attempt < rate_limit_retries:
-                    wait_seconds = self._groq_retry_wait_seconds(exc.response)
-                    self.logger.log(
-                        "script_generation",
-                        "running",
-                        (
-                            "Groq rate limit reached. "
-                            f"Retrying in {wait_seconds:.1f}s "
-                            f"(attempt {attempt + 1}/{rate_limit_retries})."
-                        ),
-                    )
-                    time.sleep(wait_seconds)
-                    continue
-                raise ValueError(f"Groq API error {status_code}: {error_body}") from exc
-            except requests.RequestException as exc:
-                raise error.URLError(str(exc)) from exc
+        return self.groq_generator.generate(
+            topic=topic,
+            angle=angle,
+            prompt=prompt,
+            api_key=api_key,
+            config=current_app.config,
+            sleep_func=time.sleep,
+        )
 
-        text = response_json["choices"][0]["message"]["content"]
-        self.logger.log("script_generation", "running", f"Raw Groq response before parsing: {text}")
-        return self._extract_json_payload(text)
-
-    def _groq_retry_wait_seconds(self, response: requests.Response | None) -> float:
-        if response is None:
-            return 12.0
-        retry_after = response.headers.get("Retry-After")
-        if retry_after:
-            try:
-                return min(30.0, max(1.0, float(retry_after)))
-            except ValueError:
-                pass
-        try:
-            payload = response.json()
-            message = str((payload.get("error") or {}).get("message") or "")
-        except ValueError:
-            message = response.text or ""
-        match = re.search(r"try again in\s+([0-9.]+)s", message, flags=re.IGNORECASE)
-        if match:
-            return min(30.0, max(1.0, float(match.group(1)) + 0.5))
-        return 12.0
+    def _groq_retry_wait_seconds(self, response: Any | None) -> float:
+        return self.groq_generator.retry_wait_seconds(response)
 
     def _extract_json_payload(self, raw_text: str) -> dict[str, Any]:
-        cleaned = raw_text.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.strip("`")
-            cleaned = cleaned.replace("json", "", 1).strip()
-        start = cleaned.find("{")
-        end = cleaned.rfind("}")
-        if start == -1 or end == -1:
-            raise ValueError("Model did not return a JSON object.")
-        return json.loads(cleaned[start : end + 1])
+        return self.groq_generator.extract_json_payload(raw_text)
 
     def _validate_payload_shape(self, payload: dict[str, Any]) -> None:
         required_top = {"hook", "scenes", "outro", "story_plan"}
@@ -865,12 +394,7 @@ class ScriptService:
         return cleaned[:8] or [topic, angle, "personal finance", "money habits"]
 
     def _visual_scene_from_raw_scene(self, scene: dict[str, Any], narration: str) -> dict[str, Any]:
-        source = scene.get("visual_scene") if isinstance(scene.get("visual_scene"), dict) else scene
-        visual_scene: dict[str, Any] = {"narration": narration}
-        for key in ("visual_intent", "visual_beats", "numbers", "emotion", "mechanism"):
-            if key in source:
-                visual_scene[key] = source[key]
-        return visual_scene if len(visual_scene) > 1 else {}
+        return self.scene_row_mapper.visual_scene_from_raw_scene(scene, narration)
 
     def _normalize_tension_type(self, value: Any) -> str:
         tension_type = str(value or "").strip().lower()

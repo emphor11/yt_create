@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import json
-import hashlib
-import shutil
-import subprocess
 import tempfile
 import time
 from pathlib import Path
 
 from flask import current_app
 
-from .render_spec_service import RenderSpec
+from ..contracts.rendering import RenderSpec
+from ..infrastructure.remotion import (
+    RemotionAssetStager,
+    RemotionCommandFailed,
+    RemotionCommandTimeout,
+    RemotionCommandUnavailable,
+    RemotionExecutor,
+)
 
 
 class RemotionUnavailableError(RuntimeError):
@@ -44,6 +48,10 @@ DEFAULT_RENDER_THEME = {
 class RemotionService:
     """Thin Python wrapper around the sibling Remotion render project."""
 
+    def __init__(self) -> None:
+        self.asset_stager = RemotionAssetStager(FILE_PATH_PROP_KEYS, DEFAULT_RENDER_THEME)
+        self.executor = RemotionExecutor()
+
     def render_video(self, spec: RenderSpec, output_path: Path) -> Path:
         self._render(spec, output_path)
         return output_path
@@ -60,7 +68,7 @@ class RemotionService:
         return (
             project_path.exists()
             and local_remotion.exists()
-            and shutil.which(str(current_app.config.get("REMOTION_CLI", "npx"))) is not None
+            and self.executor.which(str(current_app.config.get("REMOTION_CLI", "npx"))) is not None
         )
 
     def _render(self, spec: RenderSpec, output_path: Path, still: bool = False, frame: int = 0) -> None:
@@ -107,12 +115,9 @@ class RemotionService:
                     f"--concurrency={concurrency}",
                     "--log=error",
                 ]
-            subprocess.run(
+            self.executor.run(
                 command,
                 cwd=project_path,
-                check=True,
-                capture_output=True,
-                text=True,
                 timeout=timeout_sec,
             )
             elapsed = round(time.monotonic() - started_at, 1)
@@ -122,17 +127,15 @@ class RemotionService:
                 render_output_path.name if still else output_path.name,
                 elapsed,
             )
-        except subprocess.TimeoutExpired as exc:
+        except RemotionCommandTimeout as exc:
             raise RuntimeError(
                 f"Remotion render timed out after {timeout_sec}s for {spec.composition}. "
                 "Check for infinite loops or hanging components."
             ) from exc
-        except FileNotFoundError as exc:
+        except RemotionCommandUnavailable as exc:
             raise RemotionUnavailableError("Remotion CLI is not installed. Run npm install in your Remotion project.") from exc
-        except subprocess.CalledProcessError as exc:
-            detail = (exc.stderr or exc.stdout or str(exc)).strip()
-            if len(detail) > 800:
-                detail = detail[:800].rstrip() + "...[truncated]"
+        except RemotionCommandFailed as exc:
+            detail = exc.detail
             elapsed = round(time.monotonic() - started_at, 1)
             current_app.logger.error("Remotion failed %s after %ss: %s", spec.composition, elapsed, detail)
             raise RuntimeError(f"Remotion render failed for {spec.composition}: {detail}") from exc
@@ -140,36 +143,16 @@ class RemotionService:
             props_path.unlink(missing_ok=True)
 
     def _props_for_render(self, spec: RenderSpec, project_path: Path) -> dict:
-        props = dict(spec.props)
-        props.setdefault("theme", dict(DEFAULT_RENDER_THEME))
-        props = self._stage_file_props(project_path, props)
-        if spec.source_asset_path is not None:
-            props["videoPath"] = self._stage_public_asset(project_path, spec.source_asset_path)
-        return props
+        return self.asset_stager.props_for_render(spec, project_path)
 
     def _stage_file_props(self, project_path: Path, value: object, key: str = "") -> object:
-        if isinstance(value, dict):
-            return {child_key: self._stage_file_props(project_path, child_value, child_key) for child_key, child_value in value.items()}
-        if isinstance(value, list):
-            return [self._stage_file_props(project_path, item, key) for item in value]
-        if isinstance(value, str) and key in FILE_PATH_PROP_KEYS:
-            return self._stage_if_existing_file(project_path, value, key)
-        return value
+        return self.asset_stager.stage_file_props(project_path, value, key)
 
     def _stage_if_existing_file(self, project_path: Path, value: str, key: str) -> str:
-        source_path = Path(value).expanduser()
-        if not source_path.exists() or not source_path.is_file():
-            return value
-        asset_subdir = self._asset_subdir_for_key(key)
-        return self._stage_public_asset(project_path, source_path.resolve(), asset_subdir=asset_subdir)
+        return self.asset_stager.stage_if_existing_file(project_path, value, key)
 
     def _asset_subdir_for_key(self, key: str) -> str:
-        lowered = key.lower()
-        if "audio" in lowered:
-            return "audio"
-        if "image" in lowered:
-            return "images"
-        return "broll"
+        return self.asset_stager.asset_subdir_for_key(key)
 
     def _still_output_path(self, output_path: Path) -> Path:
         if output_path.suffix.lower() in {".png", ".jpg", ".jpeg"}:
@@ -177,15 +160,4 @@ class RemotionService:
         return output_path.with_suffix(".png")
 
     def _stage_public_asset(self, project_path: Path, source_path: Path, asset_subdir: str = "broll") -> str:
-        source_path = source_path.expanduser().resolve()
-        if not source_path.exists():
-            raise RuntimeError(f"Remotion source asset does not exist: {source_path}")
-        stat = source_path.stat()
-        digest = hashlib.sha1(f"{source_path}:{stat.st_mtime_ns}:{stat.st_size}".encode("utf-8")).hexdigest()[:12]
-        suffix = source_path.suffix or ".mp4"
-        relative_path = Path("render-assets") / asset_subdir / f"{source_path.stem}-{digest}{suffix}"
-        destination = project_path / "public" / relative_path
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        if not destination.exists() or destination.stat().st_size != stat.st_size:
-            shutil.copy2(source_path, destination)
-        return relative_path.as_posix()
+        return self.asset_stager.stage_public_asset(project_path, source_path, asset_subdir)

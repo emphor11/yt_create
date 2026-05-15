@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 from youtube_ai_system import create_app
 from youtube_ai_system.db import close_db
+from youtube_ai_system.pipelines.assembly.captions import CaptionWriter
+from youtube_ai_system.pipelines.assembly.manifest import TimelineManifestBuilder
 from youtube_ai_system.services.assembly_service import AssemblyService
 
 
@@ -153,11 +155,33 @@ class AssemblyServiceTestCase(unittest.TestCase):
 
     def test_run_ffmpeg_timeout_raises_clear_error(self) -> None:
         with patch(
-            "youtube_ai_system.services.assembly_service.subprocess.run",
+            "youtube_ai_system.infrastructure.ffmpeg.executor.subprocess.run",
             side_effect=TimeoutExpired(cmd=["ffmpeg"], timeout=77),
         ):
             with self.assertRaisesRegex(RuntimeError, "timed out after 77s"):
                 self.service._run_ffmpeg(["ffmpeg", "-version"])
+
+    def test_extracted_caption_writer_matches_service_caption_chunks(self) -> None:
+        writer = CaptionWriter()
+        text = "one two three four five six seven eight nine"
+
+        self.assertEqual(writer.chunks(text, words_per_line=7), self.service._caption_chunks(text, words_per_line=7))
+        self.assertEqual(writer.srt_time(65.25), self.service._srt_time(65.25))
+
+    def test_extracted_manifest_builder_matches_existing_manifest_text(self) -> None:
+        builder = TimelineManifestBuilder()
+        project = {"working_title": "Project"}
+        scenes = [
+            {"scene_order": 1, "kind": "hook", "audio_path": "a.wav", "visual_path": "v.mp4"},
+            {"scene_order": 2, "kind": "body", "audio_path": "b.wav", "visual_path": "w.mp4"},
+        ]
+
+        manifest = builder.text_manifest(project, scenes)
+        concat = builder.ffmpeg_concat_manifest([Path("scene-01.mp4"), Path("scene-02.mp4")])
+
+        self.assertIn("Project: Project", manifest)
+        self.assertIn("01 | hook | a.wav | v.mp4", manifest)
+        self.assertEqual(concat, "file 'scene-01.mp4'\nfile 'scene-02.mp4'")
 
 
 if __name__ == "__main__":

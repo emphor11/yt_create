@@ -1,113 +1,157 @@
 from __future__ import annotations
 
-import re
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
-@dataclass(frozen=True)
-class RenderSpec:
-    composition: str
-    props: dict[str, Any]
-    duration_sec: float
-    source: str
-    output_ext: str = ".mp4"
-    source_asset_path: Path | None = None
+from ..contracts.rendering import RenderSpec
+from ..pipelines.rendering import (
+    ABSTRACT_VISUAL_WORDS,
+    ANIMATION_MAP,
+    BEAT_TO_COMPOSITION,
+    BasicRenderSpecFactory,
+    DURATION_BY_INTENT,
+    FLOW_PATTERNS,
+    GENERIC_VISUAL_WORDS,
+    INTENT_PATTERN_MAP,
+    LegacyFlowSpecFactory,
+    LegacyFlowStageBuilder,
+    LOGIC_TYPE_TO_PATTERN,
+    RenderLogicParser,
+    RenderBrollResolver,
+    RenderCaptionBuilder,
+    RenderChartDataExtractor,
+    RenderClassifiedContract,
+    RenderContextGate,
+    RenderContextualLogicBuilder,
+    RenderDataRequirementGate,
+    RenderEmphasisBuilder,
+    RenderFlowHelpers,
+    RenderFlowLabelHelper,
+    RenderFlowPropsBuilder,
+    RenderLogicRepair,
+    RenderLogicTextFormatter,
+    RenderLogicValidator,
+    RenderNarrationLogicBuilder,
+    RenderNumberUtils,
+    RenderPatternSelector,
+    RenderPropsBuilder,
+    RenderPropsGate,
+    RenderSplitHelpers,
+    RenderSpecDispatcher,
+    RenderStructuredBeatNormalizer,
+    RenderTextUtils,
+    RenderValueDeriver,
+    RenderVisualGate,
+    VALID_COMPONENTS,
+    VALID_NODE_ROLES,
+    VISUAL_LOGIC_SCHEMA,
+)
 
 
 class RenderSpecService:
     """Maps script-friendly scene fields to deterministic Remotion template props."""
 
-    INTENT_PATTERN_MAP = {
-        "HOOK": {"EMPHASIS", "CONTEXT"},
-        "COMPARISON": {"COMPARISON"},
-        "DATA": {"GROWTH", "COMPARISON"},
-        "EXPLANATION": {"MONEY_FLOW", "VALUE_DECAY", "LOOP", "GROWTH"},
-        "EMPHASIS": {"EMPHASIS"},
-        "CONTEXT": {"CONTEXT"},
-    }
-    DURATION_BY_INTENT = {
-        "HOOK": 2.5,
-        "EMPHASIS": 2.5,
-        "COMPARISON": 3.0,
-        "DATA": 4.0,
-        "EXPLANATION": 4.5,
-        "CONTEXT": 3.0,
-    }
-    ANIMATION_MAP = {
-        "reveal": {"type": "fade_sequence"},
-        "progress": {"type": "line_draw"},
-        "highlight": {"type": "pulse_node"},
-        "transform": {"type": "scale_change"},
-    }
-    VISUAL_LOGIC_SCHEMA = {
-        "decay": ("input", "factor", "output"),
-        "flow": ("source", "process", "result"),
-        "comparison": ("left", "right"),
-        "growth": ("input", "rate", "output"),
-        "emphasis": ("headline",),
-    }
-    LOGIC_TYPE_TO_PATTERN = {
-        "decay": "VALUE_DECAY",
-        "flow": "MONEY_FLOW",
-        "comparison": "COMPARISON",
-        "growth": "GROWTH",
-        "emphasis": "EMPHASIS",
-    }
-    FLOW_PATTERNS = {"MONEY_FLOW", "VALUE_DECAY", "LOOP", "GROWTH"}
-    VALID_COMPONENTS = {
-        "FlowDiagram",
-        "SplitComparison",
-        "BarChart",
-        "LineChart",
-        "StatExplosion",
-        "TextBurst",
-        "ReactionCard",
-        "BrollOverlay",
-    }
-    VALID_NODE_ROLES = {"source", "process", "modifier", "result", "actor", "sink"}
-    ABSTRACT_VISUAL_WORDS = {
-        "abstract",
-        "chart",
-        "contrast",
-        "concept",
-        "data",
-        "display",
-        "flow",
-        "graph",
-        "idea",
-        "image",
-        "juxtaposition",
-        "narrative",
-        "show",
-        "split screen",
-        "static image",
-        "statistic",
-        "stuff",
-        "thing",
-        "visual",
-    }
-    GENERIC_VISUAL_WORDS = {
-        "money reality",
-        "reality",
-        "system",
-        "think",
-        "wait what",
-    }
+    def __init__(self) -> None:
+        self.basic_specs = BasicRenderSpecFactory()
+        self.broll_resolver = RenderBrollResolver()
+        self.chart_data = RenderChartDataExtractor()
+        self.flow_helpers = RenderFlowHelpers()
+        self.number_utils = RenderNumberUtils()
+        self.flow_labels = RenderFlowLabelHelper(self.number_utils)
+        self.classified_contract = RenderClassifiedContract()
+        self.logic_repair = RenderLogicRepair()
+        self.logic_text = RenderLogicTextFormatter(self.flow_labels)
+        self.text_utils = RenderTextUtils()
+        self.split_helpers = RenderSplitHelpers(self.text_utils)
+        self.caption_builder = RenderCaptionBuilder(text_utils=self.text_utils, flow_labels=self.flow_labels)
+        self.value_deriver = RenderValueDeriver(self.number_utils)
+        self.narration_logic = RenderNarrationLogicBuilder(
+            number_utils=self.number_utils,
+            text_utils=self.text_utils,
+            value_deriver=self.value_deriver,
+        )
+        self.contextual_logic = RenderContextualLogicBuilder(
+            amount_with_label=self._amount_with_label,
+            classify_intent=self.classifyIntent,
+            concrete_fallback_logic=self._concrete_fallback_logic,
+            derived_rupee=self._derived_rupee,
+            fallback_numeric_flow=self._fallback_numeric_flow,
+            first_numeric_value=self._first_numeric_value,
+            inflation_output=self._inflation_output,
+            logic_from_classified_intent=self._logic_from_classified_intent,
+            money_tokens=self._money_tokens,
+            minimal_narration_flow=self._minimal_narration_flow,
+            percent_tokens=self._percent_tokens,
+            string_visual_logic_to_object=self._string_visual_logic_to_object,
+            typed_visual_logic_is_valid=self._typed_visual_logic_is_valid,
+        )
+        self.legacy_flow_stages = LegacyFlowStageBuilder(
+            flow_helpers=self.flow_helpers,
+            number_utils=self.number_utils,
+            value_deriver=self.value_deriver,
+        )
+        self.legacy_flow_specs = LegacyFlowSpecFactory(self)
+        self.context_gate = RenderContextGate(self.number_utils)
+        self.visual_gate = RenderVisualGate(
+            abstract_visual_words=self.ABSTRACT_VISUAL_WORDS,
+            generic_visual_words=self.GENERIC_VISUAL_WORDS,
+            number_utils=self.number_utils,
+        )
+        self.logic_parser = RenderLogicParser(
+            is_abstract_visual_logic=self._is_abstract_visual_logic,
+            numbers_respect_context=self._numbers_respect_context,
+            has_number=self._has_number,
+        )
+        self.flow_props_builder = RenderFlowPropsBuilder(
+            flow_helpers=self.flow_helpers,
+            flow_labels=self.flow_labels,
+            text_utils=self.text_utils,
+            visual_gate=self.visual_gate,
+        )
+        self.props_builder = RenderPropsBuilder(
+            chart_data=self.chart_data,
+            flow_labels=self.flow_labels,
+            flow_props=self.flow_props_builder,
+            split_helpers=self.split_helpers,
+            text_utils=self.text_utils,
+            visual_gate=self.visual_gate,
+        )
+        self.props_gate = RenderPropsGate(self.visual_gate)
+        self.emphasis_builder = RenderEmphasisBuilder(
+            text_utils=self.text_utils,
+            visual_gate=self.visual_gate,
+        )
+        self.logic_validator = RenderLogicValidator(
+            self.VISUAL_LOGIC_SCHEMA,
+            context_gate=self.context_gate,
+            logic_text=self.logic_text,
+            visual_gate=self.visual_gate,
+        )
+        self.data_requirements = RenderDataRequirementGate(
+            flow_patterns=self.FLOW_PATTERNS,
+            chart_data=self.chart_data,
+            visual_gate=self.visual_gate,
+        )
+        self.pattern_selector = RenderPatternSelector(
+            intent_pattern_map=self.INTENT_PATTERN_MAP,
+            flow_patterns=self.FLOW_PATTERNS,
+            duration_by_intent=self.DURATION_BY_INTENT,
+            animation_map=self.ANIMATION_MAP,
+        )
+        self.structured_normalizer = RenderStructuredBeatNormalizer(self)
+        self.spec_dispatcher = RenderSpecDispatcher(self)
 
-    BEAT_TO_COMPOSITION = {
-        "flow_diagram": "FlowDiagram",
-        "stat_explosion": "StatExplosion",
-        "text_burst": "TextBurst",
-        "chart": "BarChart",
-        "split_comparison": "SplitComparison",
-        "broll_caption": "BrollOverlay",
-        "reaction_card": "ReactionCard",
-        "graph": "BarChart",
-        "broll": "BrollOverlay",
-        "motion_text": "StatReveal",
-    }
+    INTENT_PATTERN_MAP = INTENT_PATTERN_MAP
+    DURATION_BY_INTENT = DURATION_BY_INTENT
+    ANIMATION_MAP = ANIMATION_MAP
+    VISUAL_LOGIC_SCHEMA = VISUAL_LOGIC_SCHEMA
+    LOGIC_TYPE_TO_PATTERN = LOGIC_TYPE_TO_PATTERN
+    FLOW_PATTERNS = FLOW_PATTERNS
+    VALID_COMPONENTS = VALID_COMPONENTS
+    VALID_NODE_ROLES = VALID_NODE_ROLES
+    ABSTRACT_VISUAL_WORDS = ABSTRACT_VISUAL_WORDS
+    GENERIC_VISUAL_WORDS = GENERIC_VISUAL_WORDS
+    BEAT_TO_COMPOSITION = BEAT_TO_COMPOSITION
 
     def scene_spec(
         self,
@@ -115,131 +159,34 @@ class RenderSpecService:
         duration_sec: float,
         source_asset_path: Path | None = None,
     ) -> RenderSpec:
-        visual_type = str(scene.get("visual_type") or "motion_text").lower()
-        narration = str(scene.get("narration_text") or "")
-        instruction = str(scene.get("visual_instruction") or narration)
-
-        if visual_type == "graph":
-            return self._graph_spec(instruction, duration_sec)
-        if visual_type == "broll":
-            return self.beat_spec(
-                {
-                    "intent": "EXPLANATION",
-                    "pattern": "MONEY_FLOW",
-                    "visual_logic": self._regenerate_logic_from_context(instruction or narration),
-                    "narration": narration,
-                    "estimated_duration_sec": duration_sec,
-                }
-            )
-        return self._stat_reveal_spec(instruction or narration, duration_sec)
+        return self.spec_dispatcher.scene_spec(scene, duration_sec, source_asset_path=source_asset_path)
 
     def beat_spec(
         self,
         beat: dict[str, Any],
         source_asset_path: Path | None = None,
     ) -> RenderSpec:
-        if self._is_structured_beat(beat):
-            return self._structured_beat_spec(beat, source_asset_path=source_asset_path)
-
-        beat_type = str(beat.get("beat_type") or "text_burst").lower()
-        content = str(beat.get("content") or "Money reality")
-        caption = str(beat.get("caption") or "")
-        color = self._beat_color(beat.get("color"))
-        duration_sec = max(float(beat.get("estimated_duration_sec") or 3), 0.5)
-
-        if beat_type == "motion_text":
-            return self._stat_reveal_spec(f"{content} {caption}".strip(), duration_sec)
-        if beat_type == "flow_diagram":
-            return self._legacy_flow_diagram_spec(beat, duration_sec, color)
-        if beat_type == "graph":
-            spec = self._graph_spec(content, duration_sec)
-            spec.props["animationSpeed"] = "fast"
-            return spec
-        if beat_type == "broll":
-            beat_type = "broll_caption"
-
-        if beat_type == "stat_explosion":
-            return RenderSpec(
-                composition="StatExplosion",
-                props={"headline": content, "subtext": caption, "color": color, "durationSec": duration_sec},
-                duration_sec=duration_sec,
-                source="remotion_stat_explosion",
-            )
-        if beat_type == "text_burst":
-            return RenderSpec(
-                composition="TextBurst",
-                props={"content": content, "color": color, "durationSec": duration_sec},
-                duration_sec=duration_sec,
-                source="remotion_text_burst",
-            )
-        if beat_type == "reaction_card":
-            return RenderSpec(
-                composition="ReactionCard",
-                props={"content": content, "subtext": caption, "color": color, "durationSec": duration_sec},
-                duration_sec=duration_sec,
-                source="remotion_reaction_card",
-            )
-        if beat_type == "split_comparison":
-            left_label, left_content, right_label, right_content = self._parse_split(content, caption)
-            return RenderSpec(
-                composition="SplitComparison",
-                props={
-                    "leftLabel": left_label,
-                    "leftContent": left_content,
-                    "rightLabel": right_label,
-                    "rightContent": right_content,
-                    "durationSec": duration_sec,
-                },
-                duration_sec=duration_sec,
-                source="remotion_split_comparison",
-            )
-        if beat_type == "chart":
-            spec = self._graph_spec(content, duration_sec)
-            spec.props["animationSpeed"] = "fast"
-            return spec
-        if beat_type == "broll_caption":
-            context = f"{content} {caption}".strip()
-            return self.beat_spec(
-                {
-                    "intent": "EXPLANATION",
-                    "pattern": "MONEY_FLOW",
-                    "visual_logic": self._regenerate_logic_from_context(context),
-                    "narration": context,
-                    "estimated_duration_sec": duration_sec,
-                }
-            )
-
-        return self._stat_reveal_spec(content or caption, duration_sec)
+        return self.spec_dispatcher.beat_spec(beat, source_asset_path=source_asset_path)
 
     def beat_requires_source_asset(self, beat: dict[str, Any]) -> bool:
-        if self._is_structured_beat(beat):
-            return self.normalize_structured_beat(beat)["component"] == "BrollOverlay"
-        return False
+        return self.broll_resolver.beat_requires_source_asset(
+            beat,
+            is_structured_beat=self._is_structured_beat,
+            normalize_structured_beat=self.normalize_structured_beat,
+        )
 
     def broll_query_for_beat(self, beat: dict[str, Any]) -> str:
-        if self._is_structured_beat(beat):
-            normalized = self.normalize_structured_beat(beat)
-            props = normalized.get("props") or {}
-            return str(
-                props.get("query")
-                or props.get("searchQuery")
-                or normalized.get("visual_logic")
-                or normalized.get("caption")
-                or "finance stress"
-            )
-        return str(beat.get("content") or beat.get("caption") or "finance stress")
+        return self.broll_resolver.broll_query_for_beat(
+            beat,
+            is_structured_beat=self._is_structured_beat,
+            normalize_structured_beat=self.normalize_structured_beat,
+        )
 
     def classifyIntent(self, narration: str) -> str:
-        text = str(narration or "").lower()
-        if any(phrase in text for phrase in ("cannot", "less than", "only")):
-            return "EMPHASIS"
-        if any(phrase in text for phrase in (" vs ", " versus ", "compared")):
-            return "COMPARISON"
-        if any(word in text for word in ("vanish", "vanished", "lost", "loss", "leak", "leaking", "reduce", "reduced", "inflation", "fd", "fixed deposit")):
-            return "DECAY"
-        if any(word in text for word in ("earn", "earned", "spend", "spent", "left", "automate", "manual", "emotion", "auto debit", "salary", "expense", "expenses")):
-            return "FLOW"
-        return "FLOW" if self._money_tokens(narration) else "EMPHASIS"
+        return self.classified_contract.classify_intent(
+            narration,
+            has_money_tokens=lambda text: bool(self._money_tokens(text)),
+        )
 
     def deriveFromNarration(self, narration: str, preferred_pattern: str = "", classified_intent: str = "") -> dict[str, Any]:
         classified_intent = (classified_intent or self.classifyIntent(narration)).strip().upper()
@@ -270,150 +217,7 @@ class RenderSpecService:
         )
 
     def normalize_structured_beat(self, beat: dict[str, Any]) -> dict[str, Any]:
-        raw_intent = str(beat.get("intent") or "").strip().upper()
-        raw_pattern = str(beat.get("pattern") or "").strip().upper()
-        context = self._beat_context(beat)
-        visual_logic_object = self._coerce_visual_logic_object(beat, context)
-        classified_intent = self._classified_intent_for_beat(beat, context, visual_logic_object)
-        if not self._logic_can_reach_render(visual_logic_object, beat):
-            visual_logic_object = self._regenerate_logic_from_context(context, {**beat, "classified_intent": classified_intent})
-        logic_valid = self._typed_visual_logic_is_valid(visual_logic_object)
-        explicit_invalid_object = isinstance(beat.get("visual_logic"), dict) and not logic_valid
-        force_emphasis = False
-        raw_visual_logic_text = self._visual_logic_to_text(visual_logic_object)
-        if raw_intent == "CONTEXT" or raw_pattern == "CONTEXT":
-            visual_logic = self._visual_logic_to_text(beat.get("visual_logic") or beat.get("content") or beat.get("caption") or context or "finance stress")
-        else:
-            visual_logic = self._visual_logic_to_text(visual_logic_object) if logic_valid else self._visual_logic_to_text(self._contextual_visual_logic_object(context, beat))
-        intent = raw_intent if raw_intent in self.INTENT_PATTERN_MAP else self._infer_intent(raw_pattern, visual_logic)
-        pattern = raw_pattern if raw_pattern in self._all_patterns() else self._pattern_for_intent(intent, visual_logic)
-        logic_type = self._logic_type(visual_logic_object)
-        if logic_type in self.LOGIC_TYPE_TO_PATTERN and logic_valid and raw_intent != "HOOK":
-            pattern = self.LOGIC_TYPE_TO_PATTERN[logic_type]
-            intent = "EMPHASIS" if logic_type == "emphasis" else ("COMPARISON" if pattern == "COMPARISON" else "EXPLANATION")
-        if pattern not in self.INTENT_PATTERN_MAP[intent]:
-            pattern = self._pattern_for_intent(intent, visual_logic)
-        if (
-            (False if raw_intent == "CONTEXT" or raw_pattern == "CONTEXT" else explicit_invalid_object)
-            or (
-                raw_intent not in {"CONTEXT"}
-                and raw_pattern != "CONTEXT"
-                and not isinstance(beat.get("visual_logic"), dict)
-                and str(beat.get("visual_logic") or "").strip()
-                and not logic_valid
-                and not context.strip()
-            )
-            or (not logic_valid and intent != "CONTEXT" and pattern != "CONTEXT")
-            or (raw_intent == "DATA" and raw_pattern == "GROWTH" and not self._has_chart_data(beat, raw_visual_logic_text))
-            or not self._visual_logic_relevant_to_context(visual_logic_object, context)
-            or not self._pattern_has_required_concrete_data(intent, pattern, beat, visual_logic)
-            or not self._passes_visual_gate(intent, pattern, visual_logic, beat)
-        ):
-            visual_logic_object = self._safe_emphasis_logic_object(context) if not context.strip() else self._regenerate_logic_from_context(context, {**beat, "classified_intent": classified_intent})
-            visual_logic = self._visual_logic_to_text(visual_logic_object)
-            logic_type = self._logic_type(visual_logic_object)
-            intent = "COMPARISON" if logic_type == "comparison" else "EXPLANATION"
-            pattern = self.LOGIC_TYPE_TO_PATTERN.get(logic_type, "MONEY_FLOW")
-            if raw_intent in {"HOOK", "EMPHASIS"} and (explicit_invalid_object or not context.strip()):
-                intent = "EMPHASIS"
-                pattern = "EMPHASIS"
-                force_emphasis = True
-            if not context.strip():
-                intent = "EMPHASIS"
-                pattern = "EMPHASIS"
-                force_emphasis = True
-
-        intent, pattern, component, visual_logic_object = self._enforce_classified_render_contract(
-            classified_intent,
-            intent,
-            pattern,
-            component="",
-            visual_logic_object=visual_logic_object,
-            context=context,
-        )
-        visual_logic = self._visual_logic_to_text(visual_logic_object)
-        component = self._derive_component(intent, pattern, beat, visual_logic)
-        intent, pattern, component, visual_logic_object = self._enforce_classified_render_contract(
-            classified_intent,
-            intent,
-            pattern,
-            component,
-            visual_logic_object,
-            context,
-        )
-        visual_logic = self._visual_logic_to_text(visual_logic_object)
-        if raw_intent == "HOOK" and component == "FlowDiagram":
-            intent = "EMPHASIS"
-            pattern = "EMPHASIS"
-            component = "StatExplosion"
-        animation_intent = self._normalize_animation_intent(beat.get("animation_intent"))
-        duration = self._structured_duration(intent, beat)
-        caption = self._repair_caption(
-            str(beat.get("caption") or (beat.get("props") or {}).get("caption") or ""),
-            visual_logic,
-            str(beat.get("narration") or ""),
-        )
-        props = self._repair_props(component, pattern, visual_logic, caption, beat)
-        if not self._props_pass_visual_gate(component, pattern, visual_logic, props):
-            if not force_emphasis:
-                visual_logic_object = visual_logic_object if self._logic_can_reach_render(visual_logic_object, beat) else self._regenerate_logic_from_context(context, {**beat, "classified_intent": classified_intent})
-                visual_logic = self._visual_logic_to_text(visual_logic_object)
-                intent = "COMPARISON" if self._logic_type(visual_logic_object) == "comparison" else "EXPLANATION"
-                pattern = self.LOGIC_TYPE_TO_PATTERN.get(self._logic_type(visual_logic_object), "MONEY_FLOW")
-                if raw_intent == "HOOK":
-                    intent = "EMPHASIS"
-                    pattern = "EMPHASIS"
-                intent, pattern, component, visual_logic_object = self._enforce_classified_render_contract(
-                    classified_intent,
-                    intent,
-                    pattern,
-                    component,
-                    visual_logic_object,
-                    context,
-                )
-                visual_logic = self._visual_logic_to_text(visual_logic_object)
-                component = self._derive_component(intent, pattern, beat, visual_logic)
-                intent, pattern, component, visual_logic_object = self._enforce_classified_render_contract(
-                    classified_intent,
-                    intent,
-                    pattern,
-                    component,
-                    visual_logic_object,
-                    context,
-                )
-                visual_logic = self._visual_logic_to_text(visual_logic_object)
-                if raw_intent == "HOOK" and component == "FlowDiagram":
-                    component = "StatExplosion"
-                props = self._regenerate_props(component, pattern, visual_logic, caption, context, beat)
-        if not self._props_pass_visual_gate(component, pattern, visual_logic, props):
-            intent, pattern, component, visual_logic_object = self._fallback_for_classified_intent(classified_intent, context)
-            visual_logic = self._visual_logic_to_text(visual_logic_object)
-            caption = self._repair_caption("", visual_logic, context)
-            props = (
-                self._safe_emphasis_props(visual_logic, caption)
-                if component == "StatExplosion"
-                else self._regenerate_props(component, pattern, visual_logic, caption, context, {**beat, "props": {}})
-            )
-        animation_spec = self.ANIMATION_MAP[animation_intent]
-        if component == "FlowDiagram":
-            props = self._polish_flow_display_props(props, visual_logic)
-            props["animationIntent"] = animation_intent
-            props["animationSpec"] = animation_spec
-        props["durationSec"] = duration
-        return {
-            **beat,
-            "intent": intent,
-            "pattern": pattern,
-            "component": component,
-            "visual_logic": visual_logic_object,
-            "visual_logic_text": visual_logic,
-            "caption": caption,
-            "animation_intent": animation_intent,
-            "animation_spec": animation_spec,
-            "classified_intent": classified_intent,
-            "estimated_duration_sec": duration,
-            "props": props,
-        }
+        return self.structured_normalizer.normalize(beat)
 
     def _regenerate_logic_from_context(self, context: str, beat: dict[str, Any] | None = None) -> dict[str, Any]:
         classified_intent = str((beat or {}).get("classified_intent") or self.classifyIntent(context)).upper()
@@ -428,75 +232,22 @@ class RenderSpecService:
         return self._fallback_numeric_flow()
 
     def _minimal_narration_flow(self, context: str, classified_intent: str = "") -> dict[str, Any]:
-        lowered = str(context or "").lower()
-        amounts = list(dict.fromkeys(self._money_tokens(context)))
-        if any(word in lowered for word in ("vanish", "vanished", "salary", "payday", "paycheck")):
-            source = self._amount_with_label(amounts[0], "Salary") if amounts else "₹25,000 Salary"
-            process = "day 12" if re.search(r"\bday\s*12\b", lowered) else "spending"
-            result = self._amount_with_label(amounts[1], "Left") if len(amounts) > 1 else "₹0 Left"
-            return {"type": "flow", "source": source, "process": process, "result": result}
-        if len(amounts) >= 2:
-            return {"type": "flow", "source": amounts[0], "process": "change", "result": amounts[1]}
-        amount = amounts[0] if amounts else "₹25,000"
-        return {"type": "flow", "source": self._amount_with_label(amount, "Start"), "process": "change", "result": "₹0 Left"}
+        return self.narration_logic.minimal_narration_flow(context)
 
     def _transformation_logic_to_flow(self, visual_logic: Any) -> dict[str, Any] | None:
-        if not isinstance(visual_logic, dict):
-            return None
-        logic_type = self._logic_type(visual_logic)
-        if logic_type == "decay":
-            return {
-                "type": "flow",
-                "source": str(visual_logic.get("input") or ""),
-                "process": str(visual_logic.get("factor") or ""),
-                "result": str(visual_logic.get("output") or ""),
-            }
-        if logic_type == "growth":
-            return {
-                "type": "flow",
-                "source": str(visual_logic.get("input") or ""),
-                "process": str(visual_logic.get("rate") or ""),
-                "result": str(visual_logic.get("output") or ""),
-            }
-        return None
+        return self.narration_logic.transformation_logic_to_flow(visual_logic)
 
     def _logic_can_reach_render(self, visual_logic: Any, beat: dict[str, Any]) -> bool:
-        if not self._typed_visual_logic_is_valid(visual_logic):
-            return False
-        text = self._visual_logic_to_text(visual_logic)
-        if self._contains_generic_visual_words(text):
-            return False
-        logic_type = self._logic_type(visual_logic)
-        if logic_type in {"flow", "comparison"}:
-            return True
-        return logic_type == "emphasis" and str(beat.get("intent") or "").upper() in {"HOOK", "EMPHASIS"}
+        return self.logic_validator.logic_can_reach_render(visual_logic, beat)
 
     def _classified_intent_for_beat(self, beat: dict[str, Any], context: str, visual_logic: Any) -> str:
-        explicit = str(beat.get("classified_intent") or "").upper()
-        if explicit in {"EMPHASIS", "COMPARISON", "FLOW", "DECAY"}:
-            return explicit
-        if context.strip():
-            return self.classifyIntent(context)
-        logic_type = self._logic_type(visual_logic)
-        if logic_type == "emphasis":
-            return "EMPHASIS"
-        if logic_type == "comparison":
-            return "COMPARISON"
-        if logic_type == "decay":
-            return "DECAY"
-        if logic_type == "flow":
-            return "FLOW"
-        raw_intent = str(beat.get("intent") or "").upper()
-        raw_pattern = str(beat.get("pattern") or "").upper()
-        if raw_intent in {"HOOK", "EMPHASIS"} or raw_pattern == "EMPHASIS":
-            return "EMPHASIS"
-        if raw_intent == "COMPARISON" or raw_pattern == "COMPARISON":
-            return "COMPARISON"
-        if raw_pattern == "VALUE_DECAY":
-            return "DECAY"
-        if raw_pattern in {"MONEY_FLOW", "LOOP", "GROWTH"} or raw_intent in {"EXPLANATION", "DATA"}:
-            return "FLOW"
-        return ""
+        return self.classified_contract.classified_intent_for_beat(
+            beat,
+            context,
+            visual_logic,
+            classify_intent=self.classifyIntent,
+            logic_type=self._logic_type,
+        )
 
     def _enforce_classified_render_contract(
         self,
@@ -507,399 +258,104 @@ class RenderSpecService:
         visual_logic_object: Any,
         context: str,
     ) -> tuple[str, str, str, dict[str, Any]]:
-        classified_intent = str(classified_intent or "").upper()
-        logic = visual_logic_object if isinstance(visual_logic_object, dict) else self._logic_from_classified_intent(context, classified_intent)
-        logic_type = self._logic_type(logic)
-        if classified_intent == "EMPHASIS":
-            if logic_type != "emphasis":
-                logic = self._emphasis_logic_from_narration(context)
-            return "EMPHASIS", "EMPHASIS", "StatExplosion", logic
-        if classified_intent == "COMPARISON":
-            if logic_type != "comparison":
-                logic = self._comparison_logic_from_narration(context)
-            return "COMPARISON", "COMPARISON", "SplitComparison", logic
-        if classified_intent == "FLOW":
-            if logic_type != "flow":
-                logic = self._flow_logic_from_narration(context)
-            return "EXPLANATION", "MONEY_FLOW", "FlowDiagram", logic
-        if classified_intent == "DECAY":
-            if logic_type not in {"flow", "decay"}:
-                logic = self._decay_flow_from_narration(context)
-            return "EXPLANATION", "VALUE_DECAY", "FlowDiagram", logic
-        return intent, pattern, component, logic
+        return self.classified_contract.enforce_render_contract(
+            classified_intent,
+            intent,
+            pattern,
+            component,
+            visual_logic_object,
+            context,
+            logic_type=self._logic_type,
+            logic_from_intent=lambda narration, classified: self._logic_from_classified_intent(narration, classified),
+        )
 
     def _fallback_for_classified_intent(self, classified_intent: str, context: str) -> tuple[str, str, str, dict[str, Any]]:
-        classified_intent = str(classified_intent or "").upper()
-        if classified_intent == "EMPHASIS":
-            return "EMPHASIS", "EMPHASIS", "StatExplosion", self._emphasis_logic_from_narration(context)
-        if classified_intent == "COMPARISON":
-            return "COMPARISON", "COMPARISON", "SplitComparison", self._comparison_logic_from_narration(context)
-        if classified_intent == "DECAY":
-            return "EXPLANATION", "VALUE_DECAY", "FlowDiagram", self._decay_flow_from_narration(context)
-        return "EXPLANATION", "MONEY_FLOW", "FlowDiagram", self._flow_logic_from_narration(context)
+        return self.classified_contract.fallback_for_classified_intent(
+            classified_intent,
+            context,
+            logic_from_intent=lambda narration, classified: self._logic_from_classified_intent(narration, classified),
+        )
 
     def _structured_beat_spec(self, beat: dict[str, Any], source_asset_path: Path | None = None) -> RenderSpec:
-        normalized = self.normalize_structured_beat(beat)
-        component = normalized["component"]
-        props = dict(normalized["props"])
-        duration_sec = float(normalized["estimated_duration_sec"])
-        visual_logic_text = str(normalized.get("visual_logic_text") or self._visual_logic_to_text(normalized.get("visual_logic")))
-        if not self._props_pass_visual_gate(component, normalized["pattern"], visual_logic_text, props):
-            normalized = self._kill_switch_beat(normalized)
-            component = normalized["component"]
-            props = dict(normalized["props"])
-            duration_sec = float(normalized["estimated_duration_sec"])
-            visual_logic_text = str(normalized.get("visual_logic_text") or self._visual_logic_to_text(normalized.get("visual_logic")))
-
-        if component == "BrollOverlay":
-            if source_asset_path is None:
-                raise ValueError("BrollOverlay structured beat requires a Pexels/Pixabay source video path.")
-            props["videoPath"] = str(source_asset_path)
-            props.setdefault("brand", "10 Minute Finance")
-            props.setdefault("sentiment", self._sentiment(f"{visual_logic_text} {normalized['caption']}"))
-            return RenderSpec(component, props, duration_sec, "remotion_broll_overlay", source_asset_path=source_asset_path)
-        if component in {"BarChart", "LineChart"}:
-            props.setdefault("animationSpeed", "fast")
-            return RenderSpec(component, props, duration_sec, f"remotion_{component.lower()}")
-        return RenderSpec(component, props, duration_sec, f"remotion_{component.lower()}")
+        return self.spec_dispatcher.structured_beat_spec(beat, source_asset_path=source_asset_path)
 
     def _legacy_flow_diagram_spec(self, beat: dict[str, Any], duration_sec: float, color: str) -> RenderSpec:
-        concept = beat.get("concept_metadata") if isinstance(beat.get("concept_metadata"), dict) else {}
-        narration = str(concept.get("narration") or beat.get("narration") or beat.get("caption") or beat.get("content") or "")
-        stages = self._beat_flow_stages(beat, concept, narration)
-        nodes = [
-            {
-                "id": stage["label"],
-                "label": self._humanize_money_phrase(stage["value"]),
-                "role": "source" if index == 0 else ("result" if index == len(stages) - 1 else "process"),
-                "style": self._node_style(
-                    "source" if index == 0 else ("result" if index == len(stages) - 1 else "process"),
-                    stage["value"],
-                    "VALUE_DECAY" if self._is_loss_result(" ".join(stage["value"] for stage in stages)) else "MONEY_FLOW",
-                ),
-                "children": [],
-            }
-            for index, stage in enumerate(stages)
-        ]
-        caption = str(beat.get("caption") or concept.get("explanation_sentence") or " -> ".join(stage["value"] for stage in stages))
-        caption = self._complete_caption(self._short_overlay(caption, 10))
-        semantic_color = self._color_for_label(" ".join(stage["value"] for stage in stages) + " " + caption) or color
-        props = {
-            "mode": "decay" if semantic_color == "red" else "linear",
-            "layout": "horizontal",
-            "spacing": "equal",
-            "direction": "forward",
-            "nodes": nodes,
-            "connections": [{"from": nodes[index]["id"], "to": nodes[index + 1]["id"]} for index in range(len(nodes) - 1)],
-            "caption": caption,
-            "captionColor": self._color_for_label(caption) or semantic_color,
-            "color": semantic_color,
-            "durationSec": duration_sec,
-            "animationIntent": "progress",
-            "animationSpec": self.ANIMATION_MAP["progress"],
-        }
-        return RenderSpec(
-            composition="FlowDiagram",
-            props=self._polish_flow_display_props(props, " -> ".join(stage["value"] for stage in stages)),
-            duration_sec=duration_sec,
-            source="remotion_flowdiagram",
-        )
+        return self.legacy_flow_specs.flow_diagram_spec(beat, duration_sec, color)
 
     def _beat_flow_stages(self, beat: dict[str, Any], concept: dict[str, Any], narration: str) -> list[dict[str, str]]:
-        for candidate in (beat.get("flow_stages"), concept.get("flow_stages")):
-            if isinstance(candidate, list) and len(candidate) >= 3:
-                stages = [
-                    {"label": str(stage.get("label") or self._default_node_role(index, 3)), "value": str(stage.get("value") or "")}
-                    for index, stage in enumerate(candidate[:3])
-                    if isinstance(stage, dict) and str(stage.get("value") or "").strip()
-                ]
-                if len(stages) >= 3:
-                    return stages
-
-        content = str(beat.get("content") or "")
-        parts = [part.strip() for part in re.split(r"\s*(?:->|→)\s*", content) if part.strip()]
-        if len(parts) >= 3:
-            return [
-                {"label": "start", "value": parts[0]},
-                {"label": "change", "value": parts[1]},
-                {"label": "result", "value": parts[2]},
-            ]
-        return self._concept_flow_stages(concept, narration)
+        return self.legacy_flow_stages.beat_flow_stages(beat, concept, narration)
 
     def _concept_flow_stages(self, concept: dict[str, Any], narration: str) -> list[dict[str, str]]:
-        explicit = concept.get("flow_stages")
-        if isinstance(explicit, list) and len(explicit) >= 3:
-            return [
-                {"label": str(stage.get("label") or self._default_node_role(index, 3)), "value": str(stage.get("value") or "")}
-                for index, stage in enumerate(explicit[:3])
-                if isinstance(stage, dict) and str(stage.get("value") or "").strip()
-            ]
-        lowered = str(narration or "").lower()
-        amounts = self._money_tokens(narration)
-        percents = self._percent_tokens(narration)
-        start = str(concept.get("start_value") or (amounts[0] if amounts else "₹20,000"))
-        end = str(concept.get("end_value") or "₹0")
-
-        time_match = re.search(r"\bday\s*(\d+)\b", lowered)
-        if time_match:
-            start_tokens = self._money_tokens(start)
-            start_value = amounts[0] if amounts else (start_tokens[0] if start_tokens else start)
-            end_value = next((amount for amount in amounts[1:] if self._first_numeric_value(amount) == 0), "₹0")
-            return [
-                {"label": "start", "value": f"Day 1 {start_value}"},
-                {"label": "change", "value": f"Day {time_match.group(1)}"},
-                {"label": "result", "value": end_value},
-            ]
-
-        if percents:
-            principal = amounts[0] if amounts else start
-            rate = percents[0]
-            output = amounts[1] if len(amounts) > 1 else self._inflation_output(principal, rate)
-            return [
-                {"label": "start", "value": principal},
-                {"label": "change", "value": f"{rate} change"},
-                {"label": "result", "value": output},
-            ]
-
-        if amounts and any(word in lowered for word in ("month", "monthly", "/month", "year", "yearly", "annual")):
-            monthly = amounts[0]
-            yearly = amounts[1] if len(amounts) > 1 else self._format_rupees(self._first_numeric_value(monthly) * 12)
-            return [
-                {"label": "start", "value": f"{monthly}/month"},
-                {"label": "change", "value": "12 months"},
-                {"label": "result", "value": f"{yearly}/year"},
-            ]
-
-        start_value = amounts[0] if amounts else start
-        middle_value = self._format_rupees(self._first_numeric_value(start_value) * 0.5)
-        end_value = "₹0" if self._first_numeric_value(end) <= 0 else end
-        return [
-            {"label": "start", "value": start_value},
-            {"label": "change", "value": middle_value},
-            {"label": "result", "value": end_value},
-        ]
+        return self.legacy_flow_stages.concept_flow_stages(concept, narration)
 
     def transition_spec(self, duration_sec: float = 0.5) -> RenderSpec:
-        return RenderSpec(
-            composition="SceneTransition",
-            props={"durationSec": duration_sec},
-            duration_sec=duration_sec,
-            source="remotion_transition",
-        )
+        return self.basic_specs.transition(duration_sec)
 
     def intro_spec(self, title: str, duration_sec: float = 3.0) -> RenderSpec:
-        return RenderSpec(
-            composition="IntroCard",
-            props={"title": title, "channelName": "YTCreate Finance", "durationSec": duration_sec},
-            duration_sec=duration_sec,
-            source="remotion_intro",
-        )
+        return self.basic_specs.intro(title, duration_sec)
 
     def end_card_spec(self, next_title: str = "", duration_sec: float = 5.0) -> RenderSpec:
-        return RenderSpec(
-            composition="EndCard",
-            props={
-                "message": "Subscribe for more finance insights",
-                "nextTitle": next_title,
-                "durationSec": duration_sec,
-            },
-            duration_sec=duration_sec,
-            source="remotion_end_card",
-        )
+        return self.basic_specs.end_card(next_title, duration_sec)
 
     def thumbnail_spec(self, title: str, variant: int = 1) -> RenderSpec:
         dominant = self._dominant_phrase(title)
-        return RenderSpec(
-            composition="ThumbnailFrame",
-            props={
-                "title": title,
-                "dominantText": dominant,
-                "supportingText": self._short_overlay(title.replace(dominant, ""), 4),
-                "variant": variant,
-                "brand": "YTCreate",
-            },
-            duration_sec=1 / 30,
-            source="remotion_thumbnail",
-            output_ext=".jpg",
+        return self.basic_specs.thumbnail(
+            title,
+            dominant,
+            self._short_overlay(title.replace(dominant, ""), 4),
+            variant,
         )
 
     def _stat_reveal_spec(self, instruction: str, duration_sec: float) -> RenderSpec:
-        headline = self._dominant_phrase(instruction)
-        sentiment = self._sentiment(instruction)
-        return RenderSpec(
-            composition="StatReveal",
-            props={
-                "headline": headline,
-                "subtext": self._short_overlay(instruction.replace(headline, ""), 7),
-                "sentiment": sentiment,
-                "durationSec": duration_sec,
-                "kicker": self._kicker(instruction),
-            },
-            duration_sec=duration_sec,
-            source="remotion_stat_reveal",
-        )
+        return self.spec_dispatcher.stat_reveal_spec(instruction, duration_sec)
 
     def _graph_spec(self, instruction: str, duration_sec: float) -> RenderSpec:
-        data = self._extract_data_points(instruction)
-        if len(data) < 2:
-            return self._stat_reveal_spec(instruction, duration_sec)
-        composition = "LineChart" if self._looks_like_line_chart(instruction) else "BarChart"
-        return RenderSpec(
-            composition=composition,
-            props={
-                "title": self._extract_named_field(instruction, "title") or self._short_overlay(instruction, 8) or "Financial Trend",
-                "data": data,
-                "color": self._extract_color(instruction) or self._chart_color(instruction),
-                "durationSec": duration_sec,
-                "unit": self._extract_named_field(instruction, "unit") or self._unit_label(instruction),
-            },
-            duration_sec=duration_sec,
-            source=f"remotion_{composition.lower()}",
-        )
+        return self.spec_dispatcher.graph_spec(instruction, duration_sec)
 
     def _is_structured_beat(self, beat: dict[str, Any]) -> bool:
         return any(key in beat for key in ("intent", "pattern", "props", "visual_logic", "animation_intent"))
 
     def _all_patterns(self) -> set[str]:
-        patterns: set[str] = set()
-        for values in self.INTENT_PATTERN_MAP.values():
-            patterns.update(values)
-        return patterns
+        return self.pattern_selector.all_patterns()
 
     def _infer_intent(self, pattern: str, visual_logic: str) -> str:
-        text = visual_logic.lower()
-        if pattern == "EMPHASIS":
-            return "EMPHASIS"
-        if pattern == "CONTEXT":
-            return "CONTEXT"
-        if pattern == "COMPARISON" or re.search(r"\b(vs|versus|compared|reality|instead)\b", text):
-            return "COMPARISON"
-        if pattern in self.FLOW_PATTERNS or any(word in text for word in ("because", "leads to", "turns into", "cycle", "flow", "moves", "inflation", "tax")):
-            return "EXPLANATION"
-        if re.search(r"[₹\d%]", visual_logic):
-            return "DATA"
-        if pattern == "CONTEXT" or any(word in text for word in ("person", "office", "bank", "phone", "background")):
-            return "CONTEXT"
-        return "EMPHASIS"
+        return self.pattern_selector.infer_intent(pattern, visual_logic)
 
     def _pattern_for_intent(self, intent: str, visual_logic: str) -> str:
-        text = visual_logic.lower()
-        if intent == "HOOK":
-            return "EMPHASIS"
-        if intent == "COMPARISON":
-            return "COMPARISON"
-        if intent == "DATA":
-            return "COMPARISON" if re.search(r"\b(vs|versus|compared|than)\b", text) else "GROWTH"
-        if intent == "EXPLANATION":
-            if any(word in text for word in ("inflation", "tax", "fee", "fees", "erode", "erosion", "decay", "shrink", "reduced")):
-                return "VALUE_DECAY"
-            if any(word in text for word in ("debt", "credit", "cycle", "repeat", "trap", "loop")):
-                return "LOOP"
-            if any(word in text for word in ("compound", "sip", "growth", "grow", "invest", "wealth")):
-                return "GROWTH"
-            return "MONEY_FLOW"
-        if intent == "CONTEXT":
-            return "CONTEXT"
-        return "EMPHASIS"
+        return self.pattern_selector.pattern_for_intent(intent, visual_logic)
 
     def _derive_component(self, intent: str, pattern: str, beat: dict[str, Any], visual_logic: str) -> str:
-        if pattern in {"MONEY_FLOW", "VALUE_DECAY", "LOOP"}:
-            return "FlowDiagram"
-        if pattern == "GROWTH":
-            return "LineChart" if intent == "DATA" and self._has_chart_data(beat, visual_logic) else "FlowDiagram"
-        if pattern == "COMPARISON":
-            return "SplitComparison"
-        if pattern == "CONTEXT":
-            return "FlowDiagram"
-        props = beat.get("props") if isinstance(beat.get("props"), dict) else {}
-        emphasis_text = " ".join(
-            str(value)
-            for value in (
-                visual_logic,
-                beat.get("caption") or "",
-                props.get("headline") or "",
-                props.get("subtext") or "",
-                props.get("content") or "",
-            )
-            if value
+        return self.pattern_selector.derive_component(
+            intent,
+            pattern,
+            beat,
+            visual_logic,
+            has_chart_data=self._has_chart_data,
         )
-        return self._emphasis_component(emphasis_text)
 
     def _has_chart_data(self, beat: dict[str, Any], visual_logic: str) -> bool:
-        props = beat.get("props") if isinstance(beat.get("props"), dict) else {}
-        data = props.get("data")
-        return (isinstance(data, list) and len(data) >= 2) or len(self._extract_data_points(visual_logic)) >= 2
+        return self.data_requirements.has_chart_data(beat, visual_logic)
 
     def _pattern_has_required_concrete_data(self, intent: str, pattern: str, beat: dict[str, Any], visual_logic: str) -> bool:
-        props = beat.get("props") if isinstance(beat.get("props"), dict) else {}
-        if pattern == "COMPARISON":
-            left = str(props.get("leftContent") or "")
-            right = str(props.get("rightContent") or "")
-            text = f"{visual_logic} {left} {right}"
-            return bool(
-                (
-                    left.strip()
-                    and right.strip()
-                    and self._passes_text_gate(f"{left} vs {right}")
-                )
-                or re.search(r"\b(vs|versus|compared|than)\b", text.lower())
-            )
-        if pattern == "GROWTH" and intent == "DATA":
-            return self._has_chart_data(beat, visual_logic)
-        if pattern in self.FLOW_PATTERNS:
-            nodes = props.get("nodes")
-            if isinstance(nodes, list) and len(nodes) >= 2:
-                labels = [
-                    str(node.get("label") if isinstance(node, dict) else node)
-                    for node in nodes
-                ]
-                return (len(labels) >= 3 and self._passes_text_gate(" -> ".join(labels))) or self._passes_text_gate(visual_logic)
-            return self._passes_text_gate(visual_logic)
-        return True
+        return self.data_requirements.pattern_has_required_concrete_data(intent, pattern, beat, visual_logic)
 
     def _emphasis_component(self, text: str) -> str:
-        if re.search(r"[₹\d%]", text):
-            return "StatExplosion"
-        if len(re.findall(r"\S+", text)) <= 3:
-            return "TextBurst"
-        return "ReactionCard"
+        return self.pattern_selector.emphasis_component(text)
 
     def _normalize_animation_intent(self, value: Any) -> str:
-        animation = str(value or "reveal").strip().lower()
-        return animation if animation in self.ANIMATION_MAP else "reveal"
+        return self.pattern_selector.normalize_animation_intent(value)
 
     def _structured_duration(self, intent: str, beat: dict[str, Any]) -> float:
-        if beat.get("duration_locked"):
-            try:
-                return max(1.0, min(float(beat.get("estimated_duration_sec") or 3.0), 6.0))
-            except (TypeError, ValueError):
-                pass
-        return self.DURATION_BY_INTENT.get(intent, 3.0)
+        return self.pattern_selector.structured_duration(intent, beat)
 
     def _repair_caption(self, caption: str, visual_logic: str, narration: str = "") -> str:
-        caption = " ".join(re.findall(r"[A-Za-z0-9₹%.,'-]+", caption)).strip()
-        narration_clean = " ".join(re.findall(r"[A-Za-z0-9₹%.,'-]+", narration)).strip().lower()
-        if not caption or caption.lower() == narration_clean:
-            caption = self._short_overlay(visual_logic, 10)
-        words = caption.split()
-        if len(words) > 10:
-            caption = " ".join(words[:10])
-        return self._complete_caption(caption) or "watch the money move"
+        return self.caption_builder.repair_caption(caption, visual_logic, narration)
 
     def _beat_context(self, beat: dict[str, Any]) -> str:
-        props = beat.get("props") if isinstance(beat.get("props"), dict) else {}
-        pieces = [
-            beat.get("narration"),
-            beat.get("visual_instruction"),
-            beat.get("content"),
-            beat.get("caption"),
-        ]
-        return " ".join(str(piece) for piece in pieces if piece).strip()
+        return self.caption_builder.beat_context(beat)
 
     def _logic_type(self, visual_logic: Any) -> str:
-        if isinstance(visual_logic, dict):
-            return str(visual_logic.get("type") or "").strip().lower()
-        return ""
+        return self.logic_validator.logic_type(visual_logic)
 
     def _coerce_visual_logic_object(self, beat: dict[str, Any], context: str) -> dict[str, Any] | None:
         raw = beat.get("visual_logic")
@@ -925,387 +381,82 @@ class RenderSpecService:
         return None
 
     def _string_visual_logic_to_object(self, text: str, context: str = "") -> dict[str, Any] | None:
-        cleaned = " ".join(str(text or "").split())
-        if not cleaned or self._is_abstract_visual_logic(cleaned):
-            return None
-        if context and not self._numbers_respect_context(cleaned, context):
-            return None
-        comparison = re.split(r"\s+vs\.?\s+|\s+versus\s+", cleaned, maxsplit=1, flags=re.I)
-        if len(comparison) == 2:
-            left = comparison[0].strip()
-            right = comparison[1].strip()
-            if self._has_number(left) and self._has_number(right):
-                return {"type": "comparison", "left": left, "right": right}
-            return None
-        parts = [part.strip() for part in re.split(r"\s*(?:->|→)\s*", cleaned) if part.strip()]
-        if len(parts) >= 3:
-            lowered = cleaned.lower()
-            if any(word in lowered for word in ("inflation", "tax", "fee", "fees", "real value", "loss", "lose")):
-                return {"type": "decay", "input": parts[0], "factor": parts[1], "output": parts[2]}
-            if any(word in lowered for word in ("growth", "return", "sip", "compound", "wealth")):
-                return {"type": "growth", "input": parts[0], "rate": parts[1], "output": parts[2]}
-            return {"type": "flow", "source": parts[0], "process": parts[1], "result": parts[2]}
-        return None
+        return self.logic_parser.string_visual_logic_to_object(text, context)
 
     def _typed_visual_logic_is_valid(self, visual_logic: Any) -> bool:
-        if not isinstance(visual_logic, dict):
-            return False
-        logic_type = self._logic_type(visual_logic)
-        required = self.VISUAL_LOGIC_SCHEMA.get(logic_type)
-        if not required:
-            return False
-        if not all(str(visual_logic.get(key) or "").strip() for key in required):
-            return False
-        text = self._visual_logic_to_text(visual_logic)
-        if self._is_abstract_visual_logic(text) or not self._has_number(text) or not self._has_impact(text):
-            return False
-        if logic_type == "comparison":
-            return (
-                self._has_number(str(visual_logic.get("left") or ""))
-                and self._has_number(str(visual_logic.get("right") or ""))
-                and self._comparison_units_match(visual_logic)
-            )
-        if logic_type == "emphasis":
-            return self._has_number(text) and self._has_impact(text)
-        if logic_type == "flow" and not self._flow_semantically_valid(visual_logic):
-            return False
-        if logic_type in {"flow", "decay", "growth"}:
-            return self._has_visual_structure(text) and all(self._has_number(str(visual_logic.get(key) or "")) for key in required)
-        return True
+        return self.logic_validator.typed_visual_logic_is_valid(visual_logic)
 
     def _flow_semantically_valid(self, visual_logic: dict[str, Any]) -> bool:
-        source = str(visual_logic.get("source") or "")
-        process = str(visual_logic.get("process") or "")
-        result = str(visual_logic.get("result") or "")
-        lowered = f"{source} {process} {result}".lower()
-        if any(word in lowered for word in ("salary", "income", "paycheck")):
-            return (
-                any(word in source.lower() for word in ("salary", "income", "paycheck"))
-                and any(word in process.lower() for word in ("expense", "expenses", "tax", "spend", "spent", "emi", "rent", "day", "leak", "lost", "loss", "vanish"))
-                and any(word in result.lower() for word in ("left", "saving", "savings", "leak", "loss", "lost"))
-            )
-        values = [self._first_numeric_value(part) for part in (source, process, result)]
-        money_parts = [part for part in (source, process, result) if "₹" in part]
-        if len(money_parts) == 3 and all(value > 0 for value in values):
-            return values[0] >= values[1] >= values[2] or values[0] <= values[1] <= values[2]
-        return True
+        return self.logic_validator.flow_semantically_valid(visual_logic)
 
     def _visual_logic_relevant_to_context(self, visual_logic: Any, context: str) -> bool:
-        if not isinstance(visual_logic, dict) or not context.strip():
-            return True
         logic_text = self._visual_logic_to_text(visual_logic)
-        context_numbers = set(self._money_tokens(context) + self._percent_tokens(context))
-        logic_numbers = set(self._money_tokens(logic_text) + self._percent_tokens(logic_text))
-        if self._logic_type(visual_logic) == "comparison" and not self._comparison_units_match(visual_logic):
-            return False
-        if logic_numbers and not self._numbers_allowed_by_context(logic_numbers, context_numbers, context):
-            return False
-        logic_keywords = self._meaningful_keywords(logic_text)
-        context_keywords = self._meaningful_keywords(context)
-        if not context_keywords or not logic_keywords:
-            return True
-        return bool(logic_keywords & context_keywords)
+        return self.context_gate.visual_logic_relevant_to_context(
+            visual_logic,
+            context,
+            logic_text=logic_text,
+            logic_type=self._logic_type(visual_logic),
+        )
 
     def _comparison_units_match(self, visual_logic: Any) -> bool:
-        if not isinstance(visual_logic, dict):
-            return True
-        left = str(visual_logic.get("left") or "")
-        right = str(visual_logic.get("right") or "")
-        left_unit = self._dominant_unit(left)
-        right_unit = self._dominant_unit(right)
-        if {left_unit, right_unit} == {"percent", "money"}:
-            return False
-        return True
+        return self.context_gate.comparison_units_match(visual_logic)
 
     def _dominant_unit(self, text: str) -> str:
-        if self._money_tokens(text):
-            return "money"
-        if self._percent_tokens(text):
-            return "percent"
-        return "number" if re.search(r"\b\d+(?:\.\d+)?\b", text) else "none"
+        return self.context_gate.dominant_unit(text)
 
     def _numbers_allowed_by_context(self, logic_numbers: set[str], context_numbers: set[str], context: str) -> bool:
-        if not logic_numbers:
-            return True
-        if context_numbers:
-            allowed = set(context_numbers)
-            allowed.update(self._strict_contextual_number_allowlist(context))
-            return logic_numbers.issubset(allowed)
-        return bool(self._strict_contextual_number_allowlist(context)) and logic_numbers.issubset(self._strict_contextual_number_allowlist(context))
+        return self.context_gate.numbers_allowed_by_context(logic_numbers, context_numbers, context)
 
     def _strict_contextual_number_allowlist(self, context: str) -> set[str]:
-        lowered = str(context or "").lower()
-        allowed: set[str] = set()
-        if any(word in lowered for word in ("vanish", "vanished", "salary", "payday", "paycheck")):
-            allowed.update({"₹25,000", "₹0"})
-        if any(word in lowered for word in ("manual", "emotion", "emotional", "automate", "auto debit")):
-            allowed.add("₹0")
-        return allowed
+        return self.context_gate.strict_contextual_number_allowlist(context)
 
     def _derived_context_number_tokens(self, context: str) -> set[str]:
-        lowered = context.lower()
-        derived: set[str] = set()
-        amounts = self._money_tokens(context)
-        percents = self._percent_tokens(context)
-        if any(word in lowered for word in ("month", "monthly", "year", "yearly", "leak", "lost", "gone")):
-            for amount in amounts:
-                derived.add(self._format_rupees(self._first_numeric_value(amount) * 12))
-        if amounts and any(word in lowered for word in ("cannot", "can't", "broke", "save", "saved", "emotion", "manual")):
-            derived.add("₹0")
-        if any(word in lowered for word in ("inflation", "real value", "fd", "fixed deposit")) and amounts and percents:
-            derived.add(self._inflation_output(amounts[0], percents[0]))
-        return derived
+        return self.context_gate.derived_context_number_tokens(context, inflation_output=self._inflation_output)
 
     def _meaningful_keywords(self, text: str) -> set[str]:
-        stop = {
-            "cannot", "cant", "save", "saved", "emergency", "fund", "money", "real",
-            "value", "left", "source", "process", "result", "year", "month", "months",
-        }
-        words = set(re.findall(r"[A-Za-z]{3,}", text.lower()))
-        return {word for word in words if word not in stop}
+        return self.context_gate.meaningful_keywords(text)
 
     def _visual_logic_to_text(self, visual_logic: Any) -> str:
-        if not isinstance(visual_logic, dict):
-            return " ".join(str(visual_logic or "").split())
-        logic_type = self._logic_type(visual_logic)
-        if logic_type == "comparison":
-            return f"{self._humanize_money_phrase(str(visual_logic.get('left', '')))} vs {self._humanize_money_phrase(str(visual_logic.get('right', '')))}".strip()
-        if logic_type == "flow":
-            return (
-                f"{self._humanize_money_phrase(str(visual_logic.get('source', '')))} -> "
-                f"{self._humanize_money_phrase(str(visual_logic.get('process', '')))} -> "
-                f"{self._humanize_money_phrase(str(visual_logic.get('result', '')))}"
-            ).strip()
-        if logic_type == "decay":
-            return f"{visual_logic.get('input', '')} -> {visual_logic.get('factor', '')} -> {visual_logic.get('output', '')}".strip()
-        if logic_type == "growth":
-            return f"{visual_logic.get('input', '')} -> {visual_logic.get('rate', '')} -> {visual_logic.get('output', '')}".strip()
-        if logic_type == "emphasis":
-            return f"{visual_logic.get('headline', '')} {visual_logic.get('subtext', '')}".strip()
-        return " ".join(str(value) for value in visual_logic.values() if value).strip()
+        return self.logic_text.visual_logic_to_text(visual_logic, logic_type=self._logic_type(visual_logic))
 
     def _repair_visual_logic(self, visual_logic: Any, beat: dict[str, Any], context: str = "") -> str:
-        visual_logic_text = self._visual_logic_to_text(visual_logic)
-        candidates = [visual_logic_text]
-        props = beat.get("props") if isinstance(beat.get("props"), dict) else {}
-        combined = " ".join(
-            str(props.get(key) or "")
-            for key in ("headline", "subtext", "leftContent", "rightContent", "content", "caption")
-            if props.get(key)
+        return self.logic_repair.repair_visual_logic(
+            self._visual_logic_to_text(visual_logic),
+            beat,
+            context,
+            numbers_respect_context=self._numbers_respect_context,
+            is_concrete_visual_logic=self._is_concrete_visual_logic,
+            has_visual_structure=self._has_visual_structure,
+            contextual_visual_logic=self._contextual_visual_logic,
+            beat_context=self._beat_context,
         )
-        if combined:
-            candidates.append(combined)
-        if props.get("leftContent") and props.get("rightContent"):
-            candidates.append(f"{props.get('leftContent')} vs {props.get('rightContent')}")
-        for key in ("headline", "subtext", "leftContent", "rightContent", "content", "caption", "query", "title"):
-            value = props.get(key)
-            if value:
-                candidates.append(str(value))
-        raw_data = props.get("data")
-        if isinstance(raw_data, list):
-            data_parts = []
-            for point in raw_data[:4]:
-                if isinstance(point, dict):
-                    label = point.get("label")
-                    value = point.get("value")
-                    if label is not None and value is not None:
-                        data_parts.append(f"{label}={value}")
-            if data_parts:
-                candidates.append("data: " + ", ".join(data_parts))
-        raw_nodes = props.get("nodes")
-        if isinstance(raw_nodes, list):
-            labels = [
-                str(node.get("label") if isinstance(node, dict) else node)
-                for node in raw_nodes
-                if str(node.get("label") if isinstance(node, dict) else node).strip()
-            ]
-            if labels:
-                candidates.append(" -> ".join(labels))
-        for candidate in candidates:
-            cleaned = " ".join(str(candidate or "").split())
-            if not self._numbers_respect_context(cleaned, context):
-                continue
-            if self._is_concrete_visual_logic(cleaned) and self._has_visual_structure(cleaned):
-                return cleaned
-        return self._contextual_visual_logic(context or self._beat_context(beat), beat)
 
     def _contextual_visual_logic(self, context: str, beat: dict[str, Any] | None = None) -> str:
         return self._visual_logic_to_text(self._contextual_visual_logic_object(context, beat))
 
     def _contextual_visual_logic_object(self, context: str, beat: dict[str, Any] | None = None) -> dict[str, Any]:
-        classified_intent = str((beat or {}).get("classified_intent") or "").upper()
-        if classified_intent in {"EMPHASIS", "COMPARISON", "FLOW", "DECAY"}:
-            return self._logic_from_classified_intent(context, classified_intent, beat)
-        lowered = context.lower()
-        amounts = list(dict.fromkeys(self._money_tokens(context)))
-        percents = list(dict.fromkeys(self._percent_tokens(context)))
-        if any(word in lowered for word in ("earn", "earned", "spend", "spent", "left", "vanish", "vanished")) and amounts:
-            source = self._amount_with_label(amounts[0], "Salary")
-            process = self._amount_with_label(amounts[1], "Expenses") if len(amounts) > 1 else self._derived_rupee(amounts[0], 0.92, "Expenses")
-            result = self._amount_with_label(amounts[2], "Left") if len(amounts) > 2 else self._derived_rupee(amounts[0], 0.08, "Left")
-            return {"type": "flow", "source": source, "process": process, "result": result}
-        if any(word in lowered for word in ("tax", "taxes", "elss", "deduction", "80c")):
-            paid = self._amount_with_label(amounts[0] if amounts else "₹20,000", "tax paid")
-            deduction = self._amount_with_label(amounts[1] if len(amounts) > 1 else "₹1,50,000", "deduction")
-            return {"type": "comparison", "left": paid, "right": deduction}
-        if percents and amounts and any(word in lowered for word in ("save", "saved", "cannot", "can't", "broke")):
-            return {"type": "comparison", "left": f"{percents[0]} of people", "right": f"{amounts[0]} savings"}
-        if any(word in lowered for word in ("automate", "auto debit", "manual", "emotion", "emotional")):
-            amount = amounts[0] if amounts else "₹5,000"
-            result = amounts[1] if len(amounts) > 1 and self._first_numeric_value(amounts[1]) == 0 else "₹0 Saved"
-            return {
-                "type": "flow",
-                "source": self._amount_with_label(amount, "Auto Debit"),
-                "process": self._amount_with_label(amount, "Invested"),
-                "result": self._amount_with_label(result, "Emotional Spend"),
-            }
-        if (
-            beat
-            and isinstance(beat.get("visual_logic"), dict)
-            and str(beat["visual_logic"].get("type") or "").lower() == "flow"
-            and any(word in lowered for word in ("salary", "paycheck", "income"))
-        ):
-            salary = amounts[0] if amounts else "₹25,000 Salary"
-            expense = amounts[1] if len(amounts) > 1 else self._derived_rupee(salary, 0.92, "Expenses")
-            left = amounts[2] if len(amounts) > 2 else self._derived_rupee(salary, 0.08, "Left")
-            return {
-                "type": "flow",
-                "source": self._amount_with_label(salary, "Salary"),
-                "process": self._amount_with_label(expense, "Expenses"),
-                "result": self._amount_with_label(left, "Left"),
-            }
-        if any(word in lowered for word in ("salary", "paycheck", "income")) and any(word in lowered for word in ("leak", "defaults", "default")) and len(amounts) >= 2:
-            return {
-                "type": "comparison",
-                "left": self._amount_with_label(amounts[0], "Salary"),
-                "right": self._amount_with_label(amounts[1], "Invisible Leak"),
-            }
-        if any(word in lowered for word in ("budget", "waste", "spend", "spent", "monthly", "leak", "gone")):
-            waste = amounts[0] if amounts else "₹5,000 Monthly Leak"
-            yearly = amounts[1] if len(amounts) > 1 else self._derived_rupee(waste, 12, "Yearly Loss")
-            return {"type": "flow", "source": self._amount_with_label(waste, "Monthly Leak"), "process": "12 months", "result": self._amount_with_label(yearly, "Lost")}
-        if any(word in lowered for word in ("fd", "fixed deposit", "inflation")):
-            principal = amounts[0] if amounts else "₹1,00,000"
-            rate = percents[0] if percents else "6% Inflation"
-            output = self._inflation_output(principal, rate) if amounts or percents else "₹94,000 Real Value"
-            return {"type": "decay", "input": principal, "factor": rate if "inflation" in rate.lower() else f"{rate} Inflation", "output": f"{output} Real Value"}
-        if any(word in lowered for word in ("credit", "debt", "loan", "interest")):
-            if len(amounts) >= 2:
-                return {"type": "comparison", "left": self._amount_with_label(amounts[0], "Debt"), "right": self._amount_with_label(amounts[1], "Interest")}
-            return self._minimal_narration_flow(context, "DECAY")
-        if any(word in lowered for word in ("salary", "paycheck", "income", "expense", "expenses")):
-            salary = amounts[0] if amounts else "₹25,000 Salary"
-            expense = amounts[1] if len(amounts) > 1 else self._derived_rupee(salary, 0.92, "Expenses")
-            left = amounts[2] if len(amounts) > 2 else self._derived_rupee(salary, 0.08, "Left")
-            return {
-                "type": "flow",
-                "source": self._amount_with_label(salary, "Salary"),
-                "process": self._amount_with_label(expense, "Expenses"),
-                "result": self._amount_with_label(left, "Left"),
-            }
-        if len(amounts) >= 2:
-            return {"type": "comparison", "left": amounts[0], "right": amounts[1]}
-        if beat:
-            fallback = self._concrete_fallback_logic(beat)
-            logic = self._string_visual_logic_to_object(fallback, context)
-            if logic and self._typed_visual_logic_is_valid(logic):
-                return logic
-        return self._minimal_narration_flow(context, self.classifyIntent(context))
+        return self.contextual_logic.contextual_visual_logic_object(context, beat)
 
     def _emphasis_logic_from_narration(self, narration: str) -> dict[str, Any]:
-        amounts = list(dict.fromkeys(self._money_tokens(narration)))
-        percents = list(dict.fromkeys(self._percent_tokens(narration)))
-        headline = percents[0] if percents else (amounts[0] if amounts else "₹5,000")
-        lowered = str(narration or "").lower()
-        if amounts and any(phrase in lowered for phrase in ("cannot", "can't", "less than")):
-            subtext = f"can't even save {amounts[0]}"
-        elif amounts and "only" in lowered:
-            subtext = f"only {amounts[0]} left"
-        else:
-            subtext = self._short_overlay(narration, 6)
-        return {"type": "emphasis", "headline": headline, "subtext": subtext}
+        return self.narration_logic.emphasis_logic_from_narration(narration)
 
     def _comparison_logic_from_narration(self, narration: str) -> dict[str, Any]:
-        amounts = list(dict.fromkeys(self._money_tokens(narration)))
-        percents = list(dict.fromkeys(self._percent_tokens(narration)))
-        if percents and amounts:
-            return {"type": "comparison", "left": f"{percents[0]} of people", "right": f"{amounts[0]} savings"}
-        if len(amounts) >= 2:
-            return {"type": "comparison", "left": amounts[0], "right": amounts[1]}
-        return self._contextual_visual_logic_object_without_classification(narration)
+        return self.narration_logic.comparison_logic_from_narration(narration)
 
     def _flow_logic_from_narration(self, narration: str, beat: dict[str, Any] | None = None) -> dict[str, Any]:
-        lowered = str(narration or "").lower()
-        amounts = list(dict.fromkeys(self._money_tokens(narration)))
-        if any(word in lowered for word in ("automate", "auto debit", "manual", "emotion", "emotional")):
-            amount = amounts[0] if amounts else "₹5,000"
-            result = next((item for item in amounts[1:] if self._first_numeric_value(item) == 0), "₹0")
-            return {
-                "type": "flow",
-                "source": self._amount_with_label(amount, "Auto Debit"),
-                "process": self._amount_with_label(amount, "auto-invested"),
-                "result": self._amount_with_label(result, "left to spend"),
-            }
-        source = self._amount_with_label(amounts[0], "Salary") if amounts else "₹25,000 Salary"
-        process = self._amount_with_label(amounts[1], "Expenses") if len(amounts) > 1 else self._derived_rupee(source, 0.92, "Expenses")
-        result = self._amount_with_label(amounts[2], "Left") if len(amounts) > 2 else self._derived_rupee(source, 0.08, "Left")
-        return {"type": "flow", "source": source, "process": process, "result": result}
+        return self.narration_logic.flow_logic_from_narration(narration, beat)
 
     def _decay_flow_from_narration(self, narration: str) -> dict[str, Any]:
-        lowered = str(narration or "").lower()
-        amounts = list(dict.fromkeys(self._money_tokens(narration)))
-        if any(word in lowered for word in ("salary", "income", "paycheck")) and any(word in lowered for word in ("leak", "lost", "loss")) and len(amounts) >= 2:
-            salary_value = self._first_numeric_value(amounts[0])
-            leak_value = self._first_numeric_value(amounts[1])
-            left = self._format_rupees(salary_value - leak_value) if salary_value > leak_value > 0 else self._derived_rupee(amounts[0], 0.8, "Left")
-            return {
-                "type": "flow",
-                "source": self._amount_with_label(amounts[0], "Salary"),
-                "process": self._amount_with_label(amounts[1], "Leak"),
-                "result": self._amount_with_label(left, "Left"),
-            }
-        if "vanish" in lowered or "vanished" in lowered:
-            source = self._amount_with_label(amounts[0], "Salary") if amounts else "₹25,000 Salary"
-            process = "day 12" if re.search(r"\bday\s*12\b", lowered) else "spending"
-            result = self._amount_with_label(amounts[1], "Left") if len(amounts) > 1 else "₹0 Left"
-            return {"type": "flow", "source": source, "process": process, "result": result}
-        source = self._amount_with_label(amounts[0], "Monthly Leak") if amounts else "₹5,000 Monthly Leak"
-        result = self._amount_with_label(amounts[1], "Lost") if len(amounts) > 1 else self._derived_rupee(source, 12, "Lost")
-        return {"type": "flow", "source": source, "process": "12 months", "result": result}
+        return self.narration_logic.decay_flow_from_narration(narration)
 
     def _contextual_visual_logic_object_without_classification(self, context: str) -> dict[str, Any]:
-        amounts = list(dict.fromkeys(self._money_tokens(context)))
-        if len(amounts) >= 2:
-            return {"type": "comparison", "left": amounts[0], "right": amounts[1]}
-        return self._fallback_numeric_flow()
+        return self.narration_logic.contextual_visual_logic_object_without_classification(context)
 
     def _coerce_logic_to_pattern(self, logic: dict[str, Any], context: str, preferred_pattern: str) -> dict[str, Any]:
-        amounts = list(dict.fromkeys(self._money_tokens(context)))
-        percents = list(dict.fromkeys(self._percent_tokens(context)))
-        if preferred_pattern == "COMPARISON":
-            if len(amounts) >= 2:
-                return {"type": "comparison", "left": amounts[0], "right": amounts[1]}
-            if amounts and percents:
-                return {"type": "comparison", "left": percents[0], "right": amounts[0]}
-        if preferred_pattern in {"MONEY_FLOW", "VALUE_DECAY", "LOOP", "GROWTH"}:
-            if preferred_pattern == "VALUE_DECAY":
-                principal = amounts[0] if amounts else "₹1,00,000"
-                rate = percents[0] if percents else "6% Inflation"
-                return {"type": "decay", "input": principal, "factor": rate if "inflation" in rate.lower() else f"{rate} Inflation", "output": f"{self._inflation_output(principal, rate)} Real Value"}
-            if preferred_pattern == "GROWTH":
-                amount = amounts[0] if amounts else "₹5,000"
-                output = amounts[1] if len(amounts) > 1 else self._derived_rupee(amount, 12, "Invested")
-                rate = percents[0] if percents else "12 months"
-                return {"type": "growth", "input": self._amount_with_label(amount, "SIP"), "rate": rate, "output": output}
-            source = amounts[0] if amounts else "₹5,000 Monthly Leak"
-            result = amounts[1] if len(amounts) > 1 else self._derived_rupee(source, 12, "Lost")
-            return {"type": "flow", "source": self._amount_with_label(source, "Monthly Leak"), "process": "12 months", "result": self._amount_with_label(result, "Lost")}
-        if preferred_pattern == "EMPHASIS":
-            return self._emphasis_logic_from_narration(context)
-        return logic
+        return self.narration_logic.coerce_logic_to_pattern(logic, context, preferred_pattern)
 
     def _amount_with_label(self, amount: str, label: str) -> str:
-        return amount if label.lower() in amount.lower() else f"{amount} {label}"
+        return self.value_deriver.amount_with_label(amount, label)
 
     def _safe_emphasis_logic_object(self, context: str) -> dict[str, Any]:
         logic = self._contextual_visual_logic_object(context, None)
@@ -1314,147 +465,52 @@ class RenderSpecService:
         return self._fallback_numeric_flow()
 
     def _fallback_numeric_flow(self) -> dict[str, Any]:
-        return {
-            "type": "flow",
-            "source": "₹25,000 Salary",
-            "process": "₹23,000 Expenses",
-            "result": "₹2,000 Left",
-        }
+        return self.narration_logic.fallback_numeric_flow()
 
     def _inflation_output(self, principal: str, rate: str) -> str:
-        principal_value = self._first_numeric_value(principal)
-        rate_value = self._first_numeric_value(rate)
-        if principal_value <= 0 or rate_value <= 0:
-            return "₹94,000"
-        return self._format_rupees(principal_value * max(0.0, 1 - (rate_value / 100)))
+        return self.value_deriver.inflation_output(principal, rate)
 
     def _derived_rupee(self, amount: str, multiplier: float, label: str) -> str:
-        value = self._first_numeric_value(amount)
-        if value <= 0:
-            return f"₹0 {label}"
-        return f"{self._format_rupees(value * multiplier)} {label}"
+        return self.value_deriver.derived_rupee(amount, multiplier, label)
 
     def _first_numeric_value(self, text: str) -> float:
-        match = re.search(r"[\d,.]+", text)
-        if not match:
-            return 0.0
-        try:
-            return float(match.group(0).replace(",", ""))
-        except ValueError:
-            return 0.0
+        return self.number_utils.first_numeric_value(text)
 
     def _format_rupees(self, value: float) -> str:
-        number = int(round(value / 100.0) * 100) if value >= 1000 else int(round(value))
-        raw = str(max(number, 0))
-        if len(raw) <= 3:
-            return f"₹{raw}"
-        last_three = raw[-3:]
-        rest = raw[:-3]
-        groups = []
-        while len(rest) > 2:
-            groups.insert(0, rest[-2:])
-            rest = rest[:-2]
-        if rest:
-            groups.insert(0, rest)
-        return "₹" + ",".join(groups + [last_three])
+        return self.number_utils.format_rupees(value)
 
     def _concrete_fallback_logic(self, beat: dict[str, Any]) -> str:
-        props = beat.get("props") if isinstance(beat.get("props"), dict) else {}
-        headline = self._short_overlay(str(props.get("headline") or props.get("content") or beat.get("content") or ""), 5)
-        subtext = self._short_overlay(str(props.get("subtext") or props.get("caption") or beat.get("caption") or ""), 8)
-        combined = f"{headline} {subtext}".strip()
-        if self._passes_text_gate(combined):
-            return combined
-        return "76% can't save ₹5,000"
+        return self.emphasis_builder.concrete_fallback_logic(beat)
 
     def _is_concrete_visual_logic(self, text: str) -> bool:
-        if not text or len(text.strip()) < 6:
-            return False
-        if self._is_abstract_visual_logic(text):
-            return False
-        if self._contains_generic_visual_words(text):
-            return False
-        return self._has_number(text)
+        return self.visual_gate.is_concrete_visual_logic(text)
 
     def _is_abstract_visual_logic(self, text: str) -> bool:
-        lowered = " ".join(str(text or "").lower().replace("_", " ").split())
-        if not lowered:
-            return True
-        if lowered in self.ABSTRACT_VISUAL_WORDS:
-            return True
-        if any(re.search(rf"\b{re.escape(bad)}\b", lowered) for bad in self.ABSTRACT_VISUAL_WORDS):
-            return True
-        if self._contains_generic_visual_words(lowered):
-            return True
-        return any(bad in lowered for bad in {"static image", "split screen", "display statistic", "show comparison", "display data"})
+        return self.visual_gate.is_abstract_visual_logic(text)
 
     def _contains_generic_visual_words(self, text: str) -> bool:
-        lowered = " ".join(str(text or "").lower().replace("_", " ").split())
-        return any(re.search(rf"\b{re.escape(word)}\b", lowered) for word in self.GENERIC_VISUAL_WORDS)
+        return self.visual_gate.contains_generic_visual_words(text)
 
     def _has_number(self, text: str) -> bool:
-        return bool(re.search(r"(?:₹\s?[\d,.]+(?:\s?(?:lakhs?|crores?|k|m)\b)?|\d+(?:\.\d+)?%|\b\d+(?:\.\d+)?\b)", text, re.I))
+        return self.visual_gate.has_number(text)
 
     def _numbers_respect_context(self, candidate: str, context: str) -> bool:
-        context_numbers = set(self._money_tokens(context) + self._percent_tokens(context))
-        candidate_numbers = set(self._money_tokens(candidate) + self._percent_tokens(candidate))
-        if not candidate_numbers:
-            return True
-        return self._numbers_allowed_by_context(candidate_numbers, context_numbers, context)
+        return self.context_gate.numbers_respect_context(candidate, context)
 
     def _has_visual_structure(self, text: str) -> bool:
-        lowered = text.lower()
-        if re.search(r"\s(?:->|→)\s", text):
-            return len([part for part in re.split(r"\s*(?:->|→)\s*", text) if part.strip()]) >= 3
-        if re.search(r"\b(vs|versus|compared|than)\b", lowered):
-            return len(re.split(r"\b(?:vs|versus|compared|than)\b", lowered, maxsplit=1)) == 2
-        if any(word in lowered for word in ("left", "loss", "interest/year", "real value", "after inflation", "yearly loss")):
-            return True
-        return False
+        return self.visual_gate.has_visual_structure(text)
 
     def _has_impact(self, text: str) -> bool:
-        lowered = text.lower()
-        if any(word in lowered for word in ("loss", "lose", "lost", "left", "debt", "interest", "broke", "can't", "cannot", "real value", "inflation", "less than", "more than")):
-            return True
-        if re.search(r"\b(vs|versus|compared|than)\b", lowered):
-            return True
-        if re.search(r"(?:->|→)", text):
-            numbers = self._numeric_values(text)
-            if len(numbers) >= 2:
-                high = max(numbers)
-                low = min(numbers)
-                return high > 0 and ((high - low) / high) >= 0.05
-        return bool(re.search(r"\b(?:[7-9]\d|100)%", text))
+        return self.visual_gate.has_impact(text)
 
     def _passes_text_gate(self, text: str) -> bool:
-        return self._is_concrete_visual_logic(text) and self._has_visual_structure(text) and self._has_impact(text)
+        return self.visual_gate.passes_text_gate(text)
 
     def _passes_visual_gate(self, intent: str, pattern: str, visual_logic: str, beat: dict[str, Any]) -> bool:
-        if intent == "CONTEXT" or pattern == "CONTEXT":
-            return True
-        if intent == "EMPHASIS" or pattern == "EMPHASIS":
-            return self._has_number(visual_logic) and self._has_impact(visual_logic) and not self._is_abstract_visual_logic(visual_logic)
-        return self._passes_text_gate(visual_logic)
+        return self.props_gate.passes_visual_gate(intent, pattern, visual_logic)
 
     def _props_pass_visual_gate(self, component: str, pattern: str, visual_logic: str, props: dict[str, Any]) -> bool:
-        if component == "BrollOverlay":
-            return True
-        if component == "FlowDiagram":
-            nodes = props.get("nodes")
-            if not isinstance(nodes, list) or len(nodes) < 3:
-                return False
-            labels = [str(node.get("label") if isinstance(node, dict) else node) for node in nodes]
-            return self._passes_text_gate(" -> ".join(labels))
-        if component == "SplitComparison":
-            return self._passes_text_gate(f"{props.get('leftContent', '')} vs {props.get('rightContent', '')}")
-        if component in {"BarChart", "LineChart"}:
-            data = props.get("data")
-            title = str(props.get("title") or visual_logic)
-            return isinstance(data, list) and len(data) >= 2 and not self._is_abstract_visual_logic(title)
-        if component in {"StatExplosion", "TextBurst", "ReactionCard", "StatReveal"}:
-            text = " ".join(str(props.get(key) or "") for key in ("headline", "content", "subtext", "kicker"))
-            return self._has_number(text or visual_logic) and self._has_impact(text or visual_logic) and not self._is_abstract_visual_logic(text or visual_logic)
-        return self._passes_text_gate(visual_logic)
+        return self.props_gate.props_pass_visual_gate(component, pattern, visual_logic, props)
 
     def _regenerate_props(
         self,
@@ -1465,24 +521,17 @@ class RenderSpecService:
         context: str,
         beat: dict[str, Any],
     ) -> dict[str, Any]:
-        regenerated_logic = visual_logic if self._passes_text_gate(visual_logic) else self._contextual_visual_logic(context, beat)
-        color = "red" if self._sentiment(regenerated_logic) == "negative" else self._beat_color(beat.get("color"))
-        if component == "FlowDiagram":
-            return self._flow_props(pattern, regenerated_logic, caption, {}, color, {**beat, "props": {}})
-        if component == "SplitComparison":
-            left, right = self._concrete_split_from_logic(regenerated_logic, caption)
-            return {"leftLabel": "CLAIM", "leftContent": left, "rightLabel": "REALITY", "rightContent": right}
-        if component in {"BarChart", "LineChart"}:
-            data = self._extract_data_points(regenerated_logic)
-            if len(data) >= 2:
-                return {
-                    "title": self._short_overlay(regenerated_logic, 8),
-                    "data": data,
-                    "color": self._chart_color(regenerated_logic),
-                    "unit": self._unit_label(regenerated_logic),
-                    "animationSpeed": "fast",
-                }
-        return self._safe_emphasis_props(self._safe_emphasis_logic(context or regenerated_logic), caption)
+        return self.props_builder.regenerate_props(
+            component,
+            pattern,
+            visual_logic,
+            caption,
+            context,
+            beat,
+            contextual_visual_logic=self._contextual_visual_logic,
+            safe_emphasis_logic=self._safe_emphasis_logic,
+            safe_emphasis_props=self._safe_emphasis_props,
+        )
 
     def _safe_emphasis_logic(self, context: str) -> str:
         logic = self._visual_logic_to_text(self._safe_emphasis_logic_object(context))
@@ -1491,33 +540,10 @@ class RenderSpecService:
         return "76% can't save ₹5,000"
 
     def _safe_emphasis_props(self, visual_logic: str, caption: str) -> dict[str, Any]:
-        headline = self._dominant_phrase(visual_logic)
-        words = headline.split()
-        if len(words) > 6:
-            headline = " ".join(words[:6])
-        return {
-            "headline": headline,
-            "subtext": caption or self._short_overlay(visual_logic.replace(headline, ""), 6),
-            "color": "red" if self._sentiment(visual_logic) == "negative" else "orange",
-        }
+        return self.emphasis_builder.safe_emphasis_props(visual_logic, caption)
 
     def _kill_switch_beat(self, normalized: dict[str, Any]) -> dict[str, Any]:
-        context = self._beat_context(normalized)
-        visual_logic_object = self._safe_emphasis_logic_object(context)
-        visual_logic_text = self._visual_logic_to_text(visual_logic_object)
-        caption = self._repair_caption("", visual_logic_text, context)
-        props = self._safe_emphasis_props(visual_logic_text, caption)
-        props["durationSec"] = normalized.get("estimated_duration_sec") or 2.5
-        return {
-            **normalized,
-            "intent": "EMPHASIS",
-            "pattern": "EMPHASIS",
-            "component": "StatExplosion",
-            "visual_logic": visual_logic_object,
-            "visual_logic_text": visual_logic_text,
-            "caption": caption,
-            "props": props,
-        }
+        return self.structured_normalizer.kill_switch_beat(normalized)
 
     def _repair_props(
         self,
@@ -1527,55 +553,7 @@ class RenderSpecService:
         caption: str,
         beat: dict[str, Any],
     ) -> dict[str, Any]:
-        raw_props = beat.get("props") if isinstance(beat.get("props"), dict) else {}
-        color = self._beat_color(raw_props.get("color") or beat.get("color"))
-        if component == "FlowDiagram":
-            return self._flow_props(pattern, visual_logic, caption, raw_props, color, beat)
-        if component == "SplitComparison":
-            left_label, left_content, right_label, right_content = self._parse_split(
-                str(raw_props.get("leftContent") or visual_logic),
-                str(raw_props.get("rightContent") or caption),
-            )
-            if self._is_abstract_visual_logic(left_content) or self._is_abstract_visual_logic(right_content):
-                left_content, right_content = self._concrete_split_from_logic(visual_logic, caption)
-            left_content = self._humanize_money_phrase(left_content)
-            right_content = self._humanize_money_phrase(right_content)
-            left_label = self._extract_split_label(left_content)
-            right_label = self._extract_split_label(right_content)
-            return {
-                "leftLabel": self._humanize_split_label(str(raw_props.get("leftLabel") or left_label), left_content),
-                "leftContent": left_content,
-                "rightLabel": self._humanize_split_label(str(raw_props.get("rightLabel") or right_label), right_content),
-                "rightContent": right_content,
-                "leftColor": self._color_for_label(left_content),
-                "rightColor": self._color_for_label(right_content),
-            }
-        if component in {"BarChart", "LineChart"}:
-            data = raw_props.get("data") if isinstance(raw_props.get("data"), list) else self._extract_data_points(visual_logic)
-            if len(data) < 2:
-                return {"content": self._short_overlay(visual_logic, 5), "subtext": caption, "color": color}
-            chart_color = self._extract_color(visual_logic) or (color if color in {"red", "teal", "orange"} else "orange")
-            return {
-                "title": str(raw_props.get("title") or self._short_overlay(visual_logic, 8) or "Financial Trend"),
-                "data": data,
-                "color": chart_color,
-                "unit": str(raw_props.get("unit") or self._unit_label(visual_logic)),
-                "animationSpeed": "fast",
-            }
-        if component == "StatExplosion":
-            return {"headline": str(raw_props.get("headline") or self._dominant_phrase(visual_logic)), "subtext": caption, "color": self._color_for_label(f"{visual_logic} {caption}") or color}
-        if component == "TextBurst":
-            return {"content": str(raw_props.get("content") or self._short_overlay(visual_logic, 5)), "color": color}
-        if component == "ReactionCard":
-            return {"content": str(raw_props.get("content") or self._short_overlay(visual_logic, 5)), "subtext": caption, "color": color}
-        if component == "BrollOverlay":
-            return {
-                "overlayText": caption,
-                "query": str(raw_props.get("query") or raw_props.get("searchQuery") or self._short_overlay(visual_logic, 5)),
-                "brand": "10 Minute Finance",
-                "sentiment": self._sentiment(f"{visual_logic} {caption}"),
-            }
-        return {"content": self._short_overlay(visual_logic, 5), "color": color}
+        return self.props_builder.repair_props(component, pattern, visual_logic, caption, beat)
 
     def _flow_props(
         self,
@@ -1586,362 +564,112 @@ class RenderSpecService:
         color: str,
         beat: dict[str, Any],
     ) -> dict[str, Any]:
-        mode = self._flow_mode(pattern, raw_props.get("mode"))
-        layout = self._flow_layout(mode, raw_props.get("layout"))
-        nodes = self._flow_nodes(raw_props.get("nodes"), visual_logic, pattern)
-        connections = self._flow_connections(raw_props.get("connections"), nodes, mode)
-        if beat.get("context_ref"):
-            layout = str(raw_props.get("layout") or layout)
-        caption = self._complete_caption(caption)
-        semantic_color = (
-            self._color_for_label(" ".join(str(node.get("label") or "") for node in nodes))
-            or self._color_for_label(caption)
-            or self._color_for_label(visual_logic)
-            or color
-        )
-        return {
-            "mode": mode,
-            "layout": layout,
-            "spacing": str(raw_props.get("spacing") or "equal") if raw_props.get("spacing") in {"equal", "weighted"} else "equal",
-            "direction": str(raw_props.get("direction") or "forward") if raw_props.get("direction") in {"forward", "reverse"} else "forward",
-            "nodes": nodes,
-            "connections": connections,
-            "caption": caption,
-            "captionColor": self._color_for_label(caption) or semantic_color,
-            "color": semantic_color,
-            "contextRef": str(beat.get("context_ref") or ""),
-            "isOutro": bool(beat.get("is_outro")),
-        }
+        return self.flow_props_builder.flow_props(pattern, visual_logic, caption, raw_props, color, beat)
 
     def _polish_flow_display_props(self, props: dict[str, Any], visual_logic: str) -> dict[str, Any]:
-        nodes = props.get("nodes")
-        if not isinstance(nodes, list):
-            return props
-        polished = dict(props)
-        result_text = str(nodes[-1].get("label") if nodes and isinstance(nodes[-1], dict) else "")
-        flow_text = f"{visual_logic} {result_text} {polished.get('caption', '')}"
-        if self._is_loss_result(flow_text):
-            polished["captionColor"] = "red"
-            polished["color"] = "red"
-        if props.get("isOutro") and self._looks_like_outro_loss(flow_text) and len(nodes) >= 3:
-            first = dict(nodes[0])
-            last = dict(nodes[-1])
-            first["label"] = self._monthly_punchline_source(str(first.get("label") or ""))
-            first["style"] = self._node_style(str(first.get("role") or "source"), first["label"], "MONEY_FLOW")
-            last["label"] = self._humanize_money_phrase(str(last.get("label") or ""))
-            last["style"] = self._node_style("result", last["label"], "MONEY_FLOW")
-            polished["nodes"] = [first, last]
-            polished["connections"] = [{"from": first["id"], "to": last["id"]}]
-            polished["caption"] = f"{self._short_money(first['label'])}/month -> {self._short_money(last['label'])} gone"
-            polished["captionColor"] = "red"
-            polished["color"] = "red"
-        return polished
+        return self.flow_props_builder.polish_flow_display_props(props, visual_logic)
 
     def _flow_mode(self, pattern: str, value: Any) -> str:
-        mode = str(value or "").lower()
-        if mode in {"linear", "branch", "loop", "decay", "growth"}:
-            return mode
-        return {
-            "MONEY_FLOW": "linear",
-            "VALUE_DECAY": "decay",
-            "LOOP": "loop",
-            "GROWTH": "growth",
-        }.get(pattern, "linear")
+        return self.flow_props_builder.flow_mode(pattern, value)
 
     def _flow_layout(self, mode: str, value: Any) -> str:
-        layout = str(value or "").lower()
-        if layout in {"horizontal", "vertical", "radial"}:
-            return layout
-        return {"branch": "vertical", "loop": "radial"}.get(mode, "horizontal")
+        return self.flow_props_builder.flow_layout(mode, value)
 
     def _flow_nodes(self, raw_nodes: Any, visual_logic: str, pattern: str) -> list[dict[str, Any]]:
-        nodes: list[dict[str, Any]] = []
-        if isinstance(raw_nodes, list):
-            for index, node in enumerate(raw_nodes[:5]):
-                if isinstance(node, dict):
-                    node_id = str(node.get("id") or f"node{index + 1}")
-                    label = self._humanize_money_phrase(str(node.get("label") or node_id))
-                    if self._is_abstract_visual_logic(label):
-                        label = self._fallback_node_label(visual_logic, index, pattern)
-                    role = str(node.get("role") or self._default_node_role(index, len(raw_nodes))).lower()
-                    children = node.get("children") if isinstance(node.get("children"), list) else []
-                    nodes.append(
-                        {
-                            "id": self._safe_id(node_id, index),
-                            "label": self._short_overlay(label, 4) or f"Step {index + 1}",
-                            "role": role if role in self.VALID_NODE_ROLES else self._default_node_role(index, len(raw_nodes)),
-                            "style": self._node_style(role if role in self.VALID_NODE_ROLES else self._default_node_role(index, len(raw_nodes)), label, pattern),
-                            "children": [self._short_overlay(str(child), 3) for child in children[:4] if str(child).strip()],
-                        }
-                    )
-                else:
-                    label = self._humanize_money_phrase(self._short_overlay(str(node), 4)) if not self._is_abstract_visual_logic(str(node)) else self._fallback_node_label(visual_logic, index, pattern)
-                    role = self._default_node_role(index, len(raw_nodes))
-                    nodes.append(
-                        {
-                            "id": f"node{index + 1}",
-                            "label": label,
-                            "role": role,
-                    "style": self._node_style(role, label, pattern),
-                            "children": [],
-                        }
-                    )
-        if len(nodes) < 2:
-            nodes = self._fallback_flow_nodes(visual_logic, pattern)
-        return nodes[:5]
+        return self.flow_props_builder.flow_nodes(raw_nodes, visual_logic, pattern)
 
     def _fallback_node_label(self, visual_logic: str, index: int, pattern: str) -> str:
-        fallback_nodes = self._fallback_flow_nodes(visual_logic, pattern)
-        if index < len(fallback_nodes):
-            return fallback_nodes[index]["label"]
-        return f"Step {index + 1}"
+        return self.flow_props_builder.fallback_node_label(visual_logic, index, pattern)
 
     def _fallback_flow_nodes(self, visual_logic: str, pattern: str) -> list[dict[str, Any]]:
-        arrow_parts = [self._humanize_money_phrase(self._short_overlay(part, 4)) for part in re.split(r"\s*(?:->|→)\s*", visual_logic) if part.strip()]
-        if len(arrow_parts) >= 3:
-            labels = arrow_parts[:5]
-            if pattern == "VALUE_DECAY":
-                roles = ["source", "modifier", "result"]
-            elif pattern == "GROWTH":
-                roles = ["source", "modifier", "result"]
-            else:
-                roles = ["source"] + ["process"] * max(len(labels) - 2, 0) + ["result"]
-        elif pattern == "VALUE_DECAY":
-            labels = ["₹1,00,000", "6% Inflation", "₹94,000 Value"]
-            roles = ["source", "modifier", "result"]
-        elif pattern == "LOOP":
-            labels = ["₹25,000 Start", "spending", "₹0 Left", "Repeat"]
-            roles = ["source", "process", "result", "process"]
-        elif pattern == "GROWTH":
-            labels = ["₹5,000 SIP", "12% Growth", "₹60,000 Invested", "Wealth"]
-            roles = ["source", "process", "modifier", "result"]
-        else:
-            words = [word for word in re.findall(r"[A-Za-z₹0-9%.,]+", visual_logic) if len(word) > 2][:4]
-            labels = words if len(words) >= 3 else ["₹25,000 Salary", "₹23,000 Expenses", "₹2,000 Left"]
-            roles = ["source"] + ["process"] * max(len(labels) - 2, 0) + ["result"]
-        return [
-            {
-                "id": f"node{index + 1}",
-                "label": label,
-                "role": roles[min(index, len(roles) - 1)],
-                "style": self._node_style(roles[min(index, len(roles) - 1)], label, pattern),
-                "children": [],
-            }
-            for index, label in enumerate(labels[:5])
-        ]
+        return self.flow_props_builder.fallback_flow_nodes(visual_logic, pattern)
 
     def _node_style(self, role: str, label: str, pattern: str = "") -> dict[str, str]:
-        semantic_color = self._color_for_label(label)
-        if role == "source":
-            return {"size": "large", "color": semantic_color or "teal"}
-        if role == "modifier":
-            return {"size": "small", "color": semantic_color or "orange"}
-        if role == "result":
-            is_loss_result = pattern == "VALUE_DECAY" or self._sentiment(label) == "negative" or "left" in label.lower()
-            return {"size": "large", "color": semantic_color or ("red" if is_loss_result else "teal")}
-        return {"size": "medium", "color": semantic_color or "orange"}
+        return self.flow_props_builder.node_style(role, label, pattern)
 
     def _flow_connections(self, raw_connections: Any, nodes: list[dict[str, Any]], mode: str) -> list[dict[str, str]]:
-        node_ids = {node["id"] for node in nodes}
-        connections: list[dict[str, str]] = []
-        if isinstance(raw_connections, list):
-            for connection in raw_connections:
-                if not isinstance(connection, dict):
-                    continue
-                start = str(connection.get("from") or "")
-                end = str(connection.get("to") or "")
-                if start in node_ids and end in node_ids and start != end:
-                    connections.append({"from": start, "to": end})
-        if connections:
-            return connections[:6]
-        for index in range(len(nodes) - 1):
-            connections.append({"from": nodes[index]["id"], "to": nodes[index + 1]["id"]})
-        if mode == "loop" and len(nodes) > 2:
-            connections.append({"from": nodes[-1]["id"], "to": nodes[0]["id"]})
-        return connections
+        return self.flow_helpers.flow_connections(raw_connections, nodes, mode)
 
     def _default_node_role(self, index: int, total: int) -> str:
-        if index == 0:
-            return "source"
-        if index == total - 1:
-            return "result"
-        return "process"
+        return self.flow_helpers.default_node_role(index, total)
 
     def _safe_id(self, value: str, index: int) -> str:
-        cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", value).strip("_")
-        return cleaned or f"node{index + 1}"
+        return self.flow_helpers.safe_id(value, index)
 
     def _dominant_phrase(self, text: str) -> str:
-        money_match = re.search(r"(₹\s?[\d,.]+(?:\s?(?:lakhs?|crores?|k|m)\b)?)", text, re.I)
-        pct_match = re.search(r"(\d+(?:\.\d+)?%)", text)
-        if money_match:
-            return money_match.group(1).replace(" ", "")
-        if pct_match:
-            return pct_match.group(1)
-        words = re.findall(r"[A-Za-z0-9₹%]+", text)
-        return " ".join(words[:4]).upper() if words else "KEY STAT"
+        return self.text_utils.dominant_phrase(text)
 
     def _short_overlay(self, text: str, max_words: int) -> str:
-        words = re.findall(r"[A-Za-z0-9₹%.,]+", text)
-        return " ".join(words[:max_words]).strip()
+        return self.text_utils.short_overlay(text, max_words)
 
     def _sentiment(self, text: str) -> str:
-        lowered = text.lower()
-        if any(word in lowered for word in ("debt", "broke", "loss", "lose", "risk", "mistake", "negative")):
-            return "negative"
-        if any(word in lowered for word in ("save", "profit", "growth", "invest", "positive", "wealth")):
-            return "positive"
-        return "neutral"
+        return self.text_utils.sentiment(text)
 
     def _looks_like_line_chart(self, text: str) -> bool:
-        lowered = text.lower()
-        return any(word in lowered for word in ("line", "trend", "growth", "over time", "from 20"))
+        return self.text_utils.looks_like_line_chart(text)
 
     def _chart_color(self, text: str) -> str:
-        sentiment = self._sentiment(text)
-        if sentiment == "negative":
-            return "red"
-        if sentiment == "positive":
-            return "teal"
-        return "orange"
+        return self.text_utils.chart_color(text)
 
     def _kicker(self, text: str) -> str:
-        lowered = text.lower()
-        if any(word in lowered for word in ("debt", "broke", "loss", "mistake")):
-            return "Risk signal"
-        if any(word in lowered for word in ("save", "invest", "wealth", "growth")):
-            return "Money move"
-        return "Finance insight"
+        return self.text_utils.kicker(text)
 
     def _unit_label(self, text: str) -> str:
-        if "%" in text:
-            return "%"
-        if "₹" in text or "rupee" in text.lower():
-            return "₹"
-        return ""
+        return self.text_utils.unit_label(text)
 
     def _money_tokens(self, text: str) -> list[str]:
-        return [
-            token.replace(" ", "").rstrip(".,")
-            for token in re.findall(r"₹\s?[\d,.]+(?:\s?(?:lakhs?|crores?|k|m)\b)?", text, re.I)
-        ]
+        return self.number_utils.money_tokens(text)
 
     def _percent_tokens(self, text: str) -> list[str]:
-        return re.findall(r"\d+(?:\.\d+)?%", text)
+        return self.number_utils.percent_tokens(text)
 
     def _numeric_values(self, text: str) -> list[float]:
-        values: list[float] = []
-        for value in re.findall(r"\d+(?:\.\d+)?", text):
-            try:
-                values.append(float(value))
-            except ValueError:
-                continue
-        return values
+        return self.number_utils.numeric_values(text)
 
     def _extract_data_points(self, text: str) -> list[dict[str, float | str]]:
-        data_section = self._extract_data_section(text)
-        pairs = re.findall(r"([^=,;:]+?)\s*=\s*₹?\s*([\d,.]+)", data_section)
-        if pairs:
-            return [
-                {"label": label.strip(), "value": float(value.replace(",", ""))}
-                for label, value in pairs[:6]
-            ]
-        pairs = re.findall(r"([A-Za-z]{3,9}\s?\d{0,4}|\d{4})\D{0,12}(\d+(?:\.\d+)?)", text)
-        data = [{"label": label.strip(), "value": float(value)} for label, value in pairs[:6]]
-        if len(data) >= 2:
-            return data
-        numbers = [float(value) for value in re.findall(r"\d+(?:\.\d+)?", text)[:5]]
-        if len(numbers) >= 2:
-            return [{"label": f"Point {idx}", "value": value} for idx, value in enumerate(numbers, start=1)]
-        return []
+        return self.chart_data.extract_data_points(text)
 
     def _extract_data_section(self, text: str) -> str:
-        match = re.search(r"data\s*:\s*(.*?)(?:,\s*(?:title|color|unit|insight)\s*:|$)", text, re.I)
-        return match.group(1) if match else text
+        return self.chart_data.extract_data_section(text)
 
     def _extract_named_field(self, text: str, field: str) -> str:
-        match = re.search(rf"{field}\s*:\s*([^,;]+)", text, re.I)
-        return match.group(1).strip() if match else ""
+        return self.text_utils.extract_named_field(text, field)
 
     def _extract_color(self, text: str) -> str:
-        color = self._extract_named_field(text, "color").lower()
-        return color if color in {"red", "teal", "orange"} else ""
+        return self.text_utils.extract_color(text)
 
     def _beat_color(self, value: Any) -> str:
-        color = str(value or "orange").lower()
-        return color if color in {"red", "orange", "teal", "navy", "white"} else "orange"
+        return self.text_utils.beat_color(value)
 
     def _parse_split(self, content: str, caption: str) -> tuple[str, str, str, str]:
-        text = content or caption
-        parts = re.split(r"\s+vs\.?\s+|\s+\|\s+", text, maxsplit=1, flags=re.I)
-        left = parts[0].strip() if parts else "What you think"
-        right = parts[1].strip() if len(parts) > 1 else (caption or "Reality")
-        return self._extract_split_label(left), left, self._extract_split_label(right), right
+        return self.text_utils.parse_split(content, caption)
 
     def _concrete_split_from_logic(self, visual_logic: str, caption: str) -> tuple[str, str]:
-        parts = re.split(r"\s+vs\.?\s+|\s+versus\s+|\s+\|\s+", visual_logic, maxsplit=1, flags=re.I)
-        if len(parts) == 2:
-            return self._short_overlay(parts[0], 6), self._short_overlay(parts[1], 6)
-        numbers = re.findall(r"(?:₹\s?[\d,.]+(?:\s?(?:lakhs?|crores?|k|m)\b)?|\d+(?:\.\d+)?%)", visual_logic, re.I)
-        if len(numbers) >= 2:
-            return numbers[0], numbers[1]
-        return self._short_overlay(visual_logic, 6) or "Claim", self._short_overlay(caption, 6) or "Reality"
+        return self.split_helpers.concrete_split_from_logic(visual_logic, caption)
 
     def _extract_split_label(self, content: str) -> str:
-        cleaned = re.sub(r"₹\s?[\d,.]+(?:\s?(?:lakhs?|crores?|k|m)\b)?|\d+(?:\.\d+)?%", "", content, flags=re.I)
-        words = [
-            word
-            for word in re.findall(r"[A-Za-z]+", cleaned)
-            if word.lower() not in {"cannot", "cant", "less", "than", "left", "goes", "to"}
-        ]
-        return " ".join(words[:3]).title() or "Amount"
+        return self.text_utils.extract_split_label(content)
 
     def _humanize_split_label(self, label: str, content: str) -> str:
-        if label.strip().upper() in {"WHAT YOU THINK", "REALITY", "CLAIM"}:
-            return self._extract_split_label(content)
-        return self._extract_split_label(content) or label
+        return self.split_helpers.humanize_split_label(label, content)
 
     def _humanize_money_phrase(self, text: str) -> str:
-        cleaned = " ".join(str(text or "").replace("₹0.", "₹0").split())
-        cleaned = re.sub(r"₹0\s+Saved\s+Emotional Spend\b", "₹0 left to spend", cleaned, flags=re.I)
-        cleaned = re.sub(r"₹0\s+Emotional Spend\b", "₹0 left to spend", cleaned, flags=re.I)
-        cleaned = re.sub(r"₹0\s+left\s+to\b(?!\s+spend)", "₹0 left to spend", cleaned, flags=re.I)
-        cleaned = re.sub(r"\bmonthly leak\b", "leaks every month", cleaned, flags=re.I)
-        cleaned = re.sub(r"\bauto\s+(?:invested|investment)\b", "auto-invested", cleaned, flags=re.I)
-        cleaned = re.sub(r"\bgoes to investment\b", "auto-invested", cleaned, flags=re.I)
-        cleaned = re.sub(r"\b(?:Invested|Investment)\b", "auto-invested", cleaned, flags=re.I)
-        cleaned = cleaned.replace("auto-auto-invested", "auto-invested")
-        return cleaned
+        return self.flow_labels.humanize_money_phrase(text)
 
     def _complete_caption(self, caption: str) -> str:
-        cleaned = self._humanize_money_phrase(caption)
-        cleaned = re.sub(r"₹0\s+left\s+to\b(?!\s+spend)", "₹0 left to spend", cleaned, flags=re.I)
-        return cleaned
+        return self.flow_labels.complete_caption(caption)
 
     def _color_for_label(self, label: str) -> str:
-        lowered = str(label or "").lower()
-        if "₹0" in str(label or "") or any(word in lowered for word in ("lost", "loss", "leak", "leaks", "debt", "expense", "expenses")):
-            return "red"
-        if any(word in lowered for word in ("investment", "invested", "auto-invested", "saved", "growth")):
-            return "teal"
-        return ""
+        return self.flow_labels.color_for_label(label)
 
     def _is_loss_result(self, text: str) -> bool:
-        lowered = str(text or "").lower()
-        return "₹0" in str(text or "") or any(word in lowered for word in ("loss", "lost", "leak", "leaks", "debt", "expense"))
+        return self.flow_labels.is_loss_result(text)
 
     def _looks_like_outro_loss(self, text: str) -> bool:
-        lowered = str(text or "").lower()
-        return (
-            any(word in lowered for word in ("month", "monthly", "leaks every month", "/month"))
-            and any(word in lowered for word in ("gone", "lost", "loss"))
-            and len(self._money_tokens(text)) >= 2
-        )
+        return self.flow_labels.looks_like_outro_loss(text)
 
     def _monthly_punchline_source(self, label: str) -> str:
-        money = self._short_money(label)
-        return f"{money} leaks every month" if money else self._humanize_money_phrase(label)
+        return self.flow_props_builder.monthly_punchline_source(label)
 
     def _short_money(self, text: str) -> str:
-        tokens = self._money_tokens(text)
-        return tokens[0] if tokens else ""
+        return self.flow_props_builder.short_money(text)

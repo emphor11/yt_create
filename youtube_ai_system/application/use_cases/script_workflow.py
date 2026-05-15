@@ -8,10 +8,9 @@ enough.
 from __future__ import annotations
 
 from youtube_ai_system.application.result import UseCaseResult
-from youtube_ai_system.models.repository import ProjectRepository
+from youtube_ai_system.infrastructure.persistence import ProjectRepository, utcnow
 from youtube_ai_system.services.script_service import ScriptService
 from youtube_ai_system.services.state_machine import StateMachine
-from youtube_ai_system.models.repository import utcnow
 
 
 class GenerateScriptUseCase:

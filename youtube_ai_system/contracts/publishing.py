@@ -22,8 +22,9 @@ class UploadPackageContract:
     def from_dict(cls, payload: dict[str, Any]) -> "UploadPackageContract":
         tags = payload.get("tags") or ()
         thumbnail_path = payload.get("thumbnail_path") or payload.get("thumbnail")
+        title = payload.get("title") or payload.get("selected_title") or ""
         return cls(
-            title=str(payload.get("title") or ""),
+            title=str(title),
             description=str(payload.get("description") or ""),
             tags=tuple(str(tag) for tag in tags),
             video=ArtifactReference(path=str(payload.get("video_path") or ""), kind="video"),
@@ -37,6 +38,7 @@ class UploadPackageContract:
         data.update(
             {
                 "title": self.title,
+                "selected_title": self.title,
                 "description": self.description,
                 "tags": list(self.tags),
                 "video_path": self.video.path,
@@ -53,4 +55,3 @@ class UploadPackageContract:
         if not self.video.path:
             result = result.with_issue(ValidationIssue("missing_video", "Upload video path is missing.", "video"))
         return result
-

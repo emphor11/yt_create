@@ -179,7 +179,7 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.assertEqual(self.service._groq_retry_wait_seconds(response), 10.96)
 
     @patch("youtube_ai_system.services.script_service.time.sleep", return_value=None)
-    @patch("youtube_ai_system.services.script_service.requests.post")
+    @patch("youtube_ai_system.infrastructure.llm.groq_client.requests.post")
     def test_groq_script_retries_once_after_rate_limit(self, post: Mock, sleep: Mock) -> None:
         limited_response = Mock()
         limited_response.status_code = 429

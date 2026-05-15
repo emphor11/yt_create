@@ -4,9 +4,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from flask import current_app
-from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from httplib2.error import ServerNotFoundError
+
+from ..infrastructure.youtube import YouTubeSearchClient
 
 
 class TopicService:
@@ -82,63 +83,19 @@ class TopicService:
         return samples
 
     def _live_lookup(self, topic: str, angle: str | None, api_key: str) -> list[dict[str, Any]]:
-        query = " ".join(part for part in [topic, angle] if part).strip() or topic.strip()
-        youtube = build("youtube", "v3", developerKey=api_key, cache_discovery=False)
-        search_response = (
-            youtube.search()
-            .list(
-                part="snippet",
-                q=query,
-                type="video",
-                order="relevance",
-                maxResults=current_app.config["TOPIC_RESULT_LIMIT"],
-                publishedAfter=(
-                    datetime.now(timezone.utc) - timedelta(days=current_app.config["TOPIC_LOOKBACK_DAYS"] + 21)
-                ).isoformat().replace("+00:00", "Z"),
-            )
-            .execute()
+        client = YouTubeSearchClient(
+            api_key,
+            result_limit=current_app.config["TOPIC_RESULT_LIMIT"],
+            lookback_days=current_app.config["TOPIC_LOOKBACK_DAYS"],
         )
-        video_ids = [item["id"]["videoId"] for item in search_response.get("items", []) if item.get("id", {}).get("videoId")]
-        if not video_ids:
-            return []
-
-        videos_response = (
-            youtube.videos()
-            .list(part="snippet,statistics", id=",".join(video_ids))
-            .execute()
-        )
-        channel_ids = {
-            item["snippet"]["channelId"] for item in videos_response.get("items", []) if item.get("snippet", {}).get("channelId")
-        }
-        channel_stats: dict[str, int] = {}
-        if channel_ids:
-            channels_response = (
-                youtube.channels()
-                .list(part="statistics", id=",".join(channel_ids))
-                .execute()
-            )
-            channel_stats = {
-                item["id"]: int(item.get("statistics", {}).get("subscriberCount", 0) or 0)
-                for item in channels_response.get("items", [])
-            }
-
         samples: list[dict[str, Any]] = []
-        for item in videos_response.get("items", []):
-            snippet = item.get("snippet", {})
-            stats = item.get("statistics", {})
-            channel_id = snippet.get("channelId", "")
-            views = int(stats.get("viewCount", 0) or 0)
-            subscribers = channel_stats.get(channel_id, 0)
-            candidate = {
-                "title": snippet.get("title", ""),
-                "channel": snippet.get("channelTitle", ""),
-                "views": views,
-                "channel_subscribers": subscribers,
-                "published_at": snippet.get("publishedAt"),
-                "strong_traction": self._is_strong_traction(views, subscribers),
-                "curiosity_pattern": self._has_curiosity_pattern(snippet.get("title", "")),
-                "source": "live",
-            }
+        for candidate in client.comparable_videos(topic, angle):
+            candidate = dict(candidate)
+            views = int(candidate.get("views") or 0)
+            subscribers = int(candidate.get("channel_subscribers") or 0)
+            candidate["strong_traction"] = self._is_strong_traction(views, subscribers)
+            candidate["curiosity_pattern"] = self._has_curiosity_pattern(str(candidate.get("title") or ""))
+            candidate["source"] = "live"
             candidate["score"] = self.score_candidate(candidate)
             samples.append(candidate)
         return sorted(samples, key=lambda item: item["score"], reverse=True)
