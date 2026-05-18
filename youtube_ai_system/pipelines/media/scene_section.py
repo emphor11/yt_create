@@ -50,6 +50,7 @@ class SceneRenderSectionBuilder:
             "finance_concept": intelligence.get("finance_concept") or {},
             "semantic_scene": intelligence.get("semantic_scene") or {},
             "visual_action_graph": intelligence.get("visual_action_graph") or {},
+            "visual_event_sequence": intelligence.get("visual_event_sequence") or {},
             "narrative_arc": intelligence.get("narrative_arc") or {},
             "visual_story": intelligence.get("visual_story") or {},
             "story_state": intelligence.get("story_state") or {},

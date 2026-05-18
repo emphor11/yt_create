@@ -12,12 +12,26 @@ from .story_intelligence_engine import StoryIntelligenceEngine
 from .visual_action_graph import VisualActionGraphBuilder
 from .visual_beat_expander import VisualBeatExpander
 from .visual_director import VisualDirector, visual_director_input_from_section
-from .visual_scene_normalizer import VisualSceneNormalizer
+from .visual_event_sequence import VisualEventSequenceBuilder
+from .visual_scene_normalizer import KNOWN_MECHANISMS, MECHANISM_ALIASES, VisualSceneNormalizer
 from .visual_story_engine import VisualStoryEngine
 from .scene_debug import SceneDebugTrace, confidence_for_finance_concept, stable_hash
 
 
 class StoryPipeline(StoryPlanningSupportMixin):
+    SCRIPT_MECHANISM_OVERRIDES = {
+        "affordability_illusion",
+        "payment_pain_reduction",
+        "price_anchoring",
+        "anchoring",
+        "commitment_stacking",
+        "cash_flow_squeeze",
+        "delayed_consequence",
+        "leverage",
+        "emi_pressure",
+        "lifestyle_inflation",
+    }
+
     def __init__(
         self,
         story_intelligence: StoryIntelligenceEngine | None = None,
@@ -29,6 +43,7 @@ class StoryPipeline(StoryPlanningSupportMixin):
         visual_story_engine: VisualStoryEngine | None = None,
         semantic_contract_extractor: SemanticSceneContractExtractor | None = None,
         visual_action_graph_builder: VisualActionGraphBuilder | None = None,
+        visual_event_sequence_builder: VisualEventSequenceBuilder | None = None,
         logger: RunLogger | None = None,
     ) -> None:
         self.story_intelligence = story_intelligence or StoryIntelligenceEngine()
@@ -40,6 +55,7 @@ class StoryPipeline(StoryPlanningSupportMixin):
         self.visual_story_engine = visual_story_engine or VisualStoryEngine()
         self.semantic_contract_extractor = semantic_contract_extractor or SemanticSceneContractExtractor()
         self.visual_action_graph_builder = visual_action_graph_builder or VisualActionGraphBuilder()
+        self.visual_event_sequence_builder = visual_event_sequence_builder or VisualEventSequenceBuilder()
         self.logger = logger or RunLogger()
         self.group_payload_helper = StoryGroupPayloadHelper()
 
@@ -94,14 +110,15 @@ class StoryPipeline(StoryPlanningSupportMixin):
             if visual_scene_source:
                 combined_text = self._normalize_text(str(scene.get("narration") or ""))
                 if combined_text:
-                    grouped_scenes.append(
-                        self.group_payload_helper.group_record(
-                            combined_text,
-                            idea_group_id=f"idea_{len(grouped_scenes):02d}",
-                            idea_type=str(visual_scene_source.get("mechanism") or scene.get("idea_type") or "emphasis"),
-                            visual_scene=visual_scene_source,
-                        )
+                    record = self.group_payload_helper.group_record(
+                        combined_text,
+                        idea_group_id=f"idea_{len(grouped_scenes):02d}",
+                        idea_type=str(visual_scene_source.get("mechanism") or scene.get("idea_type") or "emphasis"),
+                        visual_scene=visual_scene_source,
                     )
+                    record["preserve_order"] = True
+                    record["source_scene_index"] = len(grouped_scenes)
+                    grouped_scenes.append(record)
                 continue
             raw_sentences = self._split_story_sentences(str(scene.get("narration") or ""))
             body_sentences = [sentence for sentence in raw_sentences if self._keep_story_sentence(sentence)]
@@ -185,6 +202,8 @@ class StoryPipeline(StoryPlanningSupportMixin):
                     "has_comparison": bool(scene.get("has_comparison")),
                     "has_causation": bool(scene.get("has_causation")),
                     "visual_scene": scene.get("visual_scene") if isinstance(scene.get("visual_scene"), dict) else None,
+                    "preserve_order": bool(scene.get("preserve_order")),
+                    "source_scene_index": scene.get("source_scene_index"),
                 }
             )
 
@@ -205,8 +224,10 @@ class StoryPipeline(StoryPlanningSupportMixin):
                 },
             )
 
+        preserve_script_order = any(section.get("preserve_order") and isinstance(section.get("visual_scene"), dict) for section in sections)
         sections = self.story_intelligence._ensure_section_progression(sections)
-        sections = self.story_intelligence._stable_sort_sections_by_stage(sections)
+        if not preserve_script_order:
+            sections = self.story_intelligence._stable_sort_sections_by_stage(sections)
         hook = self.story_intelligence._clean_hook_text(hook_text)
         hook = self.story_intelligence._ensure_distinct_hook(hook, sections)
         self.story_intelligence._validate_minimum_sections(sections)
@@ -234,6 +255,7 @@ class StoryPipeline(StoryPlanningSupportMixin):
         for section_index, section in enumerate(sections):
             concepts: list[dict[str, str]] = []
             seen: set[tuple[str, str]] = set()
+            trusted_mechanism = self._trusted_script_mechanism(section)
             finance_concept = self.finance_concept_extractor.extract(
                 {
                     "combined_text": str(section.get("text") or ""),
@@ -241,9 +263,19 @@ class StoryPipeline(StoryPlanningSupportMixin):
                     "idea_type": str(section.get("idea_type") or "emphasis"),
                 }
             )
+            concept_name = finance_concept.concept_name
+            concept_type = finance_concept.concept_type
+            concept_confidence = finance_concept.confidence
+            concept_policy = finance_concept.concept_policy or {}
+            if trusted_mechanism:
+                concept_type = trusted_mechanism
+                concept_name = self._display_mechanism_name(trusted_mechanism)
+                concept_confidence = max(float(concept_confidence or 0.0), 0.92)
+                concept_policy = apply_concept_policy(trusted_mechanism, str(section.get("text") or ""), {})
+                section["concept_type"] = trusted_mechanism
             section["finance_concept"] = {
-                "concept_name": finance_concept.concept_name,
-                "concept_type": finance_concept.concept_type,
+                "concept_name": concept_name,
+                "concept_type": concept_type,
                 "primary_entity": finance_concept.primary_entity,
                 "action": finance_concept.action,
                 "start_value": finance_concept.start_value,
@@ -252,18 +284,20 @@ class StoryPipeline(StoryPlanningSupportMixin):
                 "time_period": finance_concept.time_period,
                 "agent": finance_concept.agent,
                 "victim": finance_concept.victim,
-                "confidence": finance_concept.confidence,
+                "confidence": concept_confidence,
                 "numeric_facts": finance_concept.numeric_facts or [],
-                "concept_policy": finance_concept.concept_policy or {},
+                "concept_policy": concept_policy,
             }
+            if trusted_mechanism:
+                section["finance_concept"]["source"] = "script_brief_scene_mechanism"
             section["semantic_scene"] = self.semantic_contract_extractor.extract_dict(
                 section,
                 section["finance_concept"],
                 scene_id=str(section.get("idea_group_id") or f"section_{section_index}"),
             )
             section["visual_action_graph"] = self.visual_action_graph_builder.build_dict(section["semantic_scene"])
-            concept = finance_concept.concept_name if finance_concept.concept_name != "Unknown" else None
-            concept_type = finance_concept.concept_type
+            section["visual_event_sequence"] = self.visual_event_sequence_builder.build_dict(section)
+            concept = concept_name if concept_name != "Unknown" else None
             if concept:
                 key = (str(concept), str(concept_type))
                 if key not in seen:
@@ -279,19 +313,21 @@ class StoryPipeline(StoryPlanningSupportMixin):
             section["concepts"] = concepts
             if debug_trace:
                 score, reasons = confidence_for_finance_concept(section["finance_concept"])
-                concept_id = f"concept:{section.get('idea_group_id') or len(debug_trace.data.get('confidence') or [])}:{finance_concept.concept_type}"
+                concept_id = f"concept:{section.get('idea_group_id') or len(debug_trace.data.get('confidence') or [])}:{concept_type}"
                 debug_trace.snapshot("story_pipeline_post_classification", section, owner="story_pipeline")
                 debug_trace.snapshot("semantic_scene_contract", section["semantic_scene"], owner="semantic_scene_contract")
                 debug_trace.snapshot("visual_action_graph", section["visual_action_graph"], owner="visual_action_graph")
+                debug_trace.snapshot("visual_event_sequence", section["visual_event_sequence"], owner="visual_event_sequence")
                 debug_trace.ownership("semantic_scene", "semantic_scene_contract", section["semantic_scene"], "central semantic contract extracted from narration and finance concept")
                 debug_trace.ownership("visual_action_graph", "visual_action_graph", section["visual_action_graph"], "action graph derived from SemanticSceneContract")
-                debug_trace.ownership("concept_type", "story_pipeline", finance_concept.concept_type, "finance concept extraction")
-                debug_trace.confidence("story_pipeline", "concept_type", finance_concept.concept_type, score, reasons)
+                debug_trace.ownership("visual_event_sequence", "visual_event_sequence", section["visual_event_sequence"], "renderer-facing perceptual event sequence derived from VisualActionGraph")
+                debug_trace.ownership("concept_type", "story_pipeline", concept_type, "script mechanism override" if trusted_mechanism else "finance concept extraction")
+                debug_trace.confidence("story_pipeline", "concept_type", concept_type, score, reasons)
                 debug_trace.lineage_node(
                     concept_id,
                     "concept",
                     "story_pipeline",
-                    finance_concept.concept_name,
+                    concept_name,
                     section["finance_concept"],
                     owner="story_pipeline",
                     confidence=score,
@@ -305,6 +341,37 @@ class StoryPipeline(StoryPlanningSupportMixin):
                 debug_trace.determinism("story_pipeline_classification", section.get("text"), section["finance_concept"])
         story_plan["agenda"] = self.agenda_from_top_concepts(sections)
         return story_plan
+
+    def _trusted_script_mechanism(self, section: dict[str, Any]) -> str:
+        """Trust mechanisms carried by generated ScriptBrief scenes, not stale DB visual scenes."""
+        mechanism_source = str(section.get("mechanism_source") or "").strip()
+        if mechanism_source and mechanism_source not in {"explicit_section", "explicit_visual_scene"}:
+            return ""
+        for key in ("mechanism", "idea_type"):
+            mechanism = self._canonical_mechanism(section.get(key))
+            if mechanism in self.SCRIPT_MECHANISM_OVERRIDES:
+                return mechanism
+        return ""
+
+    def _canonical_mechanism(self, value: Any) -> str:
+        mechanism = str(value or "").strip().lower()
+        alias_map = {key: target for key, target in MECHANISM_ALIASES.items() if key != "tax_drain"}
+        mechanism = alias_map.get(mechanism, mechanism)
+        return mechanism if mechanism in KNOWN_MECHANISMS and mechanism != "definition" else ""
+
+    def _display_mechanism_name(self, mechanism: str) -> str:
+        return {
+            "affordability_illusion": "Affordability Illusion",
+            "payment_pain_reduction": "Payment Pain Reduction",
+            "price_anchoring": "Price Anchoring",
+            "anchoring": "Anchoring",
+            "commitment_stacking": "Commitment Stacking",
+            "cash_flow_squeeze": "Cash Flow Squeeze",
+            "delayed_consequence": "Delayed Consequence",
+            "leverage": "Leverage",
+            "emi_pressure": "EMI Pressure",
+            "lifestyle_inflation": "Lifestyle Inflation",
+        }.get(mechanism, mechanism.replace("_", " ").title())
 
     def attach_section_narrative_arc(self, story_plan: dict[str, Any], debug_trace: SceneDebugTrace | None = None) -> dict[str, Any]:
         sections = story_plan.get("sections") or []
@@ -452,4 +519,3 @@ class StoryPipeline(StoryPlanningSupportMixin):
         if index >= max(1, int(total_sections * 0.7)):
             return "late"
         return "middle"
-

@@ -14,6 +14,7 @@ from ..pipelines.visual import (
     VisualDirectorPlansMixin,
 )
 from .financial_governance import first_fact, numeric_role_map
+from .visual_scene_normalizer import KNOWN_MECHANISMS, MECHANISM_ALIASES
 
 
 class VisualDirector(VisualDirectorPlansMixin):
@@ -142,6 +143,8 @@ class VisualDirector(VisualDirectorPlansMixin):
             return self._with_cinematic_intent(self._emergency_fund_plan(director_input, concept_type), director_input)
         if concept_type in {"budgeting", "savings_rate", "rent_burden", "tax_drain"}:
             return self._with_cinematic_intent(self._money_mechanism_plan(director_input, concept_type), director_input)
+        if concept_type in {"cash_flow_squeeze", "commitment_stacking"}:
+            return self._with_cinematic_intent(self._emi_stack_plan(director_input, concept_type), director_input)
         if concept_type == "debt_trap":
             return self._with_cinematic_intent(self._debt_trap_plan(director_input, concept_type), director_input)
         if concept_type in {"emi_pressure", "emi_stack"}:
@@ -162,7 +165,17 @@ class VisualDirector(VisualDirectorPlansMixin):
             return self._with_cinematic_intent(self._diversification_plan(director_input, concept_type), director_input)
         if concept_type == "risk_return":
             return self._with_cinematic_intent(self._risk_return_plan(director_input, concept_type), director_input)
-        if concept_type in {"opportunity_cost", "comparison_timeline", "tax_saving"}:
+        if concept_type in {
+            "opportunity_cost",
+            "comparison_timeline",
+            "tax_saving",
+            "affordability_illusion",
+            "payment_pain_reduction",
+            "anchoring",
+            "price_anchoring",
+            "delayed_consequence",
+            "leverage",
+        }:
             return self._with_cinematic_intent(self._comparison_mechanism_plan(director_input, concept_type), director_input)
         return self._with_cinematic_intent(self._generic_plan(director_input, concept_type), director_input)
 
@@ -385,7 +398,7 @@ def visual_director_input_from_section(
     finance_concept = dict(section.get("finance_concept") or {})
     concept = (section.get("concepts") or [{}])[0] if section.get("concepts") else {}
     visual_scene = dict(section.get("visual_scene") or {})
-    mechanism = str(section.get("mechanism") or visual_scene.get("mechanism") or "").strip()
+    mechanism = _trusted_section_mechanism(section)
     finance_concept_key = _canonical_concept_key_from_name(str(finance_concept.get("concept_name") or ""))
     finance_confidence = float(finance_concept.get("confidence") or 0.0)
     if finance_concept_key and finance_confidence >= 0.6:
@@ -418,6 +431,25 @@ def visual_director_input_from_section(
         story_state=dict(section.get("story_state") or {}),
         semantic_scene=dict(section.get("semantic_scene") or {}),
     )
+
+
+def _trusted_section_mechanism(section: dict[str, Any]) -> str:
+    """Use generated ScriptBrief mechanisms, but do not let stale stored visual_scene_json steer render-time scenes."""
+    mechanism_source = str(section.get("mechanism_source") or "").strip()
+    if mechanism_source and mechanism_source not in {"explicit_section", "explicit_visual_scene"}:
+        return ""
+    for key in ("mechanism", "idea_type"):
+        mechanism = _canonical_director_mechanism(section.get(key))
+        if mechanism:
+            return mechanism
+    return ""
+
+
+def _canonical_director_mechanism(value: Any) -> str:
+    mechanism = str(value or "").strip().lower()
+    alias_map = {key: target for key, target in MECHANISM_ALIASES.items() if key != "tax_drain"}
+    mechanism = alias_map.get(mechanism, mechanism)
+    return mechanism if mechanism in KNOWN_MECHANISMS and mechanism != "definition" else ""
 
 
 def directed_plan_to_dict(plan: DirectedPlan) -> dict[str, Any]:

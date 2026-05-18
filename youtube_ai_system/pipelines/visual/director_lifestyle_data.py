@@ -22,6 +22,41 @@ class VisualDirectorLifestyleDataMixin:
             if str(item.get("label") or "").lower() in {"salary", "income"}
         ]
         all_amounts = [float(item["amount"]) for item in amounts]
+        lowered = text.lower()
+        monthly_payment_context = any(token in lowered for token in ("luxury car", "car emi", "monthly payment", "monthly payments", "5-year loan", "5 year loan"))
+        if monthly_payment_context and not income_mentions:
+            monthly_amount = next(
+                (
+                    float(item["amount"])
+                    for item in amounts
+                    if any(token in str(item.get("label") or "").lower() for token in ("emi", "payment", "monthly"))
+                ),
+                None,
+            )
+            if monthly_amount is None:
+                small_amounts = [amount for amount in all_amounts if amount < 1000000]
+                monthly_amount = small_amounts[0] if small_amounts else 93000.0
+            attached_cost = max(monthly_amount * 0.38, 25000.0)
+            expanded_cost = monthly_amount + attached_cost
+            return {
+                "title": "The EMI upgrades the lifestyle.",
+                "start_income": {"value": self._format_rupee(monthly_amount), "amount": round(monthly_amount, 2), "source_number_ids": [], "derived": False},
+                "end_income": {"value": self._format_rupee(expanded_cost), "amount": round(expanded_cost, 2), "source_number_ids": [], "derived": True},
+                "old_spending": {"value": self._format_rupee(monthly_amount), "amount": round(monthly_amount, 2), "derived": True, "derived_from": [], "derivation_method": "monthly payment baseline"},
+                "new_spending": {"value": self._format_rupee(expanded_cost), "amount": round(expanded_cost, 2), "derived": True, "derived_from": [], "derivation_method": "monthly payment plus attached lifestyle costs"},
+                "old_savings": {"value": self._format_rupee(0), "amount": 0.0, "derived": True, "derived_from": [], "derivation_method": "not an income scene"},
+                "new_savings": {"value": self._format_rupee(0), "amount": 0.0, "derived": True, "derived_from": [], "derivation_method": "not an income scene"},
+                "raise": {"value": self._format_rupee(attached_cost), "amount": round(attached_cost, 2), "source_number_ids": [], "derived": True, "derived_from": [], "derivation_method": "estimated insurance, fuel, service, and lifestyle add-ons"},
+                "accent": "warning",
+                "numeric_provenance": facts,
+                "truth_mode": "hard",
+                "beat_labels": {
+                    "income_base": "Car EMI starts",
+                    "raise_arrives": "Status costs attach",
+                    "expenses_follow": "Lifestyle catches up",
+                    "gap_revealed": "Monthly lifestyle cost expands",
+                },
+            }
         start_fact = first_fact(facts, "start_income", "income")
         end_fact = first_fact(facts, "end_income")
         raise_fact = first_fact(facts, "raise_delta")
@@ -38,7 +73,6 @@ class VisualDirectorLifestyleDataMixin:
             candidates = [amount for amount in [*income_mentions, *all_amounts] if amount > start_income * 1.08]
             end_income = candidates[0] if candidates else start_income * 1.45
 
-        lowered = text.lower()
         savings_flat = any(token in lowered for token in ("savings stay flat", "saving stays flat", "savings are zero", "savings stay stuck", "zero savings"))
         old_savings = max(start_income * (0.0 if "zero" in lowered and "savings" in lowered else 0.18), 0.0)
         if "savings stay flat" in lowered or "savings stay stuck" in lowered:

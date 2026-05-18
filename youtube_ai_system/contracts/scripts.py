@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Any
 
 from .adapters import narration_from_payload
@@ -58,6 +59,63 @@ SCRIPT_BRIEF_EMOTIONAL_DIRECTIONS = {
     "releasing",
     "warning",
     "clarity",
+}
+
+SCRIPT_BRIEF_VAGUE_RECURRING_EXAMPLES = {
+    "money",
+    "money habits",
+    "personal finance",
+    "finance decision",
+    "financial decision",
+    "the topic",
+    "the angle",
+    "viewer journey",
+    "wealth building",
+}
+
+SCRIPT_BRIEF_CONCRETE_EXAMPLE_SIGNALS = {
+    "purchase",
+    "payment",
+    "emi",
+    "loan",
+    "card",
+    "phone",
+    "car",
+    "house",
+    "rent",
+    "subscription",
+    "salary",
+    "sip",
+    "fd",
+    "fund",
+    "portfolio",
+    "stock",
+    "business",
+    "cash",
+    "price",
+    "bill",
+}
+
+SCRIPT_BRIEF_BODY_ADVICE_FUNCTION_MARKERS = {
+    "advice",
+    "budgeting",
+    "call to action",
+    "conclusion",
+    "guidance",
+    "reassess",
+    "summarize",
+    "summary",
+    "takeaway",
+    "takeaways",
+}
+
+SCRIPT_BRIEF_BUDGETING_DRIFT_MARKERS = {
+    "50 30 20",
+    "budgeting",
+    "set a budget",
+    "spend less",
+    "track expenses",
+    "tracking expenses",
 }
 
 
@@ -158,6 +216,14 @@ class ScriptBriefContract:
             result = result.with_issue(
                 ValidationIssue("invalid_script_brief_format", "Script brief selected_format is not supported.", "selected_format")
             )
+        if self.recurring_example and not self._recurring_example_is_concrete():
+            result = result.with_issue(
+                ValidationIssue(
+                    "vague_recurring_example",
+                    "Script brief recurring_example must name a concrete reusable object, decision, or money situation.",
+                    "recurring_example",
+                )
+            )
         if not self.allowed_mechanisms:
             result = result.with_issue(
                 ValidationIssue("missing_script_brief_mechanisms", "Script brief needs at least one allowed mechanism.", "allowed_mechanisms")
@@ -175,12 +241,49 @@ class ScriptBriefContract:
             result = result.with_issue(
                 ValidationIssue("missing_scene_function_map", "Script brief scene_function_map is required.", "scene_function_map")
             )
+        expected_indices = list(range(1, len(self.scene_function_map) + 1))
+        actual_indices = [item.scene_index for item in self.scene_function_map]
+        if self.scene_function_map and actual_indices != expected_indices:
+            result = result.with_issue(
+                ValidationIssue(
+                    "non_consecutive_scene_function_map",
+                    "Script brief scene_function_map indices must be consecutive starting at 1.",
+                    "scene_function_map",
+                )
+            )
+        seen_functions: set[str] = set()
         for index, item in enumerate(self.scene_function_map):
             field_prefix = f"scene_function_map[{index}]"
             if item.scene_index < 1:
                 result = result.with_issue(ValidationIssue("invalid_scene_index", "Scene function needs a 1-based scene_index.", field_prefix))
             if not item.function.strip():
                 result = result.with_issue(ValidationIssue("missing_scene_function", "Scene function is required.", f"{field_prefix}.function"))
+            function_signature = self._normalized_text(item.function)
+            if function_signature and function_signature in seen_functions:
+                result = result.with_issue(
+                    ValidationIssue(
+                        "duplicate_scene_function",
+                        "Scene function entries must do distinct jobs.",
+                        f"{field_prefix}.function",
+                    )
+                )
+            seen_functions.add(function_signature)
+            if self.selected_format != "action_plan" and self._is_generic_advice_function(function_signature):
+                result = result.with_issue(
+                    ValidationIssue(
+                        "generic_body_advice_scene_function",
+                        "Non-action-plan ScriptBrief body scenes must not be generic summary, takeaway, or advice scenes.",
+                        f"{field_prefix}.function",
+                    )
+                )
+            if self._forbids_general_budgeting() and self._contains_budgeting_marker(function_signature):
+                result = result.with_issue(
+                    ValidationIssue(
+                        "forbidden_budgeting_scene_function",
+                        "Scene function drifts into forbidden general budgeting advice.",
+                        f"{field_prefix}.function",
+                    )
+                )
             if item.mechanism not in SCRIPT_BRIEF_MECHANISMS:
                 result = result.with_issue(
                     ValidationIssue("invalid_scene_mechanism", f"Unsupported scene mechanism: {item.mechanism}", f"{field_prefix}.mechanism")
@@ -202,6 +305,42 @@ class ScriptBriefContract:
                     )
                 )
         return result
+
+    def _is_generic_advice_function(self, normalized_function: str) -> bool:
+        tokens = set(normalized_function.split())
+        if bool(tokens.intersection(SCRIPT_BRIEF_BODY_ADVICE_FUNCTION_MARKERS)):
+            return True
+        return any(
+            phrase in normalized_function
+            for phrase in (
+                "avoid pitfalls",
+                "make informed decision",
+                "make informed financial decision",
+                "provide strategies",
+                "discuss strategies",
+            )
+        )
+
+    def _forbids_general_budgeting(self) -> bool:
+        normalized = " ".join(self._normalized_text(item) for item in self.forbidden_drift)
+        return "general budgeting advice" in normalized or self._contains_budgeting_marker(normalized)
+
+    def _contains_budgeting_marker(self, normalized_text: str) -> bool:
+        return any(marker in normalized_text for marker in SCRIPT_BRIEF_BUDGETING_DRIFT_MARKERS)
+
+    def _recurring_example_is_concrete(self) -> bool:
+        normalized = self._normalized_text(self.recurring_example)
+        if normalized in SCRIPT_BRIEF_VAGUE_RECURRING_EXAMPLES:
+            return False
+        tokens = re.findall(r"[a-zA-Z0-9₹]+", normalized)
+        if len(tokens) < 5:
+            return False
+        if re.search(r"(?:₹\s*|rs\.?\s*)\d|\d", self.recurring_example, re.IGNORECASE):
+            return True
+        return any(signal in tokens for signal in SCRIPT_BRIEF_CONCRETE_EXAMPLE_SIGNALS)
+
+    def _normalized_text(self, value: str) -> str:
+        return " ".join(re.findall(r"[a-zA-Z0-9₹]+", str(value or "").lower()))
 
 
 @dataclass(frozen=True)

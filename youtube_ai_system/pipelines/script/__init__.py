@@ -23,6 +23,7 @@ from .hook_validation import HookValidator
 from .prompt_builder import ScriptPromptBuilder
 from .scene_rows import ScriptSceneRowMapper
 from .approval_policy import ScriptApprovalPolicy
+from .gemini_generation import GeminiScriptGenerator
 from .groq_generation import GroqScriptGenerator
 
 __all__ = [
@@ -32,6 +33,7 @@ __all__ = [
     "DEFAULT_SCRIPT_TONE",
     "DEFAULT_TARGET_DURATION_MINUTES",
     "DUPLICATE_SCENE_SIMILARITY",
+    "GeminiScriptGenerator",
     "HOOK_MAX_WORDS",
     "HOOK_MIN_WORDS",
     "HookValidator",

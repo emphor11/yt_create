@@ -147,6 +147,45 @@ class VisualDirectorComponentDataMixin:
 
     def _comparison_data(self, director_input: VisualDirectorInput, concept_type: str) -> dict[str, Any]:
         amount = self._semantic_first_money_amount(director_input) or self._parse_rupee(director_input.start_value) or self._parse_rupee(director_input.narration_text)
+        mentions = self._money_mentions(director_input.narration_text)
+        values = [str(item.get("value") or "") for item in mentions if item.get("value")]
+        high_value = values[0] if values else (self._format_rupee(amount) if amount is not None else "full price")
+        low_value = values[1] if len(values) > 1 else (self._format_rupee(amount) if amount is not None else "monthly number")
+        if concept_type == "affordability_illusion":
+            return {
+                "left": {"label": "Real price", "value": high_value},
+                "right": {"label": "Monthly price", "value": low_value},
+                "punch": "Small number hides the full cost",
+                "accent": "orange",
+            }
+        if concept_type == "payment_pain_reduction":
+            return {
+                "left": {"label": "Cash pain", "value": high_value},
+                "right": {"label": "Painless EMI", "value": low_value},
+                "punch": "Pain moves to later",
+                "accent": "orange",
+            }
+        if concept_type in {"anchoring", "price_anchoring"}:
+            return {
+                "left": {"label": "Sticker anchor", "value": high_value},
+                "right": {"label": "Offer feels smaller", "value": low_value},
+                "punch": "The first number bends value",
+                "accent": "orange",
+            }
+        if concept_type == "delayed_consequence":
+            return {
+                "left": {"label": "Decision today", "value": low_value},
+                "right": {"label": "Bill later", "value": high_value},
+                "punch": "The consequence arrives late",
+                "accent": "orange",
+            }
+        if concept_type == "leverage":
+            return {
+                "left": {"label": "Borrowed money", "value": high_value},
+                "right": {"label": "Future obligation", "value": low_value},
+                "punch": "Control grows before risk shows",
+                "accent": "orange",
+            }
         if concept_type == "risk_return":
             return {"left": {"label": "Low Risk / Low Return", "value": "FD"}, "right": {"label": "Higher Risk / Higher Growth", "value": "Equity"}, "punch": "Risk buys upside", "accent": "teal"}
         if concept_type == "diversification":

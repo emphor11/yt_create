@@ -7,6 +7,8 @@ enough.
 
 from __future__ import annotations
 
+from urllib import error
+
 from youtube_ai_system.application.result import UseCaseResult
 from youtube_ai_system.infrastructure.persistence import ProjectRepository, utcnow
 from youtube_ai_system.services.script_service import ScriptService
@@ -42,19 +44,46 @@ class GenerateScriptUseCase:
         if project["state"] == "drafted":
             self.state_machine.transition(project_id, "script_review", "Script review started.")
 
-        script_version_id = self.script_service.generate_script(
-            project_id,
-            project["topic"],
-            project["angle"],
-            project.get("target_duration_minutes"),
-            project.get("channel_niche"),
-            project.get("script_tone"),
-        )
+        try:
+            script_version_id = self.script_service.generate_script(
+                project_id,
+                project["topic"],
+                project["angle"],
+                project.get("target_duration_minutes"),
+                project.get("channel_niche"),
+                project.get("script_tone"),
+            )
+        except ValueError as exc:
+            return UseCaseResult.fail(
+                self._user_facing_generation_error(str(exc)),
+                redirect_endpoint="projects.project_detail",
+            )
+        except error.URLError as exc:
+            return UseCaseResult.fail(
+                f"AI script generation could not reach the provider: {exc.reason}",
+                redirect_endpoint="projects.project_detail",
+            )
         return UseCaseResult.ok(
             f"Script draft generated for topic '{project['topic']}' and angle '{project['angle']}'.",
             data={"script_version_id": script_version_id},
             redirect_endpoint="projects.edit_script",
         )
+
+    def _user_facing_generation_error(self, message: str) -> str:
+        normalized = message.lower()
+        if (
+            "api error 429" in normalized
+            or "rate_limit_exceeded" in normalized
+            or "rate limit" in normalized
+            or "too many requests" in normalized
+        ):
+            return (
+                "AI script generation is temporarily rate-limited by the selected provider. "
+                "If Gemini fallback is configured, restart the dev server so the new provider settings load."
+            )
+        if "ScriptBrief topic alignment failed" in message:
+            return f"Script strategy brief failed topic alignment: {message.split(':', 1)[-1].strip()}"
+        return f"AI script generation failed: {message}"
 
 
 class ApproveScriptUseCase:

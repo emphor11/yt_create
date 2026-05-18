@@ -52,6 +52,7 @@ class VisualDirectorMoneyPlansMixin:
 
     def _lifestyle_creep_plan(self, director_input: VisualDirectorInput, concept_type: str) -> DirectedPlan:
         data = self._lifestyle_creep_data(director_input)
+        beat_labels = data.get("beat_labels") if isinstance(data.get("beat_labels"), dict) else {}
         direction = SceneDirection("hopeful", "anxiety", director_input.section_position, "warning")
         return DirectedPlan(
             concept_type=concept_type,
@@ -64,7 +65,7 @@ class VisualDirectorMoneyPlansMixin:
                 [
                     DirectedBeat(
                         "LifestyleCreepVisualizer",
-                        f"{data['start_income']['value']} income",
+                        str(beat_labels.get("income_base") or f"{data['start_income']['value']} income"),
                         "normal",
                         "before the raise",
                         data={**data, "active_phase": "income_base"},
@@ -72,7 +73,7 @@ class VisualDirectorMoneyPlansMixin:
                     ),
                     DirectedBeat(
                         "LifestyleCreepVisualizer",
-                        f"{data['end_income']['value']} income",
+                        str(beat_labels.get("raise_arrives") or f"{data['end_income']['value']} income"),
                         "subtle",
                         "raise arrives",
                         data={**data, "active_phase": "raise_arrives"},
@@ -80,7 +81,7 @@ class VisualDirectorMoneyPlansMixin:
                     ),
                     DirectedBeat(
                         "LifestyleCreepVisualizer",
-                        "Lifestyle catches up",
+                        str(beat_labels.get("expenses_follow") or "Lifestyle catches up"),
                         "subtle",
                         "spending rises too",
                         data={**data, "active_phase": "expenses_follow"},
@@ -88,7 +89,7 @@ class VisualDirectorMoneyPlansMixin:
                     ),
                     DirectedBeat(
                         "LifestyleCreepVisualizer",
-                        "Savings gap stays flat",
+                        str(beat_labels.get("gap_revealed") or "Savings gap stays flat"),
                         "hero",
                         "raise absorbed",
                         data={**data, "active_phase": "gap_revealed"},

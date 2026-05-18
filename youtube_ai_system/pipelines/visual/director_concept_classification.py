@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from ...services.financial_governance import first_fact, numeric_role_map
+from ...services.visual_scene_normalizer import KNOWN_MECHANISMS, MECHANISM_ALIASES
 from .director_types import VisualDirectorInput
 
 
@@ -17,9 +18,12 @@ class VisualDirectorConceptClassificationMixin:
             # tax_drain is NOT aliased to tax_saving — they are opposite concepts:
             # tax_drain = money leaking to tax (danger, MoneyFlow)
             # tax_saving = reducing tax via planning (positive, SplitComparison)
+            **{key: value for key, value in MECHANISM_ALIASES.items() if key != "tax_drain"},
         }
         if explicit in aliases:
             return aliases[explicit]
+        if explicit in KNOWN_MECHANISMS and explicit != "definition":
+            return explicit
         semantic_key = self._semantic_primary_concept_key(director_input)
         if semantic_key in aliases:
             return aliases[semantic_key]
@@ -47,6 +51,14 @@ class VisualDirectorConceptClassificationMixin:
             "savings_rate",
             "loan_cost",
             "net_worth_growth",
+            "affordability_illusion",
+            "payment_pain_reduction",
+            "price_anchoring",
+            "anchoring",
+            "commitment_stacking",
+            "cash_flow_squeeze",
+            "delayed_consequence",
+            "leverage",
         }:
             return explicit
         narration_text = str(director_input.narration_text or "").lower()
@@ -147,6 +159,14 @@ class VisualDirectorConceptClassificationMixin:
             "tax_saving": "Tax Saving",
             "tax_drain": "Tax Drain",
             "speculation_risk": "Investing vs Speculation",
+            "affordability_illusion": "Affordability Illusion",
+            "payment_pain_reduction": "Payment Pain Reduction",
+            "price_anchoring": "Price Anchoring",
+            "anchoring": "Anchoring",
+            "commitment_stacking": "Commitment Stacking",
+            "cash_flow_squeeze": "Cash Flow Squeeze",
+            "delayed_consequence": "Delayed Consequence",
+            "leverage": "Leverage",
         }.get(concept_type, concept_type.replace("_", " ").title())
 
     def _money_flow_title(self, concept_type: str) -> str:

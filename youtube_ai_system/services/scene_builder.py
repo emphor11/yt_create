@@ -108,6 +108,7 @@ class SceneBuilder(SceneBuilderContractMixin, SceneBuilderTimingMixin, SceneBuil
                     "visual_story": section.get("visual_story") or {},
                     "story_state": section.get("story_state") or {},
                     "cinematic_events": section.get("cinematic_events") or [],
+                    "visual_event_sequence": section.get("visual_event_sequence") or {},
                     "visual_state_sequence": visual_state_sequence or {},
                     "shot_sequence": shot_sequence or {},
                     "theme": section.get("theme") or {},

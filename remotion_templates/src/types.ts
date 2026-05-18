@@ -57,6 +57,34 @@ export type CinematicEvent = {
 	decay_after?: number;
 };
 
+export type VisualEventSequenceEvent = {
+	id?: string;
+	sequence_index?: number;
+	active_entity?: string;
+	primitive_type?: string;
+	emotional_direction?: string;
+	narration_anchor?: string;
+	suppression_target?: string;
+	visual_purpose?: string;
+	source_action_id?: string;
+	source_motion?: string;
+	semantic_role?: string;
+	value?: Record<string, unknown>;
+	timing?: {
+		start_progress?: number;
+		end_progress?: number;
+	};
+};
+
+export type VisualEventSequence = {
+	source?: string;
+	scene_id?: string;
+	primary_concept?: Record<string, unknown>;
+	events?: VisualEventSequenceEvent[];
+	warnings?: Array<Record<string, unknown>>;
+	confidence?: number;
+};
+
 export type Scene = {
 	id?: string;
 	scene_id?: string;
@@ -69,6 +97,7 @@ export type Scene = {
 	visual_story?: Record<string, unknown>;
 	story_state?: Record<string, unknown>;
 	cinematic_events?: CinematicEvent[];
+	visual_event_sequence?: VisualEventSequence;
 	pattern: string;
 	data?: Record<string, unknown>;
 	direction?: Record<string, unknown> | null;

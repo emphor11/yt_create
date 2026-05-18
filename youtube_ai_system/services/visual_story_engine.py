@@ -62,7 +62,7 @@ class VisualStoryEngine:
                 "emotion": {"from": emotion_from, "to": emotion_to},
                 "risk": self._risk_change(concept_type),
             },
-            "visual_question": self._visual_question(concept_type, active_objects),
+            "visual_question": self._visual_question(concept_type, active_objects, str(section.get("text") or ""), directed_data),
             "visual_answer": self._visual_answer(concept_type, active_objects, money_from, money_to, directed_data),
         }
         if enriched_state.get("callback_to") not in active_objects:
@@ -134,7 +134,7 @@ class VisualStoryEngine:
             },
             "callback_from": callback_from,
             "callback_to": callback_to,
-            "visual_question": self._visual_question(concept_type, active_objects),
+            "visual_question": self._visual_question(concept_type, active_objects, text),
             "visual_answer": self._visual_answer(concept_type, active_objects, money_from, money_to),
         }
 
@@ -247,7 +247,17 @@ class VisualStoryEngine:
             return {"from": "reactive", "to": "planned"}
         return {"from": "", "to": ""}
 
-    def _visual_question(self, concept_type: str, active_objects: list[str]) -> str:
+    def _visual_question(
+        self,
+        concept_type: str,
+        active_objects: list[str],
+        text: str = "",
+        directed_data: dict[str, Any] | None = None,
+    ) -> str:
+        directed_data = directed_data or {}
+        lowered = " ".join([str(text or ""), str(directed_data.get("title") or "")]).lower()
+        if concept_type == "lifestyle_inflation" and any(token in lowered for token in ("emi", "monthly payment", "luxury car", "car loan")):
+            return "How does one EMI become a lifestyle upgrade?"
         if concept_type in self.CONCEPT_VISUAL_QUESTIONS:
             return self.CONCEPT_VISUAL_QUESTIONS[concept_type]
         if "salary_balance" in active_objects:
@@ -294,6 +304,8 @@ class VisualStoryEngine:
             "diversification": "one fragile bet becomes a spread portfolio",
             "recap_system": "leaks get tracked, buffers protect, investments compound",
         }
+        if concept_type == "lifestyle_inflation" and str(directed_data.get("title") or "").lower().startswith("the emi"):
+            return "the EMI pulls extra lifestyle costs behind it"
         return answers.get(concept_type, "the money state becomes visible")
 
     def _money_change_label(

@@ -1,4 +1,4 @@
-import {Beat, Scene, Shot} from '../../types';
+import {Beat, Scene, Shot, VisualEventSequenceEvent} from '../../types';
 
 export type VisualEventKind =
 	| 'salary_hero'
@@ -35,6 +35,11 @@ export type ResolvedVisualEvent = {
 	shotType: string;
 	attention: number;
 	sequenceIndex: number;
+	primitiveType: string;
+	activeEntity: string;
+	narrationAnchor: string;
+	suppressionTarget: string;
+	visualPurpose: string;
 };
 
 type ComponentName =
@@ -57,6 +62,39 @@ const activeShotFromBeat = (beat: Beat): Shot | null => {
 	return asShot(beat.active_shot) ?? asShot(data.active_shot);
 };
 
+const activeSequenceEvent = (beat: Beat, scene: Scene | undefined): VisualEventSequenceEvent | null => {
+	const sequence = scene?.visual_event_sequence;
+	const events = Array.isArray(sequence?.events) ? sequence?.events ?? [] : [];
+	if (!events.length) {
+		return null;
+	}
+	const data = isRecord(beat.data) ? beat.data : {};
+	const action = isRecord(data.active_action) ? data.active_action : {};
+	const activeActionId = String(action.id ?? '');
+	if (activeActionId) {
+		const byAction = events.find((event) => String(event.source_action_id ?? '') === activeActionId);
+		if (byAction) {
+			return byAction;
+		}
+	}
+	const duration = Number(scene?.duration ?? scene?.total_duration ?? 0);
+	const midpoint = duration > 0
+		? clamp((Number(beat.start_time ?? 0) + Number(beat.end_time ?? beat.start_time ?? 0)) / 2 / duration, 0, 1)
+		: Number.NaN;
+	if (Number.isFinite(midpoint)) {
+		const byTime = events.find((event) => {
+			const timing = isRecord(event.timing) ? event.timing : {};
+			const start = Number(timing.start_progress ?? 0);
+			const end = Number(timing.end_progress ?? 1);
+			return midpoint >= start && midpoint <= end;
+		});
+		if (byTime) {
+			return byTime;
+		}
+	}
+	return events[Math.min(events.length - 1, Math.max(0, Number(beat.sentence_index ?? 0)))] ?? events[0] ?? null;
+};
+
 export const resolveVisualEvent = (
 	beat: Beat,
 	scene: Scene | undefined,
@@ -65,16 +103,22 @@ export const resolveVisualEvent = (
 	const data = isRecord(beat.data) ? beat.data : {};
 	const action = isRecord(data.active_action) ? data.active_action : {};
 	const shot = activeShotFromBeat(beat);
+	const sequenceEvent = activeSequenceEvent(beat, scene);
 	const phase = String(beat.beat_phase ?? data.active_phase ?? '');
-	const actionName = String(action.action ?? shot?.derived_from_action ?? '');
-	const semanticRole = String(action.semantic_role ?? shot?.focus_target ?? '');
-	const focusTarget = String(shot?.focus_target ?? semanticRole);
+	const actionName = String(action.action ?? sequenceEvent?.source_action_id ?? shot?.derived_from_action ?? '');
+	const semanticRole = String(action.semantic_role ?? sequenceEvent?.semantic_role ?? shot?.focus_target ?? '');
+	const focusTarget = String(shot?.focus_target ?? sequenceEvent?.active_entity ?? semanticRole);
 	const shotType = String(shot?.shot_type ?? '');
-	const sequenceIndex = Number.isFinite(Number(action.sequence_index)) ? Number(action.sequence_index) : -1;
+	const sequenceIndex = Number.isFinite(Number(action.sequence_index))
+		? Number(action.sequence_index)
+		: Number.isFinite(Number(sequenceEvent?.sequence_index))
+			? Number(sequenceEvent?.sequence_index)
+			: -1;
 	const attention = clamp(Number(shot?.attention_weight ?? 0.72), 0.45, 1);
+	const primitiveType = String(sequenceEvent?.primitive_type ?? '');
 
 	return {
-		kind: resolveKind(component, phase, actionName, shotType, semanticRole, scene),
+		kind: resolveKind(component, phase, actionName, shotType, semanticRole, scene, sequenceEvent),
 		phase,
 		actionName,
 		semanticRole,
@@ -82,6 +126,11 @@ export const resolveVisualEvent = (
 		shotType,
 		attention,
 		sequenceIndex,
+		primitiveType,
+		activeEntity: String(sequenceEvent?.active_entity ?? ''),
+		narrationAnchor: String(sequenceEvent?.narration_anchor ?? ''),
+		suppressionTarget: String(sequenceEvent?.suppression_target ?? ''),
+		visualPurpose: String(sequenceEvent?.visual_purpose ?? ''),
 	};
 };
 
@@ -92,16 +141,21 @@ const resolveKind = (
 	shotType: string,
 	semanticRole: string,
 	scene: Scene | undefined,
+	sequenceEvent: VisualEventSequenceEvent | null,
 ): VisualEventKind => {
 	const p = phase.toLowerCase();
 	const action = actionName.toLowerCase();
 	const shot = shotType.toLowerCase();
 	const role = semanticRole.toLowerCase();
+	const primitive = String(sequenceEvent?.primitive_type ?? '').toLowerCase();
+	const sourceMotion = String(sequenceEvent?.source_motion ?? '').toLowerCase();
+	const sourceActionId = String(sequenceEvent?.source_action_id ?? '').toLowerCase();
+	const visualPurpose = String(sequenceEvent?.visual_purpose ?? '').toLowerCase();
 
 	if (component === 'MoneyFlowDiagram') {
-		if (action === 'salary_arrives' || p === 'intro' || shot === 'wide_context') return 'salary_hero';
-		if (action === 'balance_revealed' || p === 'remainder' || shot === 'survivor_isolation') return 'survivor_isolation';
-		if (action === 'expense_drains' && (role.includes('rent') || role.includes('emi'))) return 'drain_attack';
+		if (sourceActionId.includes('salary_arrives') || action === 'salary_arrives' || primitive === 'arrival' || p === 'intro' || shot === 'wide_context') return 'salary_hero';
+		if (sourceActionId.includes('balance_revealed') || action === 'balance_revealed' || primitive === 'isolation' || p === 'remainder' || shot === 'survivor_isolation') return 'survivor_isolation';
+		if (sourceActionId.includes('expense_drains') || action === 'expense_drains' || primitive === 'attack') return 'drain_attack';
 		return 'pressure_compression';
 	}
 
@@ -114,8 +168,9 @@ const resolveKind = (
 
 	if (component === 'EMIStackVisualizer') {
 		if (p === 'first_emi' || action === 'first_emi_appears') return 'first_emi_comfort';
-		if (p === 'pressure' || action === 'balance_revealed' || shot === 'survivor_isolation') return 'critical_leftover';
-		if (action === 'salary_squeezed' || role.includes('salary')) return 'salary_squeeze';
+		if (sourceActionId.includes('balance_revealed') || p === 'pressure' || action === 'balance_revealed' || primitive === 'isolation' || shot === 'survivor_isolation') return 'critical_leftover';
+		if (sourceActionId.includes('salary_arrives') || action === 'salary_squeezed' || role.includes('salary') || visualPurpose.includes('source')) return 'salary_squeeze';
+		if (sourceActionId.includes('emi_stacks') || sourceMotion.includes('stack') || primitive === 'stack') return 'emi_stacking';
 		return 'emi_stacking';
 	}
 

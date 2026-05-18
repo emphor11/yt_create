@@ -1168,6 +1168,29 @@ class UseCaseWrapperBehaviorTest(unittest.TestCase):
         )
         self.assertEqual(result.data["script_version_id"], 44)
 
+    def test_generate_script_wrapper_returns_rate_limit_failure(self) -> None:
+        repo = Mock()
+        repo.get_project.return_value = {
+            "id": 12,
+            "topic": "salary leaks",
+            "angle": "hidden expenses",
+            "state": "drafted",
+            "target_duration_minutes": 8,
+            "channel_niche": "finance",
+            "script_tone": "direct",
+        }
+        script_service = Mock()
+        script_service.generate_script.side_effect = ValueError(
+            "Groq API error 429: rate_limit_exceeded"
+        )
+        state_machine = Mock()
+
+        result = GenerateScriptUseCase(repo, script_service, state_machine).execute(12)
+
+        self.assertFalse(result.success)
+        self.assertIn("temporarily rate-limited", result.message)
+        self.assertEqual(result.redirect_endpoint, "projects.project_detail")
+
     def test_approve_script_wrapper_preserves_scene_replacement_sequence(self) -> None:
         repo = Mock()
         repo.get_project.return_value = {"id": 5, "state": "script_review"}

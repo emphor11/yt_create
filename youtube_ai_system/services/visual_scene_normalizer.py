@@ -197,6 +197,7 @@ class VisualSceneNormalizer:
         enriched = dict(section)
         enriched["visual_scene"] = scene.to_dict()
         enriched["mechanism"] = scene.mechanism
+        enriched["mechanism_source"] = self._mechanism_source(section, scene.mechanism)
         enriched["emotion"] = scene.emotion
         if not enriched.get("has_numbers"):
             enriched["has_numbers"] = bool(scene.numbers)
@@ -232,16 +233,26 @@ class VisualSceneNormalizer:
         return "definition"
 
     def _mechanism_reason(self, section: dict[str, Any], narration: str, mechanism: str) -> str:
-        for key in ("mechanism", "concept_type", "idea_type"):
-            if self._canonical_mechanism(section.get(key)) == mechanism:
-                return f"explicit section {key}"
-        visual_scene = section.get("visual_scene") or {}
-        if self._canonical_mechanism(visual_scene.get("mechanism")) == mechanism:
+        source = self._mechanism_source(section, mechanism)
+        if source == "explicit_section":
+            return "explicit section mechanism"
+        if source == "explicit_visual_scene":
             return "explicit visual_scene mechanism"
-        finance_concept = section.get("finance_concept") or {}
-        if self._canonical_mechanism(finance_concept.get("concept_type")) == mechanism:
+        if source == "finance_concept":
             return "finance concept mechanism"
         return "keyword inference override" if mechanism != "definition" else "definition fallback"
+
+    def _mechanism_source(self, section: dict[str, Any], mechanism: str) -> str:
+        for key in ("mechanism", "concept_type", "idea_type"):
+            if self._canonical_mechanism(section.get(key)) == mechanism:
+                return "explicit_section"
+        visual_scene = section.get("visual_scene") or {}
+        if self._canonical_mechanism(visual_scene.get("mechanism")) == mechanism:
+            return "explicit_visual_scene"
+        finance_concept = section.get("finance_concept") or {}
+        if self._canonical_mechanism(finance_concept.get("concept_type")) == mechanism:
+            return "finance_concept"
+        return "keyword_inference" if mechanism != "definition" else "definition"
 
     def _canonical_mechanism(self, value: Any) -> str:
         mechanism = str(value or "").strip().lower()

@@ -40,9 +40,9 @@ def _spoken_words(count: int, sentence_size: int = 20) -> str:
 def _valid_script_brief(scene_count: int = 2) -> dict:
     mechanisms = ["payment_pain_reduction", "affordability_illusion", "commitment_stacking", "subscription_lock_in"]
     return {
-        "topic_interpretation": "Monthly payments hide the real price by making the first decision feel smaller.",
-        "thesis": "Monthly pricing reduces payment pain and makes expensive commitments feel harmless.",
-        "viewer_promise": "The viewer will spot the psychological trick before accepting another payment.",
+        "topic_interpretation": "Monthly payments can be a strategic cash-flow tool for wealthy buyers and a consumer trap for everyone else.",
+        "thesis": "Monthly pricing reduces payment pain, preserves liquidity strategically, and creates consumer risk when it hides the full commitment.",
+        "viewer_promise": "The viewer will spot the strategic use and the psychological trick before accepting another payment.",
         "selected_format": "psychological_essay",
         "format_rationale": "The topic is about behavior and perception, not a checklist.",
         "recurring_example": "an expensive phone purchase reframed as a small monthly payment",
@@ -51,7 +51,7 @@ def _valid_script_brief(scene_count: int = 2) -> dict:
         "scene_function_map": [
             {
                 "scene_index": index + 1,
-                "function": f"Show part {index + 1} of the monthly-payment psychology.",
+                "function": f"Show part {index + 1} of the monthly-payment strategy and consumer psychology.",
                 "mechanism": mechanisms[index],
                 "emotional_direction": ["revealing", "tightening", "warning", "clarity"][index],
             }
@@ -195,6 +195,68 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.assertFalse(validation.passed)
         self.assertTrue(any(issue.code == "invalid_emotional_direction" for issue in validation.errors))
 
+    def test_script_brief_contract_rejects_non_consecutive_scene_indices(self) -> None:
+        brief = _valid_script_brief()
+        brief["scene_function_map"][1]["scene_index"] = 4
+
+        validation = ScriptBriefContract.from_dict(brief).validate()
+
+        self.assertFalse(validation.passed)
+        self.assertTrue(any(issue.code == "non_consecutive_scene_function_map" for issue in validation.errors))
+
+    def test_script_brief_contract_rejects_vague_recurring_example(self) -> None:
+        brief = _valid_script_brief()
+        brief["recurring_example"] = "money habits"
+
+        validation = ScriptBriefContract.from_dict(brief).validate()
+
+        self.assertFalse(validation.passed)
+        self.assertTrue(any(issue.code == "vague_recurring_example" for issue in validation.errors))
+
+    def test_script_brief_contract_rejects_duplicate_scene_functions(self) -> None:
+        brief = _valid_script_brief()
+        brief["scene_function_map"][1]["function"] = brief["scene_function_map"][0]["function"]
+
+        validation = ScriptBriefContract.from_dict(brief).validate()
+
+        self.assertFalse(validation.passed)
+        self.assertTrue(any(issue.code == "duplicate_scene_function" for issue in validation.errors))
+
+    def test_script_brief_contract_rejects_generic_body_advice_for_non_action_plan(self) -> None:
+        brief = _valid_script_brief()
+        brief["selected_format"] = "mechanism_explainer"
+        brief["scene_function_map"][1]["function"] = "Provide a conclusion and call to action for viewers to reassess payments."
+
+        validation = ScriptBriefContract.from_dict(brief).validate()
+
+        self.assertFalse(validation.passed)
+        self.assertTrue(any(issue.code == "generic_body_advice_scene_function" for issue in validation.errors))
+
+    def test_script_brief_contract_rejects_budgeting_function_when_forbidden(self) -> None:
+        brief = _valid_script_brief()
+        brief["forbidden_drift"] = ["general budgeting advice"]
+        brief["scene_function_map"][1]["function"] = "Explain 50/30/20 budgeting strategies for monthly payments."
+
+        validation = ScriptBriefContract.from_dict(brief).validate()
+
+        self.assertFalse(validation.passed)
+        self.assertTrue(any(issue.code == "forbidden_budgeting_scene_function" for issue in validation.errors))
+
+    def test_script_service_repairs_generic_brief_body_function_before_validation(self) -> None:
+        brief = _valid_script_brief()
+        brief["selected_format"] = "mechanism_explainer"
+        brief["forbidden_drift"] = ["general budgeting advice"]
+        brief["scene_function_map"][1]["function"] = (
+            "Provide a conclusion and call to action for viewers to reassess payment strategies."
+        )
+
+        repaired = self.service._repair_script_brief_contract(brief)
+        validation = ScriptBriefContract.from_dict(repaired).validate()
+
+        self.assertTrue(validation.passed)
+        self.assertIn("recurring example", repaired["scene_function_map"][1]["function"])
+        self.assertNotIn("conclusion", repaired["scene_function_map"][1]["function"].lower())
+
     def test_brief_prompt_requests_exact_contract_shape(self) -> None:
         prompt = self.service._build_brief_prompt(
             "Why rich people love monthly payments",
@@ -206,12 +268,16 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.assertIn('"topic_interpretation"', prompt)
         self.assertIn('"scene_function_map"', prompt)
         self.assertIn("BODY_SCENE_COUNT: 3", prompt)
+        self.assertIn("scene_index values must be consecutive", prompt)
+        self.assertIn("must not be vague text", prompt)
         self.assertIn("payment_pain_reduction", prompt)
         self.assertIn("cash_flow_squeeze", prompt)
         self.assertIn("Do not choose salary_drain unless the topic is actually about salary disappearing", prompt)
         self.assertIn("explain both the strategic use case and the consumer trap", prompt)
         self.assertIn("Do not reduce the whole video to overspending advice", prompt)
         self.assertIn("explain the rational incentive for that group", prompt)
+        self.assertIn("Do not use generic summary/takeaway/advice functions", prompt)
+        self.assertIn("scene_function_map must not include budgeting", prompt)
 
     def test_full_script_prompt_binds_brief_contract(self) -> None:
         brief = _valid_script_brief()
@@ -230,6 +296,8 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.assertIn("Total script including hook and outro should be around 438-585 spoken words", prompt)
         self.assertIn("salary disappearing by day 20", prompt)
         self.assertIn("an expensive phone purchase reframed as a small monthly payment", prompt)
+        self.assertIn("forbidden_drift is a hard boundary", prompt)
+        self.assertIn("do not write 50/30/20", prompt)
 
     def test_prompt_requires_long_form_scene_depth(self) -> None:
         prompt = self.service._build_prompt("salary leaks", "young professionals", target_duration_minutes=8)
@@ -324,6 +392,89 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         sent_body = post.call_args_list[0].kwargs["json"]
         self.assertEqual(sent_body["max_tokens"], self.app.config["GROQ_MAX_TOKENS"])
 
+    @patch("youtube_ai_system.services.script_service.time.sleep", return_value=None)
+    @patch("youtube_ai_system.infrastructure.llm.gemini_client.requests.post")
+    def test_gemini_script_uses_generate_content_json_mode(self, post: Mock, sleep: Mock) -> None:
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "text": (
+                                    '{"hook":{"narration":"Why now?"},'
+                                    '"scenes":[],"outro":{"narration":"Done."}}'
+                                )
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        post.return_value = response
+
+        payload = self.service._gemini_script("salary leaks", "young professionals", "prompt", "gemini-key")
+
+        self.assertEqual(payload["hook"]["narration"], "Why now?")
+        self.assertEqual(post.call_count, 1)
+        url = post.call_args.args[0]
+        self.assertIn("/v1beta/models/gemini-2.5-flash:generateContent", url)
+        sent_body = post.call_args.kwargs["json"]
+        self.assertEqual(sent_body["generationConfig"]["responseMimeType"], "application/json")
+        self.assertEqual(sent_body["generationConfig"]["maxOutputTokens"], self.app.config["GEMINI_MAX_TOKENS"])
+        self.assertEqual(post.call_args.kwargs["headers"]["x-goog-api-key"], "gemini-key")
+        sleep.assert_not_called()
+
+    def test_auto_script_generation_falls_back_to_gemini_after_groq_rate_limit(self) -> None:
+        brief = _valid_script_brief()
+        full_payload = {
+            "hook": {"narration": "Why does a giant phone price feel tiny after one monthly payment?", "duration": 7},
+            "scenes": [
+                {
+                    "kind": "body",
+                    "scene_index": 1,
+                    "narration": _brief_scene_narration("payment_pain_reduction", 1),
+                    "duration": 60,
+                    "mechanism": "payment_pain_reduction",
+                },
+                {
+                    "kind": "body",
+                    "scene_index": 2,
+                    "narration": _brief_scene_narration("affordability_illusion", 2),
+                    "duration": 60,
+                    "mechanism": "affordability_illusion",
+                },
+            ],
+            "outro": {"narration": "Judge the full price before the monthly number judges your budget.", "duration": 30},
+            "titles": ["Monthly payments trick"],
+            "description": "A finance psychology video.",
+            "tags": ["monthly payments"],
+        }
+        self.app.config.update(
+            {
+                "LLM_PROVIDER": "auto",
+                "GROQ_API_KEY": "groq-key",
+                "GEMINI_API_KEY": "gemini-key",
+            }
+        )
+
+        with patch.object(self.service, "_groq_script", side_effect=ValueError("Groq API error 429: rate_limit_exceeded")):
+            with patch.object(self.service, "_gemini_script", return_value=full_payload) as gemini_call:
+                payload, source = self.service._generate_payload(
+                    1,
+                    "Why rich people love monthly payments",
+                    "Dark Psychological Financial Storytelling",
+                    "prompt",
+                    script_brief=brief,
+                )
+
+        self.assertEqual(source, "live Gemini API")
+        self.assertEqual(payload["meta"]["source"], "live_gemini")
+        self.assertTrue(payload["meta"]["script_brief_compliance"]["passed"])
+        gemini_call.assert_called_once()
+
     def test_generate_script_uses_brief_before_full_script_and_stores_meta(self) -> None:
         repo = ProjectRepository()
         project_id = repo.create_project("monthly payment psychology")
@@ -383,6 +534,8 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         saved = self.service.load_script_payload(repo.get_script_version(script_id))
         self.assertEqual(call_order, ["brief", "script"])
         self.assertEqual(saved["meta"]["script_brief"]["thesis"], brief["thesis"])
+        self.assertTrue(saved["meta"]["script_brief_compliance"]["passed"])
+        self.assertEqual(saved["meta"]["script_brief_compliance"]["scene_count"]["expected"], 2)
         self.assertEqual(len(saved["scenes"]), 2)
         self.assertEqual(saved["scenes"][0]["mechanism"], "payment_pain_reduction")
 
@@ -404,6 +557,34 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
                     )
 
         script_call.assert_not_called()
+
+    def test_script_brief_topic_alignment_rejects_salary_drift_for_non_salary_topic(self) -> None:
+        brief = _valid_script_brief()
+        brief["thesis"] = "The video proves why your ₹50,000 salary disappears by day 20."
+
+        errors = self.service._validate_script_brief_topic_alignment(
+            "Why rich people love monthly payments",
+            "Dark Psychological Financial Storytelling",
+            brief,
+        )
+
+        self.assertTrue(any("salary/day-20" in error for error in errors))
+
+    def test_script_brief_topic_alignment_requires_rich_topic_dual_frame(self) -> None:
+        brief = _valid_script_brief()
+        brief["thesis"] = "Monthly pricing reduces payment pain and makes purchases feel harmless."
+        brief["topic_interpretation"] = "Monthly payments hide the real price."
+        brief["viewer_promise"] = "The viewer will spot the trick."
+        brief["scene_function_map"][0]["function"] = "Show the payment trick."
+        brief["scene_function_map"][1]["function"] = "Show the hidden cost."
+
+        errors = self.service._validate_script_brief_topic_alignment(
+            "Why rich people love monthly payments",
+            "Dark Psychological Financial Storytelling",
+            brief,
+        )
+
+        self.assertTrue(any("strategic-use" in error for error in errors))
 
     def test_generated_script_must_match_brief_scene_map(self) -> None:
         brief = _valid_script_brief()
@@ -428,6 +609,172 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "recurring example appears"):
             self.service._validate_script_against_brief(payload, brief)
+
+    def test_generated_script_rejects_forbidden_drift_phrase(self) -> None:
+        brief = _valid_script_brief()
+        payload = {
+            "scenes": [
+                {"kind": "body", "narration": _brief_scene_narration("payment_pain_reduction", 1), "mechanism": "payment_pain_reduction"},
+                {
+                    "kind": "body",
+                    "narration": _brief_scene_narration("affordability_illusion", 2) + " This is not generic SIP advice.",
+                    "mechanism": "affordability_illusion",
+                },
+            ]
+        }
+
+        with self.assertRaisesRegex(ValueError, "forbidden drift phrase appears"):
+            self.service._validate_script_against_brief(payload, brief)
+
+    def test_payload_repair_replaces_exact_forbidden_drift_phrase(self) -> None:
+        brief = _valid_script_brief()
+        brief["forbidden_drift"] = ["investment strategies for beginners"]
+        payload = {
+            "hook": {"narration": "Why does a monthly payment feel smaller?"},
+            "scenes": [
+                {"kind": "body", "narration": _brief_scene_narration("payment_pain_reduction", 1), "mechanism": "payment_pain_reduction"},
+                {
+                    "kind": "body",
+                    "narration": _brief_scene_narration("affordability_illusion", 2)
+                    + " This is not investment strategies for beginners.",
+                    "mechanism": "affordability_illusion",
+                },
+            ],
+            "outro": {"narration": "Judge the full cost first."},
+            "meta": {},
+        }
+
+        repaired = self.service._repair_payload_for_script_brief(payload, brief)
+
+        self.assertNotIn("investment strategies for beginners", repaired["scenes"][1]["narration"].lower())
+        self.assertIn("expensive phone purchase", repaired["scenes"][1]["narration"])
+        self.service._validate_script_against_brief(repaired, brief)
+
+    def test_payload_repair_removes_weak_generic_finance_advisory_language(self) -> None:
+        brief = _valid_script_brief()
+        brief["forbidden_drift"] = ["generic financial literacy"]
+        payload = {
+            "hook": {"narration": "Why does a monthly payment feel smaller?"},
+            "scenes": [
+                {
+                    "kind": "body",
+                    "narration": (
+                        "Monthly payments help people make informed financial decisions. "
+                        "They can use them wisely and achieve their financial goals."
+                    ),
+                    "mechanism": "payment_pain_reduction",
+                }
+            ],
+            "outro": {"narration": "Use them wisely and you can live a life of luxury and freedom."},
+            "meta": {},
+        }
+
+        repaired = self.service._repair_payload_for_script_brief(payload, brief)
+        combined = " ".join([repaired["scenes"][0]["narration"], repaired["outro"]["narration"]]).lower()
+
+        self.assertNotIn("make informed financial decisions", combined)
+        self.assertNotIn("achieve their financial goals", combined)
+        self.assertNotIn("use them wisely", combined)
+        self.assertNotIn("life of luxury and freedom", combined)
+        self.assertIn("judge the full payment", combined)
+
+    def test_payload_repair_removes_weak_must_advice_language(self) -> None:
+        brief = _valid_script_brief()
+        payload = {
+            "hook": {"narration": "Why does a monthly payment feel smaller?"},
+            "scenes": [
+                {
+                    "kind": "body",
+                    "narration": (
+                        "People must be careful. They must consider the true cost. "
+                        "They must not fool themselves. Monthly payments are just a mechanism. "
+                        "They are not a substitute for financial discipline."
+                    ),
+                    "mechanism": "affordability_illusion",
+                }
+            ],
+            "outro": {
+                "narration": (
+                    "Do not just look at the monthly payment. Look at the total cost. "
+                    "Do not let the affordability illusion trap you."
+                )
+            },
+            "meta": {},
+        }
+
+        repaired = self.service._repair_payload_for_script_brief(payload, brief)
+        combined = " ".join([repaired["scenes"][0]["narration"], repaired["outro"]["narration"]]).lower()
+
+        self.assertNotIn("people must be careful", combined)
+        self.assertNotIn("they must consider the true cost", combined)
+        self.assertNotIn("they must not fool themselves", combined)
+        self.assertNotIn("financial discipline", combined)
+        self.assertIn("full cost has to stay visible", combined)
+
+    def test_script_brief_repair_rewrites_generic_guidance_body_scene(self) -> None:
+        brief = _valid_script_brief()
+        brief["scene_function_map"][1]["function"] = (
+            "Provide guidance on how to avoid the pitfalls of monthly payments and make informed financial decisions."
+        )
+
+        repaired = self.service._repair_script_brief_contract(brief)
+
+        self.assertIn("recurring example", repaired["scene_function_map"][1]["function"])
+        validation = ScriptBriefContract.from_dict(repaired).validate()
+        self.assertTrue(validation.passed, [issue.message for issue in validation.errors])
+
+    def test_generated_script_rejects_semantic_budgeting_drift(self) -> None:
+        brief = _valid_script_brief()
+        brief["forbidden_drift"] = ["general budgeting advice"]
+        payload = {
+            "scenes": [
+                {
+                    "kind": "body",
+                    "narration": _brief_scene_narration("payment_pain_reduction", 1)
+                    + " Use the 50/30/20 rule and track your expenses every week.",
+                    "mechanism": "payment_pain_reduction",
+                },
+                {"kind": "body", "narration": _brief_scene_narration("affordability_illusion", 2), "mechanism": "affordability_illusion"},
+            ]
+        }
+
+        with self.assertRaisesRegex(ValueError, "forbidden drift phrase appears"):
+            self.service._validate_script_against_brief(payload, brief)
+
+    def test_refiner_uses_mechanism_specific_payment_tails(self) -> None:
+        refined = self.service.scene_refiner._template_for(
+            "payment_pain_reduction",
+            "The restaurant bill feels smaller when the card removes the pain.",
+            "Why credit cards make people spend more",
+            "credit card psychology",
+        )
+
+        self.assertGreaterEqual(self.service._word_count(refined), 160)
+        self.assertIn("Cash creates a visible loss", refined)
+        self.assertNotIn("danger is not a random finance mistake", refined)
+
+    def test_refiner_uses_mechanism_specific_monthly_payment_tails(self) -> None:
+        cases = {
+            "cash_flow_squeeze": "monthly number controls the rhythm",
+            "commitment_stacking": "Five payments begin behaving like a private tax",
+            "compounding": "opportunity cost",
+            "leverage": "sharp edge of the monthly-payment logic",
+            "debt_trap": "fixed payments like flexible money",
+            "emi_pressure": "claim on future income",
+            "inflation_erosion": "full-cost view",
+        }
+        for mechanism, phrase in cases.items():
+            with self.subTest(mechanism=mechanism):
+                refined = self.service.scene_refiner._template_for(
+                    mechanism,
+                    "A luxury car lease costs ₹50,000 a month.",
+                    "Why Rich People Love Monthly Payments",
+                    "rich",
+                )
+
+                self.assertGreaterEqual(self.service._word_count(refined), 160)
+                self.assertIn(phrase, refined)
+                self.assertNotIn("real pressure comes from rich", refined)
 
     def test_hook_refiner_rewrites_validator_weak_salary_hook(self) -> None:
         payload = self.service._normalize_payload(
@@ -489,6 +836,46 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.assertEqual(section["visual_scene"]["mechanism"], "lifestyle_inflation")
         self.assertEqual(section["visual_scene"]["visual_beats"][0], "Income rises")
         self.assertEqual(section["concept_type"], "lifestyle_inflation")
+
+    def test_script_brief_scene_contract_prevents_lifestyle_scene_splitting(self) -> None:
+        brief = _valid_script_brief(scene_count=1)
+        brief["allowed_mechanisms"] = ["lifestyle_inflation"]
+        brief["scene_function_map"][0]["mechanism"] = "lifestyle_inflation"
+        payload = self.service._normalize_payload(
+            {
+                "hook": {"narration": "Why do rich people love monthly payments?", "duration": 6},
+                "scenes": [
+                    {
+                        "narration": (
+                            "Lifestyle inflation is another consequence. "
+                            "When people buy luxury cars with monthly payments, the car changes what normal spending feels like. "
+                            "They start adding insurance, fuel, service, accessories, and weekend plans around the same purchase. "
+                            "The affordability illusion makes each add-on feel separate from the original loan."
+                        ),
+                        "mechanism": "lifestyle_inflation",
+                    }
+                ],
+                "outro": {"narration": "Judge the full payment before saying yes."},
+                "meta": {"script_brief": brief},
+            },
+            "Why Rich People Love Monthly Payments",
+            "Monthly payments are designed to make expensive things feel emotionally painless.",
+        )
+
+        sections = [
+            section
+            for section in payload["story_plan"]["sections"]
+            if section.get("idea_group_id") != "idea_hook"
+        ]
+        self.assertEqual(len(sections), 1)
+        self.assertEqual(sections[0]["concept_type"], "lifestyle_inflation")
+        self.assertIn("insurance, fuel, service", sections[0]["text"])
+        visual_plan = sections[0]["visual_plan"]
+        plan_data = visual_plan[0]["visual"]["data"] if isinstance(visual_plan, list) else visual_plan["data"]
+        plan_beats = visual_plan[0]["beats"]["beats"] if isinstance(visual_plan, list) else sections[0]["beats"]
+        self.assertEqual(plan_data["title"], "The EMI upgrades the lifestyle.")
+        self.assertEqual(plan_data["story_state"]["visual_question"], "How does one EMI become a lifestyle upgrade?")
+        self.assertIn("Status costs attach", plan_beats[1]["text"])
 
     def test_short_body_scenes_are_expanded_before_story_planning(self) -> None:
         payload = self.service._normalize_payload(
@@ -823,6 +1210,66 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
 
         self.assertEqual(saved["scenes"][0]["mechanism"], "emergency_fund")
         self.assertIn("emergency fund", saved["scenes"][0]["narration"].lower())
+
+    def test_save_script_edits_rebuilds_brief_constrained_story_plan(self) -> None:
+        repo = ProjectRepository()
+        project_id = repo.create_project("brief save repair")
+        repo.update_project(
+            project_id,
+            topic="Why Rich People Love Monthly Payments",
+            angle="Monthly payments are designed to make expensive things feel emotionally painless.",
+        )
+        brief = _valid_script_brief(scene_count=1)
+        brief["recurring_example"] = "a luxury car purchase with a 5-year loan"
+        brief["allowed_mechanisms"] = ["lifestyle_inflation"]
+        brief["scene_function_map"][0]["function"] = (
+            "Explain how lifestyle inflation can result from frequent monthly payments."
+        )
+        brief["scene_function_map"][0]["mechanism"] = "lifestyle_inflation"
+        payload = {
+            "hook": {"narration": "Why do rich people love monthly payments?", "duration": 6},
+            "scenes": [
+                {
+                    "kind": "body",
+                    "narration": (
+                        "People must be careful. Lifestyle inflation is another consequence. "
+                        "When people buy luxury cars with monthly payments, the car changes what normal spending feels like. "
+                        "They start adding insurance, fuel, service, accessories, and weekend plans around the same purchase. "
+                        "They must consider the true cost. They must not fool themselves."
+                    ),
+                    "duration": 71,
+                    "mechanism": "lifestyle_inflation",
+                }
+            ],
+            "outro": {"narration": "Do not just look at the monthly payment. Look at the total cost.", "duration": 18},
+            "meta": {"script_brief": brief},
+        }
+        script_id = repo.create_script_version(project_id, payload["hook"], payload["outro"], [], "", [], payload, "")
+
+        self.service.save_script_edits(script_id, payload)
+        saved = self.service.load_script_payload(repo.get_script_version(script_id))
+
+        saved_text = " ".join(
+            [saved["scenes"][0]["narration"], saved["outro"]["narration"]]
+        ).lower()
+        self.assertNotIn("people must be careful", saved_text)
+        self.assertNotIn("they must consider the true cost", saved_text)
+        self.assertNotIn("they must not fool themselves", saved_text)
+        self.assertIn("the payment has to survive the full term", saved_text)
+        self.assertEqual(saved["meta"]["script_brief_compliance"]["scene_count"]["actual"], 1)
+        sections = [
+            section
+            for section in saved["story_plan"]["sections"]
+            if section.get("idea_group_id") != "idea_hook"
+        ]
+        self.assertEqual(len(sections), 1)
+        self.assertEqual(sections[0]["concept_type"], "lifestyle_inflation")
+        visual_plan = sections[0]["visual_plan"]
+        plan_data = visual_plan[0]["visual"]["data"] if isinstance(visual_plan, list) else visual_plan["data"]
+        plan_beats = visual_plan[0]["beats"]["beats"] if isinstance(visual_plan, list) else sections[0]["beats"]
+        self.assertEqual(plan_data["title"], "The EMI upgrades the lifestyle.")
+        self.assertEqual(plan_data["story_state"]["visual_question"], "How does one EMI become a lifestyle upgrade?")
+        self.assertIn("Status costs attach", plan_beats[1]["text"])
 
     def test_group_sentences_into_sections_pairs_simple_sequence(self) -> None:
         grouped = self.pipeline.group_sentences_into_sections(

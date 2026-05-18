@@ -35,6 +35,11 @@ class Config:
     GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
     GROQ_MAX_TOKENS = int(os.environ.get("GROQ_MAX_TOKENS", "4200"))
     GROQ_RATE_LIMIT_RETRIES = int(os.environ.get("GROQ_RATE_LIMIT_RETRIES", "2"))
+    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+    GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    GEMINI_MAX_TOKENS = int(os.environ.get("GEMINI_MAX_TOKENS", "8192"))
+    GEMINI_SCRIPT_BRIEF_MAX_TOKENS = int(os.environ.get("GEMINI_SCRIPT_BRIEF_MAX_TOKENS", "4096"))
+    GEMINI_RATE_LIMIT_RETRIES = int(os.environ.get("GEMINI_RATE_LIMIT_RETRIES", "1"))
     YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
     YOUTUBE_CLIENT_SECRETS = os.environ.get("YOUTUBE_CLIENT_SECRETS")
     YOUTUBE_TOKEN_PATH = os.environ.get(

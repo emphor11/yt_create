@@ -27,8 +27,8 @@
         <div class="section-label mb-2">Draft Generation Mode</div>
         {% set source = script_payload.meta.source if script_payload.meta else 'unknown' %}
         <p class="mb-2">
-          <span class="status-pill {% if source in ['live_claude', 'live_groq', 'live_groq_ten_minute_finance'] %}status-live{% else %}status-muted{% endif %}">
-            {% if source == 'live_claude' %}Live Claude{% elif source == 'live_groq_ten_minute_finance' %}Live Groq · 10 Minute Finance{% elif source == 'live_groq' %}Live Groq{% elif source == 'demo' %}Demo Draft{% else %}Unknown{% endif %}
+          <span class="status-pill {% if source in ['live_claude', 'live_groq', 'live_groq_ten_minute_finance', 'live_gemini'] %}status-live{% else %}status-muted{% endif %}">
+            {% if source == 'live_claude' %}Live Claude{% elif source == 'live_groq_ten_minute_finance' %}Live Groq · 10 Minute Finance{% elif source == 'live_groq' %}Live Groq{% elif source == 'live_gemini' %}Live Gemini{% elif source == 'demo' %}Demo Draft{% else %}Unknown{% endif %}
           </span>
         </p>
         <p class="small text-secondary mb-0">
@@ -38,6 +38,8 @@
             This draft was generated using your live Groq API configuration with the finance prompt.
           {% elif source == 'live_groq' %}
             This draft was generated using your live Groq API configuration.
+          {% elif source == 'live_gemini' %}
+            This draft was generated using your live Gemini API configuration.
           {% elif source == 'demo' %}
             This draft was generated using the built-in demo fallback because no live script provider succeeded.
           {% else %}

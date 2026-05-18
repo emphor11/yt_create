@@ -558,6 +558,21 @@ class SceneBuilderTestCase(unittest.TestCase):
                         "texture": "dark_documentary",
                     },
                     "theme": {"background": "#0A0A14"},
+                    "visual_event_sequence": {
+                        "source": "visual_event_sequence_v1",
+                        "events": [
+                            {
+                                "id": "ves:0:salary_arrives",
+                                "sequence_index": 0,
+                                "active_entity": "₹50,000",
+                                "primitive_type": "arrival",
+                                "emotional_direction": "warning",
+                                "narration_anchor": "Salary arrives: ₹50,000",
+                                "suppression_target": "generic_dashboard_noise",
+                                "visual_purpose": "establish_source",
+                            }
+                        ],
+                    },
                     "visual_plan": [
                         {
                             "concept": {"concept": "Salary Drain", "type": "salary_drain"},
@@ -596,6 +611,8 @@ class SceneBuilderTestCase(unittest.TestCase):
         self.assertEqual(scene["visual_story"]["protagonist"]["visual_id"], "protagonist_01")
         self.assertEqual(scene["story_state"]["visual_question"], "Where did the salary go?")
         self.assertEqual(scene["theme"]["background"], "#0A0A14")
+        self.assertEqual(scene["visual_event_sequence"]["source"], "visual_event_sequence_v1")
+        self.assertEqual(scene["visual_event_sequence"]["events"][0]["primitive_type"], "arrival")
         self.assertEqual(scene["beats"][1]["data"]["remainder"]["amount"], 3000)
         self.assertEqual(scene["beats"][-1]["end_time"], scene["duration"])
 

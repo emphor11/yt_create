@@ -49,6 +49,8 @@ class MediaServiceSceneRenderTestCase(unittest.TestCase):
         self.assertEqual(section["finance_concept"]["concept_name"], "Debt Trap")
         self.assertEqual(section["semantic_scene"]["primary_concept"]["key"], "debt_trap")
         self.assertTrue(section["semantic_scene"]["entities"])
+        self.assertEqual(section["visual_event_sequence"]["source"], "visual_event_sequence_v1")
+        self.assertTrue(section["visual_event_sequence"]["events"])
         self.assertEqual(section["narrative_arc"]["visual_type"], "balance_decay")
         self.assertEqual(section["state"]["money_out"], "40%")
         self.assertEqual(section["visual_plan"][0]["visual"]["pattern"], "DebtSpiralVisualizer")

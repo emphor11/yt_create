@@ -4,6 +4,7 @@ from youtube_ai_system.services.finance_concept_extractor import FinanceConceptE
 from youtube_ai_system.services.semantic_scene_contract import SemanticSceneContractExtractor
 from youtube_ai_system.services.story_pipeline import StoryPipeline
 from youtube_ai_system.services.visual_action_graph import VisualActionGraphBuilder
+from youtube_ai_system.services.visual_event_sequence import VisualEventSequenceBuilder
 
 
 class VisualActionGraphTestCase(unittest.TestCase):
@@ -11,6 +12,7 @@ class VisualActionGraphTestCase(unittest.TestCase):
         self.finance = FinanceConceptExtractor()
         self.semantic = SemanticSceneContractExtractor()
         self.builder = VisualActionGraphBuilder()
+        self.event_builder = VisualEventSequenceBuilder()
 
     def contract_for(self, text: str, dominant_entity: str = "money", idea_type: str = "risk") -> dict:
         finance_concept = self.finance.extract(
@@ -98,8 +100,74 @@ class VisualActionGraphTestCase(unittest.TestCase):
 
         self.assertEqual(planned_section["visual_action_graph"]["source"], "visual_action_graph_v1")
         self.assertTrue(planned_section["visual_action_graph"]["actions"])
+        self.assertEqual(planned_section["visual_event_sequence"]["source"], "visual_event_sequence_v1")
+        self.assertTrue(planned_section["visual_event_sequence"]["events"])
         self.assertEqual(planned_section["visual_plan"][0]["visual"]["pattern"], "SIPGrowthEngine")
         self.assertNotIn("visual_action_graph", planned_section["visual_plan"][0]["visual"])
+        self.assertNotIn("visual_event_sequence", planned_section["visual_plan"][0]["visual"])
+
+    def test_scriptbrief_mechanism_wins_over_generic_finance_concept_guess(self) -> None:
+        payload = {
+            "hook": {"narration": "Why do rich people love monthly payments for luxury cars?"},
+            "scenes": [
+                {
+                    "narration": "Imagine buying a luxury car for ₹50 lakhs. What if you could pay ₹50,000 per month? Suddenly it feels affordable.",
+                    "mechanism": "affordability_illusion",
+                    "visual_scene": {"mechanism": "affordability_illusion"},
+                },
+                {
+                    "narration": "Commitment stacking is when the car lease, insurance, club fee, phone plan and subscription each feel manageable alone. Together they claim future income.",
+                    "mechanism": "commitment_stacking",
+                    "visual_scene": {"mechanism": "commitment_stacking"},
+                },
+            ],
+        }
+
+        story_plan = StoryPipeline().build_story_plan(payload)
+        by_mechanism = {
+            section["finance_concept"]["concept_type"]: section
+            for section in story_plan["sections"]
+            if section.get("finance_concept")
+        }
+
+        self.assertEqual(
+            [section["finance_concept"]["concept_type"] for section in story_plan["sections"]],
+            ["affordability_illusion", "commitment_stacking"],
+        )
+        affordability = by_mechanism["affordability_illusion"]
+        stacking = by_mechanism["commitment_stacking"]
+        self.assertEqual(affordability["semantic_scene"]["primary_concept"]["key"], "affordability_illusion")
+        self.assertEqual(affordability["visual_event_sequence"]["primary_concept"]["key"], "affordability_illusion")
+        self.assertEqual(affordability["visual_plan"][0]["visual"]["pattern"], "SplitComparison")
+        self.assertEqual(stacking["semantic_scene"]["primary_concept"]["key"], "commitment_stacking")
+        self.assertEqual(stacking["visual_plan"][0]["visual"]["pattern"], "EMIStackVisualizer")
+
+    def test_visual_event_sequence_names_perceptual_contract_fields(self) -> None:
+        contract = self.contract_for(
+            "Your ₹50,000 salary lands. Then ₹18,000 goes to EMI. Only ₹6,000 is left.",
+            dominant_entity="salary",
+            idea_type="risk",
+        )
+        graph = self.builder.build_dict(contract)
+
+        sequence = self.event_builder.build_dict({"semantic_scene": contract, "visual_action_graph": graph})
+        events = sequence["events"]
+
+        self.assertEqual(sequence["source"], "visual_event_sequence_v1")
+        self.assertEqual(sequence["primary_concept"]["key"], "salary_drain")
+        self.assertTrue(events)
+        first = events[0]
+        for key in (
+            "active_entity",
+            "primitive_type",
+            "emotional_direction",
+            "narration_anchor",
+            "suppression_target",
+            "visual_purpose",
+        ):
+            self.assertTrue(first[key])
+        self.assertEqual(first["primitive_type"], "arrival")
+        self.assertEqual(events[-1]["primitive_type"], "isolation")
 
     def test_empty_semantic_contract_returns_warning_not_fallback_narration_parse(self) -> None:
         graph = self.builder.build_dict({"source": "semantic_scene_contract_v1", "scene_id": "empty", "primary_concept": {"key": "salary_drain"}})
