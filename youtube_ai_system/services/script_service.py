@@ -8,7 +8,7 @@ from urllib import error
 
 from flask import current_app
 
-from ..contracts.scripts import ScriptBriefContract
+from ..contracts.scripts import SCRIPT_BRIEF_EMOTIONAL_DIRECTIONS, SCRIPT_BRIEF_MECHANISMS, ScriptBriefContract
 from ..models.repository import ProjectRepository, utcnow
 from ..pipelines.script import (
     GeminiScriptGenerator,
@@ -369,12 +369,34 @@ class ScriptService:
         selected_format = str(repaired.get("selected_format") or "")
         recurring_example = str(repaired.get("recurring_example") or "the recurring money example")
         forbids_budgeting = self._brief_forbids_budgeting(repaired)
-        scene_map: list[dict[str, Any]] = []
         changed = False
-        for item in repaired.get("scene_function_map") or []:
+        allowed_mechanisms = [
+            mechanism
+            for mechanism in (
+                self._normalize_script_brief_mechanism_value(str(item))
+                for item in (repaired.get("allowed_mechanisms") or [])
+            )
+            if mechanism in SCRIPT_BRIEF_MECHANISMS
+        ]
+        if allowed_mechanisms and allowed_mechanisms != list(repaired.get("allowed_mechanisms") or []):
+            repaired["allowed_mechanisms"] = allowed_mechanisms
+            changed = True
+        scene_map: list[dict[str, Any]] = []
+        for scene_offset, item in enumerate(repaired.get("scene_function_map") or []):
             if not isinstance(item, dict):
                 continue
             updated = dict(item)
+            mechanism = self._normalize_script_brief_mechanism_value(str(updated.get("mechanism") or ""))
+            if mechanism != str(updated.get("mechanism") or "") and mechanism in SCRIPT_BRIEF_MECHANISMS:
+                updated["mechanism"] = mechanism
+                changed = True
+            if mechanism not in SCRIPT_BRIEF_MECHANISMS:
+                if mechanism in SCRIPT_BRIEF_EMOTIONAL_DIRECTIONS and str(updated.get("emotional_direction") or "") not in SCRIPT_BRIEF_EMOTIONAL_DIRECTIONS:
+                    updated["emotional_direction"] = mechanism
+                inferred = self._infer_scene_mechanism_from_brief_entry(updated, allowed_mechanisms, scene_offset)
+                if inferred:
+                    updated["mechanism"] = inferred
+                    changed = True
             function = self._normalized_phrase(str(updated.get("function") or ""))
             should_repair = selected_format != "action_plan" and self._is_generic_body_advice_function(function)
             should_repair = should_repair or (forbids_budgeting and self._function_has_budgeting_drift(function))
@@ -394,6 +416,44 @@ class ScriptService:
                 "Repaired generic ScriptBrief body scene functions before validation.",
             )
         return repaired
+
+    def _normalize_script_brief_mechanism_value(self, value: str) -> str:
+        normalized = self._normalized_phrase(value).replace(" ", "_")
+        aliases = {
+            "anchor": "anchoring",
+            "anchoring_bias": "anchoring",
+            "price_anchor": "price_anchoring",
+            "payment_pain": "payment_pain_reduction",
+            "monthly_payment_pain": "payment_pain_reduction",
+            "affordability": "affordability_illusion",
+            "illusion_of_affordability": "affordability_illusion",
+            "cashflow_squeeze": "cash_flow_squeeze",
+            "cash_flow": "cash_flow_squeeze",
+            "future_obligation": "delayed_consequence",
+            "lockin": "lock_in",
+            "subscription_lockin": "subscription_lock_in",
+        }
+        return aliases.get(normalized, normalized)
+
+    def _infer_scene_mechanism_from_brief_entry(
+        self,
+        scene_entry: dict[str, Any],
+        allowed_mechanisms: list[str],
+        scene_offset: int,
+    ) -> str:
+        if not allowed_mechanisms:
+            return ""
+        haystack = " ".join(
+            self._normalized_phrase(str(scene_entry.get(field) or ""))
+            for field in ("function", "visual_intent", "description")
+        )
+        for mechanism in allowed_mechanisms:
+            mechanism_phrase = mechanism.replace("_", " ")
+            if mechanism_phrase in haystack:
+                return mechanism
+        if scene_offset < len(allowed_mechanisms):
+            return allowed_mechanisms[scene_offset]
+        return allowed_mechanisms[-1]
 
     def _brief_forbids_budgeting(self, script_brief: dict[str, Any]) -> bool:
         forbidden = " ".join(self._normalized_phrase(str(item)) for item in script_brief.get("forbidden_drift") or [])

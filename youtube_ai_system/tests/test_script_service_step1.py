@@ -723,6 +723,19 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         validation = ScriptBriefContract.from_dict(repaired).validate()
         self.assertTrue(validation.passed, [issue.message for issue in validation.errors])
 
+    def test_script_brief_repair_remaps_direction_used_as_scene_mechanism(self) -> None:
+        brief = _valid_script_brief(scene_count=3)
+        brief["scene_function_map"][1]["mechanism"] = "clarity"
+        brief["scene_function_map"][1]["function"] = (
+            "Reveal how the affordability illusion makes the monthly payment feel safer than the full phone price."
+        )
+
+        repaired = self.service._repair_script_brief_contract(brief)
+
+        self.assertEqual(repaired["scene_function_map"][1]["mechanism"], "affordability_illusion")
+        validation = ScriptBriefContract.from_dict(repaired).validate()
+        self.assertTrue(validation.passed, [issue.message for issue in validation.errors])
+
     def test_generated_script_rejects_semantic_budgeting_drift(self) -> None:
         brief = _valid_script_brief()
         brief["forbidden_drift"] = ["general budgeting advice"]
