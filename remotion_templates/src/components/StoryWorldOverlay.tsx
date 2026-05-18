@@ -44,6 +44,15 @@ const objectLabel = (object: string): string =>
 			sip_jar: 'SIP growth',
 			portfolio_grid: 'Portfolio',
 			emergency_buffer: 'Safety buffer',
+			full_price: 'Full price',
+			monthly_payment: 'Monthly payment',
+			financed_asset: 'Financed asset',
+			capital_pool: 'Capital',
+			investment_engine: 'Investment engine',
+			opportunity_gap: 'Opportunity cost',
+			future_obligation: 'Future obligation',
+			status_upgrade: 'Status upgrade',
+			money_decision: 'Money decision',
 		} as Record<string, string>
 	)[object] ?? object.replace(/_/g, ' ');
 
@@ -52,10 +61,10 @@ const accentFor = (storyState: StoryState): string => {
 	if (joined.includes('emi') || joined.includes('debt') || joined.includes('stressed')) {
 		return COLORS.danger;
 	}
-	if (joined.includes('sip') || joined.includes('portfolio') || joined.includes('buffer') || joined.includes('disciplined')) {
+	if (joined.includes('sip') || joined.includes('portfolio') || joined.includes('buffer') || joined.includes('capital') || joined.includes('investment') || joined.includes('disciplined')) {
 		return COLORS.positive;
 	}
-	if (joined.includes('inflation')) {
+	if (joined.includes('inflation') || joined.includes('future_obligation') || joined.includes('full_price')) {
 		return COLORS.warning;
 	}
 	return COLORS.neutral;
@@ -91,6 +100,21 @@ const objectGlyph = (object: string, accent: string, progress: number): React.Re
 				))}
 			</div>
 		);
+	}
+	if (object === 'monthly_payment') {
+		return <div style={styles.pressure(accent)}>EMI</div>;
+	}
+	if (object === 'full_price') {
+		return <div style={styles.pressure(accent)}>PRICE</div>;
+	}
+	if (object === 'capital_pool' || object === 'investment_engine') {
+		return <div style={styles.jar(accent)}><div style={{...styles.jarFill(accent), height: `${38 + progress * 48}%`}} /></div>;
+	}
+	if (object === 'future_obligation' || object === 'opportunity_gap') {
+		return <div style={styles.pressure(accent)}>FUTURE</div>;
+	}
+	if (object === 'status_upgrade' || object === 'financed_asset') {
+		return <div style={styles.account(accent)}>CAR</div>;
 	}
 	if (object === 'inflation_basket') {
 		return <div style={styles.basket(accent)}>BASKET</div>;

@@ -276,8 +276,16 @@ class VisualDirector(VisualDirectorPlansMixin):
             return f"{amount} at risk"
         if "salary_balance" in active_objects or "phone_account" in active_objects:
             return f"{amount} salary in"
+        if "monthly_payment" in active_objects:
+            return f"{amount} monthly payment"
+        if "full_price" in active_objects:
+            return f"{amount} full price"
+        if "capital_pool" in active_objects or "investment_engine" in active_objects:
+            return f"{amount} capital"
+        if "future_obligation" in active_objects:
+            return f"{amount} future claim"
         labels = {
-            "MoneyFlowDiagram": f"{amount} salary in",
+            "MoneyFlowDiagram": f"{amount} in motion",
             "DebtSpiralVisualizer": f"{amount} outstanding",
             "SIPGrowthEngine": f"{amount} per month",
             "GrowthChart": f"{amount} today",

@@ -32,6 +32,21 @@ class VisualEventSequenceBuilder:
         "value_hold": "arrival",
     }
 
+    PRIMITIVE_TO_WORLD = {
+        "acceleration": "growth_acceleration",
+        "arrival": "value_arrival",
+        "attack": "expense_attack",
+        "compression": "pressure_compression",
+        "erosion": "value_erosion",
+        "growth": "growth_reveal",
+        "growth_seed": "growth_seed",
+        "isolation": "survivor_isolation",
+        "reveal": "semantic_reveal",
+        "stack": "commitment_stack",
+        "timeline": "delayed_timeline",
+        "trap": "trap_reveal",
+    }
+
     CONCEPT_DIRECTION = {
         "affordability_illusion": "revealing",
         "anchoring": "revealing",
@@ -95,13 +110,16 @@ class VisualEventSequenceBuilder:
         value = dict(action.get("value") or {})
         active_entity = self._active_entity(action, value)
         primitive = self.MOTION_TO_PRIMITIVE.get(str(action.get("motion") or ""), "reveal")
+        world_object = self._world_object(action, value, primary_concept, primitive)
         direction = self._emotional_direction(primary_concept, section, primitive)
         timing = self._timing(index, total)
         return VisualEvent(
             id=f"ves:{index}:{action.get('action') or 'event'}",
             sequence_index=index,
             active_entity=active_entity,
+            world_object=world_object,
             primitive_type=primitive,
+            perceptual_world=self.PRIMITIVE_TO_WORLD.get(primitive, "semantic_reveal"),
             emotional_direction=direction,
             narration_anchor=self._narration_anchor(action, value),
             suppression_target=self._suppression_target(primary_concept, primitive),
@@ -125,6 +143,49 @@ class VisualEventSequenceBuilder:
         if display and label:
             return f"{label}: {display}"
         return display or label or "spoken money moment"
+
+    def _world_object(
+        self,
+        action: dict[str, Any],
+        value: dict[str, Any],
+        primary_concept: dict[str, Any],
+        primitive: str,
+    ) -> str:
+        concept_key = str(primary_concept.get("key") or "").strip().lower()
+        semantic_role = str(action.get("semantic_role") or "").strip().lower()
+        action_name = str(action.get("action") or "").strip().lower()
+        intent = str(action.get("intent") or "").strip().lower()
+        label = " ".join([semantic_role, action_name, intent, str(value.get("kind") or "")]).lower()
+        if "emi" in label or "monthly" in label:
+            return "monthly_payment"
+        if "interest" in label or "future" in label or "obligation" in label:
+            return "future_obligation"
+        if "salary" in label:
+            return "salary_balance"
+        if "debt" in label:
+            return "debt_pressure"
+        if "inflation" in label or "purchasing" in label:
+            return "inflation_basket"
+        if "sip" in label or "corpus" in label or "compound" in label:
+            return "investment_engine"
+        if concept_key in {"payment_pain_reduction", "affordability_illusion", "price_anchoring", "anchoring"}:
+            try:
+                if float(value.get("amount") or 0) and float(value.get("amount") or 0) < 100000:
+                    return "monthly_payment"
+            except (TypeError, ValueError):
+                pass
+            return "monthly_payment" if "payment" in label else "full_price"
+        if concept_key == "leverage":
+            return "capital_pool"
+        if concept_key in {"opportunity_cost", "compounding", "sip_growth"}:
+            return "investment_engine" if primitive in {"growth", "growth_seed", "acceleration", "reveal"} else "capital_pool"
+        if concept_key in {"commitment_stacking", "cash_flow_squeeze", "emi_pressure"}:
+            return "future_obligation" if primitive in {"stack", "compression", "trap"} else "monthly_payment"
+        if concept_key == "lifestyle_inflation":
+            return "status_upgrade"
+        if concept_key in {"delayed_consequence", "debt_trap"}:
+            return "future_obligation"
+        return "money_decision"
 
     def _emotional_direction(self, primary_concept: dict[str, Any], section: dict[str, Any], primitive: str) -> str:
         concept_key = str(primary_concept.get("key") or section.get("concept_type") or "").strip().lower()

@@ -12,7 +12,9 @@ class VisualEvent:
     id: str
     sequence_index: int
     active_entity: str
+    world_object: str
     primitive_type: str
+    perceptual_world: str
     emotional_direction: str
     narration_anchor: str
     suppression_target: str

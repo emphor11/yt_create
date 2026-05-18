@@ -121,10 +121,10 @@ class SceneRenderSectionBuilder:
                 concept_type = str(fc.get("concept_type") or "").lower()
             seed_objects = self.story_pipeline.visual_story_engine.CONCEPT_TO_OBJECTS.get(
                 concept_type,
-                ["phone_account", "salary_balance"],
+                ["money_decision"],
             )
             story_plan["visual_story"] = {
-                "protagonist": {"role": "young_salaried_professional"},
+                "protagonist": {"role": "finance_decision_maker"},
                 "recurring_objects": list(seed_objects),
             }
         story_plan = self.story_pipeline.attach_visual_story(story_plan)

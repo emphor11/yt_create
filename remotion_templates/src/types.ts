@@ -69,6 +69,8 @@ export type VisualEventSequenceEvent = {
 	source_action_id?: string;
 	source_motion?: string;
 	semantic_role?: string;
+	world_object?: string;
+	perceptual_world?: string;
 	value?: Record<string, unknown>;
 	timing?: {
 		start_progress?: number;

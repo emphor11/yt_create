@@ -159,7 +159,9 @@ class VisualActionGraphTestCase(unittest.TestCase):
         first = events[0]
         for key in (
             "active_entity",
+            "world_object",
             "primitive_type",
+            "perceptual_world",
             "emotional_direction",
             "narration_anchor",
             "suppression_target",
@@ -167,7 +169,23 @@ class VisualActionGraphTestCase(unittest.TestCase):
         ):
             self.assertTrue(first[key])
         self.assertEqual(first["primitive_type"], "arrival")
+        self.assertEqual(first["perceptual_world"], "value_arrival")
         self.assertEqual(events[-1]["primitive_type"], "isolation")
+
+    def test_visual_event_sequence_assigns_monthly_payment_world_objects(self) -> None:
+        contract = self.contract_for(
+            "The ₹20 lakh car becomes a ₹30,000 monthly payment. The full price disappears behind the EMI.",
+            dominant_entity="monthly payment",
+            idea_type="mechanism",
+        )
+        contract["primary_concept"] = {"key": "affordability_illusion", "label": "Affordability Illusion"}
+        graph = self.builder.build_dict(contract)
+
+        sequence = self.event_builder.build_dict({"semantic_scene": contract, "visual_action_graph": graph})
+        world_objects = {event["world_object"] for event in sequence["events"]}
+
+        self.assertIn("monthly_payment", world_objects)
+        self.assertNotIn("salary_balance", world_objects)
 
     def test_empty_semantic_contract_returns_warning_not_fallback_narration_parse(self) -> None:
         graph = self.builder.build_dict({"source": "semantic_scene_contract_v1", "scene_id": "empty", "primary_concept": {"key": "salary_drain"}})

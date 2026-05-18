@@ -28,6 +28,9 @@ class StoryPipeline(StoryPlanningSupportMixin):
         "cash_flow_squeeze",
         "delayed_consequence",
         "leverage",
+        "opportunity_cost",
+        "compounding",
+        "liquidity_pressure",
         "emi_pressure",
         "lifestyle_inflation",
     }
@@ -369,6 +372,9 @@ class StoryPipeline(StoryPlanningSupportMixin):
             "cash_flow_squeeze": "Cash Flow Squeeze",
             "delayed_consequence": "Delayed Consequence",
             "leverage": "Leverage",
+            "opportunity_cost": "Opportunity Cost",
+            "compounding": "Compounding",
+            "liquidity_pressure": "Liquidity Pressure",
             "emi_pressure": "EMI Pressure",
             "lifestyle_inflation": "Lifestyle Inflation",
         }.get(mechanism, mechanism.replace("_", " ").title())

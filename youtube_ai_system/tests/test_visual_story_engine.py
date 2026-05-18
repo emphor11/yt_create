@@ -210,6 +210,82 @@ class VisualStoryEngineTestCase(unittest.TestCase):
         self.assertIn("salary_balance", recurring)
         self.assertNotIn("sip_jar", recurring)
 
+    def test_monthly_payment_story_world_does_not_inherit_salary_defaults(self) -> None:
+        result = VisualStoryEngine().attach_visual_story(
+            {
+                "hook": "Why does a ₹20 lakh luxury car feel affordable at ₹30,000 a month?",
+                "sections": [
+                    make_section(
+                        "payment_pain_reduction",
+                        "The ₹20 lakh luxury car becomes a ₹30,000 monthly payment.",
+                    ),
+                    make_section(
+                        "affordability_illusion",
+                        "The ₹30,000 EMI hides the full ₹20 lakh price.",
+                    ),
+                    make_section(
+                        "leverage",
+                        "The wealthy buyer keeps ₹20 lakh capital free while the asset is financed.",
+                    ),
+                    make_section(
+                        "opportunity_cost",
+                        "The same capital can stay invested instead of leaving on day one.",
+                    ),
+                ],
+            }
+        )
+
+        visual_story = result["visual_story"]
+        joined_objects = " ".join(visual_story["recurring_objects"])
+        self.assertEqual(visual_story["protagonist"]["role"], "monthly_payment_decision_maker")
+        self.assertEqual(visual_story["goal"]["label"], "see the full cost behind the monthly number")
+        self.assertIn("monthly_payment", joined_objects)
+        self.assertNotIn("salary_balance", joined_objects)
+        self.assertNotIn("phone_account", joined_objects)
+        self.assertNotIn("day 20", visual_story["goal"]["label"].lower())
+        first_state = result["sections"][0]["story_state"]
+        self.assertEqual(first_state["visual_question"], "How does the full price turn painless?")
+        self.assertNotIn("salary_balance", first_state["active_objects"])
+
+    def test_story_pipeline_uses_event_world_for_monthly_payment_topic(self) -> None:
+        payload = {
+            "hook": {"narration": "Why does a ₹20 lakh luxury car feel affordable at ₹30,000 a month?"},
+            "scenes": [
+                {
+                    "narration": (
+                        "The ₹20 lakh luxury car becomes a ₹30,000 monthly payment. "
+                        "The full price feels distant, and the monthly number feels harmless."
+                    ),
+                    "mechanism": "payment_pain_reduction",
+                },
+                {
+                    "narration": (
+                        "The first ₹30,000 EMI is followed by insurance, fuel, service, and another fixed payment. "
+                        "Small commitments become a future wall."
+                    ),
+                    "mechanism": "commitment_stacking",
+                },
+            ],
+            "outro": {"narration": "Judge the full obligation before the monthly number comforts you."},
+        }
+
+        result = StoryPipeline().build_story_plan(payload)
+        visual_story = result["visual_story"]
+
+        self.assertEqual(visual_story["protagonist"]["role"], "monthly_payment_decision_maker")
+        self.assertEqual(visual_story["goal"]["label"], "see the full cost behind the monthly number")
+        self.assertNotIn("salary_balance", visual_story["recurring_objects"])
+        self.assertNotIn("phone_account", visual_story["recurring_objects"])
+        first = result["sections"][0]
+        self.assertIn("full_price", first["story_state"]["active_objects"])
+        self.assertIn("monthly_payment", first["story_state"]["active_objects"])
+        self.assertNotIn("salary_balance", first["story_state"]["active_objects"])
+        self.assertTrue(first["visual_event_sequence"]["events"])
+        self.assertIn(
+            "monthly_payment",
+            {event["world_object"] for event in first["visual_event_sequence"]["events"]},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

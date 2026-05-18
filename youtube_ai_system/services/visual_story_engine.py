@@ -43,7 +43,7 @@ class VisualStoryEngine:
         section["concept_type"] = concept_type
         directed_data = self._extract_directed_data(section)
         existing_state = section.get("story_state") if isinstance(section.get("story_state"), dict) else {}
-        active_objects = self._objects_for_concept(concept_type, str(section.get("text") or ""))
+        active_objects = self._objects_for_section(section, concept_type, str(section.get("text") or ""))
         money_from, money_to = self._money_state(section, str(section.get("text") or ""), concept_type, directed_data)
         scene_role = self._scene_role(concept_type, 0, 1)
         protagonist_state = self._protagonist_state(concept_type, scene_role)
@@ -82,14 +82,14 @@ class VisualStoryEngine:
         ending_emotion = "confident" if any(obj in recurring_objects for obj in ("sip_jar", "portfolio_grid", "emergency_buffer")) else "aware"
         return {
             "protagonist": {
-                "role": "young_salaried_professional",
+                "role": self._protagonist_role(all_text),
                 "visual_id": "protagonist_01",
                 "emotional_state": opening_emotion,
             },
             "goal": {
                 "label": goal_label,
                 "target_amount": start_amount,
-                "desired_outcome": "keep more money by giving every rupee a job before spending begins",
+                "desired_outcome": self._desired_outcome(all_text),
             },
             "recurring_objects": recurring_objects,
             "opening_state": {
@@ -112,7 +112,7 @@ class VisualStoryEngine:
     ) -> dict[str, Any]:
         concept_type = self._concept_type(section)
         text = str(section.get("text") or "")
-        active_objects = self._objects_for_concept(concept_type, text)
+        active_objects = self._objects_for_section(section, concept_type, text)
         scene_role = self._scene_role(concept_type, index, total)
         protagonist_state = self._protagonist_state(concept_type, scene_role)
         money_from, money_to = self._money_state(section, text)
@@ -140,15 +140,39 @@ class VisualStoryEngine:
 
     def _recurring_objects(self, sections: list[dict[str, Any]]) -> list[str]:
         counts: dict[str, int] = {}
+        all_text = " ".join(str(section.get("text") or "") for section in sections)
+        monthly_context = self._monthly_payment_context(all_text)
         for section in sections:
-            for obj in self._objects_for_concept(self._concept_type(section), str(section.get("text") or "")):
+            for obj in self._objects_for_section(section, self._concept_type(section), str(section.get("text") or "")):
+                if monthly_context and obj in {"phone_account", "salary_balance"}:
+                    continue
                 counts[obj] = counts.get(obj, 0) + 1
         ranked = [obj for obj, count in sorted(counts.items(), key=lambda item: item[1], reverse=True) if count >= 2]
         if not ranked:
             ranked = [obj for obj, _ in sorted(counts.items(), key=lambda item: item[1], reverse=True)[:2]]
-        return ranked or ["phone_account", "salary_balance"]
+        return ranked or ["money_decision"]
+
+    def _objects_for_section(self, section: dict[str, Any], concept_type: str, text: str) -> list[str]:
+        sequence_objects = self._objects_from_visual_event_sequence(section.get("visual_event_sequence"))
+        concept_objects = self._objects_for_concept(concept_type, text)
+        if sequence_objects:
+            if concept_type in {"salary_drain", "salary_depletion"}:
+                combined = self._dedupe([*concept_objects, *sequence_objects])
+            else:
+                combined = self._dedupe([*sequence_objects, *concept_objects])
+            if self._monthly_payment_context(text) and concept_type not in {"salary_drain", "salary_depletion"}:
+                combined = [obj for obj in combined if obj not in {"phone_account", "salary_balance"}]
+            return [obj for obj in combined if obj in self.OBJECTS]
+        if self._monthly_payment_context(text) and concept_type not in {"salary_drain", "salary_depletion"}:
+            return [obj for obj in concept_objects if obj not in {"phone_account", "salary_balance"}] or concept_objects
+        return concept_objects
 
     def _objects_for_concept(self, concept_type: str, text: str) -> list[str]:
+        lowered_text = str(text or "").lower()
+        if concept_type == "lifestyle_inflation" and any(
+            token in lowered_text for token in ("emi", "monthly payment", "luxury car", "car loan")
+        ):
+            return ["status_upgrade", "monthly_payment"]
         mapped = self.CONCEPT_TO_OBJECTS.get(concept_type)
         if mapped:
             return list(mapped)
@@ -156,6 +180,16 @@ class VisualStoryEngine:
         if mapped:
             return list(mapped)
         return self._objects_from_text_fallback(text)
+
+    def _objects_from_visual_event_sequence(self, sequence: Any) -> list[str]:
+        if not isinstance(sequence, dict):
+            return []
+        objects = [
+            str(event.get("world_object") or "").strip()
+            for event in sequence.get("events") or []
+            if isinstance(event, dict)
+        ]
+        return self._dedupe([obj for obj in objects if obj in self.OBJECTS])
 
     def _objects_from_text_fallback(self, text: str) -> list[str]:
         lowered = str(text or "").lower()
@@ -175,6 +209,24 @@ class VisualStoryEngine:
         if "emergency" in lowered or "buffer" in lowered:
             objects.append("emergency_buffer")
         return self._dedupe([obj for obj in objects if obj in self.OBJECTS])
+
+    def _protagonist_role(self, text: str) -> str:
+        lowered = str(text or "").lower()
+        if any(token in lowered for token in ("luxury car", "monthly payment", "monthly number", "leverage", "wealthy", "rich people")):
+            return "monthly_payment_decision_maker"
+        if "salary" in lowered or "day 20" in lowered:
+            return "young_salaried_professional"
+        if any(token in lowered for token in ("portfolio", "stock", "fomo", "risk", "return")):
+            return "retail_investor"
+        return "young_salaried_professional"
+
+    def _desired_outcome(self, text: str) -> str:
+        lowered = str(text or "").lower()
+        if any(token in lowered for token in ("luxury car", "monthly payment", "emi", "leverage", "wealthy", "rich people")):
+            return "see whether the monthly payment protects capital or hides obligation"
+        if any(token in lowered for token in ("portfolio", "stock", "fomo", "risk", "return")):
+            return "turn one fragile bet into a visible risk system"
+        return "keep more money by giving every rupee a job before spending begins"
 
     def _scene_role(self, concept_type: str, index: int, total: int) -> str:
         concept_role = self.CONCEPT_TO_SCENE_ROLE.get(concept_type)
@@ -270,6 +322,14 @@ class VisualStoryEngine:
             return "What changes when time starts working?"
         if "portfolio_grid" in active_objects:
             return "What happens when one bet becomes a system?"
+        if "monthly_payment" in active_objects:
+            return "What is the monthly number hiding?"
+        if "full_price" in active_objects:
+            return "Where did the full price go?"
+        if "capital_pool" in active_objects:
+            return "What does the cash stay free to do?"
+        if "future_obligation" in active_objects:
+            return "When does the real obligation arrive?"
         return f"What changes in {concept_type.replace('_', ' ')}?"
 
     def _visual_answer(
@@ -294,6 +354,14 @@ class VisualStoryEngine:
             return "buying power keeps shrinking"
         if "debt_pressure" in active_objects:
             return "interest pressure stays visible"
+        if "monthly_payment" in active_objects and "full_price" in active_objects:
+            return "the small payment hides the full price"
+        if "capital_pool" in active_objects:
+            return "cash stays available for a higher-value use"
+        if "investment_engine" in active_objects:
+            return "capital keeps working while the payment runs"
+        if "future_obligation" in active_objects:
+            return "today's comfort becomes tomorrow's fixed claim"
         answers = {
             "salary_drain": "salary drains through fixed costs",
             "lifestyle_inflation": "expenses rise with income",
@@ -326,6 +394,16 @@ class VisualStoryEngine:
             return f"{money_from} debt → {money_to}"
         if concept_type == "emi_pressure" and money_from:
             return f"{money_from} leaves before the month begins"
+        if concept_type in {"payment_pain_reduction", "affordability_illusion", "price_anchoring", "anchoring"} and money_from:
+            return f"{money_from} gets reframed as a smaller monthly decision"
+        if concept_type == "leverage":
+            return "capital stays free while the asset is financed"
+        if concept_type == "opportunity_cost":
+            return "one payment choice creates a second path for capital"
+        if concept_type == "commitment_stacking":
+            return "small payments harden into fixed claims"
+        if concept_type == "delayed_consequence":
+            return "the cost arrives after the excitement fades"
         if money_from and money_to and money_from != money_to:
             return f"{money_from} -> {money_to}"
         labels = {
@@ -345,11 +423,29 @@ class VisualStoryEngine:
 
     def _goal_label(self, story_plan: dict[str, Any], text: str, start_amount: str) -> str:
         hook = str(story_plan.get("hook") or "").strip()
+        if any(token in text.lower() for token in ("luxury car", "monthly payment", "emi", "leverage")):
+            return "see the full cost behind the monthly number"
         if start_amount and "salary" in text.lower():
             return f"make {start_amount} last beyond day 20"
         if hook:
             return hook[:90]
         return "turn money confusion into a visible plan"
+
+    def _monthly_payment_context(self, text: str) -> bool:
+        lowered = str(text or "").lower()
+        return any(
+            token in lowered
+            for token in (
+                "monthly payment",
+                "monthly number",
+                "luxury car",
+                "car loan",
+                "financed",
+                "financing",
+                "rich people",
+                "wealthy",
+            )
+        )
 
     def _concept_type(self, section: dict[str, Any]) -> str:
         finance_concept = section.get("finance_concept") or {}

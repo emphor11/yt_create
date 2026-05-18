@@ -36,6 +36,8 @@ export type ResolvedVisualEvent = {
 	attention: number;
 	sequenceIndex: number;
 	primitiveType: string;
+	worldObject: string;
+	perceptualWorld: string;
 	activeEntity: string;
 	narrationAnchor: string;
 	suppressionTarget: string;
@@ -116,6 +118,8 @@ export const resolveVisualEvent = (
 			: -1;
 	const attention = clamp(Number(shot?.attention_weight ?? 0.72), 0.45, 1);
 	const primitiveType = String(sequenceEvent?.primitive_type ?? '');
+	const worldObject = String(sequenceEvent?.world_object ?? '');
+	const perceptualWorld = String(sequenceEvent?.perceptual_world ?? '');
 
 	return {
 		kind: resolveKind(component, phase, actionName, shotType, semanticRole, scene, sequenceEvent),
@@ -127,6 +131,8 @@ export const resolveVisualEvent = (
 		attention,
 		sequenceIndex,
 		primitiveType,
+		worldObject,
+		perceptualWorld,
 		activeEntity: String(sequenceEvent?.active_entity ?? ''),
 		narrationAnchor: String(sequenceEvent?.narration_anchor ?? ''),
 		suppressionTarget: String(sequenceEvent?.suppression_target ?? ''),
@@ -148,11 +154,13 @@ const resolveKind = (
 	const shot = shotType.toLowerCase();
 	const role = semanticRole.toLowerCase();
 	const primitive = String(sequenceEvent?.primitive_type ?? '').toLowerCase();
+	const worldObject = String(sequenceEvent?.world_object ?? '').toLowerCase();
 	const sourceMotion = String(sequenceEvent?.source_motion ?? '').toLowerCase();
 	const sourceActionId = String(sequenceEvent?.source_action_id ?? '').toLowerCase();
 	const visualPurpose = String(sequenceEvent?.visual_purpose ?? '').toLowerCase();
 
 	if (component === 'MoneyFlowDiagram') {
+		if (worldObject && !worldObject.includes('salary') && (primitive === 'arrival' || p === 'intro' || shot === 'wide_context')) return 'today_anchor';
 		if (sourceActionId.includes('salary_arrives') || action === 'salary_arrives' || primitive === 'arrival' || p === 'intro' || shot === 'wide_context') return 'salary_hero';
 		if (sourceActionId.includes('balance_revealed') || action === 'balance_revealed' || primitive === 'isolation' || p === 'remainder' || shot === 'survivor_isolation') return 'survivor_isolation';
 		if (sourceActionId.includes('expense_drains') || action === 'expense_drains' || primitive === 'attack') return 'drain_attack';
