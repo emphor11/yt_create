@@ -55,6 +55,14 @@ class VisualActionGraphBuilder:
             return self._sip_growth_actions(by_role, relationships)
         if concept_key in {"debt_trap", "loan_cost"}:
             return self._debt_actions(by_role, relationships)
+        if concept_key in {"payment_pain_reduction", "affordability_illusion", "price_anchoring", "anchoring"}:
+            return self._monthly_decision_actions(by_role)
+        if concept_key == "leverage":
+            return self._leverage_actions(by_role)
+        if concept_key in {"opportunity_cost"}:
+            return self._opportunity_cost_actions(by_role)
+        if concept_key in {"liquidity_pressure"}:
+            return self._liquidity_actions(by_role)
         if concept_key in {"emi_pressure", "emi_stack"}:
             return self._emi_actions(by_role)
         if concept_key == "lifestyle_inflation":
@@ -102,6 +110,57 @@ class VisualActionGraphBuilder:
             derived_remainder = self._first_derived(derived_values, "remaining_balance")
             if derived_remainder:
                 actions.append(self._derived_action("balance_revealed", "Remaining balance revealed", "reveal_survivor", "show_consequence", derived_remainder, priority=55))
+        return actions
+
+    def _monthly_decision_actions(self, by_role: dict[str, list[dict[str, Any]]]) -> list[VisualAction]:
+        actions: list[VisualAction] = []
+        full_price = self._first(by_role, "full_price", "principal_balance", "capital_pool")
+        monthly = self._first(by_role, "monthly_payment", "emi_payment")
+        if not full_price:
+            full_price = self._largest_money_entity(by_role)
+        if not monthly:
+            monthly = self._smallest_money_entity(by_role, exclude_entity=full_price)
+        if full_price:
+            actions.append(self._action("full_price_appears", "Full price appears", "value_hold", "establish_real_cost", full_price, priority=100))
+        if monthly:
+            actions.append(self._action("monthly_payment_reframes", "Monthly payment reframes cost", "emphasis_reveal", "show_painless_number", monthly, priority=88))
+        if full_price and monthly:
+            actions.append(self._action("full_price_suppressed", "Full price fades behind monthly number", "pressure_ring", "show_suppressed_cost", full_price, priority=70))
+        return actions
+
+    def _leverage_actions(self, by_role: dict[str, list[dict[str, Any]]]) -> list[VisualAction]:
+        actions: list[VisualAction] = []
+        capital = self._first(by_role, "capital_pool", "full_price", "principal_balance") or self._largest_money_entity(by_role)
+        monthly = self._first(by_role, "monthly_payment", "emi_payment")
+        return_value = self._first(by_role, "investment_return", "annual_return_rate", "target_corpus")
+        if capital:
+            actions.append(self._action("capital_preserved", "Capital stays free", "value_hold", "show_available_capital", capital, priority=100))
+        if monthly:
+            actions.append(self._action("asset_financed", "Asset is financed monthly", "timeline_expand", "show_financing_path", monthly, priority=82))
+        if return_value:
+            actions.append(self._action("capital_put_to_work", "Capital works elsewhere", "growth_curve_pull", "show_alternative_return", return_value, priority=76))
+        return actions
+
+    def _opportunity_cost_actions(self, by_role: dict[str, list[dict[str, Any]]]) -> list[VisualAction]:
+        actions: list[VisualAction] = []
+        capital = self._first(by_role, "capital_pool", "full_price", "principal_balance") or self._largest_money_entity(by_role)
+        missed_return = self._first(by_role, "investment_return", "annual_return_rate", "target_corpus") or self._smallest_money_entity(by_role, exclude_entity=capital)
+        if capital:
+            actions.append(self._action("capital_choice_anchors", "Capital choice anchors", "value_hold", "establish_choice_amount", capital, priority=100))
+        if missed_return:
+            actions.append(self._action("missed_return_reveals", "Missed return becomes visible", "growth_curve_pull", "show_opportunity_gap", missed_return, priority=82))
+        if capital:
+            actions.append(self._action("opportunity_gap_opens", "Opportunity gap opens", "timeline_expand", "show_second_path", capital, priority=65))
+        return actions
+
+    def _liquidity_actions(self, by_role: dict[str, list[dict[str, Any]]]) -> list[VisualAction]:
+        actions: list[VisualAction] = []
+        capital = self._first(by_role, "capital_pool", "full_price", "principal_balance") or self._largest_money_entity(by_role)
+        monthly = self._first(by_role, "monthly_payment", "emi_payment")
+        if capital:
+            actions.append(self._action("liquidity_reserve_stays", "Liquidity stays available", "reveal_survivor", "show_available_cash", capital, priority=100))
+        if monthly:
+            actions.append(self._action("monthly_claim_attaches", "Monthly claim attaches", "timeline_expand", "show_small_recurring_claim", monthly, priority=80))
         return actions
 
     def _sip_growth_actions(self, by_role: dict[str, list[dict[str, Any]]], relationships: list[dict[str, Any]]) -> list[VisualAction]:
@@ -302,6 +361,39 @@ class VisualActionGraphBuilder:
             if values:
                 return values[0]
         return None
+
+    def _largest_money_entity(self, by_role: dict[str, list[dict[str, Any]]]) -> dict[str, Any] | None:
+        return self._money_entity_by_amount(by_role, reverse=True)
+
+    def _smallest_money_entity(
+        self,
+        by_role: dict[str, list[dict[str, Any]]],
+        *,
+        exclude_entity: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        return self._money_entity_by_amount(by_role, reverse=False, exclude_entity=exclude_entity)
+
+    def _money_entity_by_amount(
+        self,
+        by_role: dict[str, list[dict[str, Any]]],
+        *,
+        reverse: bool,
+        exclude_entity: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        excluded_id = self._entity_id(exclude_entity)
+        candidates: list[dict[str, Any]] = []
+        for entities in by_role.values():
+            for entity in entities:
+                if excluded_id and self._entity_id(entity) == excluded_id:
+                    continue
+                try:
+                    amount = float(entity.get("value") or 0)
+                except (TypeError, ValueError):
+                    amount = 0.0
+                if amount > 0 and str(entity.get("kind") or "") == "money":
+                    candidates.append(entity)
+        candidates.sort(key=lambda entity: float(entity.get("value") or 0), reverse=reverse)
+        return candidates[0] if candidates else None
 
     def _first_derived(self, derived_values: list[dict[str, Any]], label: str) -> dict[str, Any] | None:
         return next((value for value in derived_values if str(value.get("label") or "") == label), None)

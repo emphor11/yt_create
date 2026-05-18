@@ -474,8 +474,20 @@ class VisualStoryEngine:
             return "salary_drain"
         if "credit card" in lowered or "minimum payment" in lowered or "minimum due" in lowered:
             return "debt_trap"
+        if "opportunity cost" in lowered or "missed return" in lowered or ("instead" in lowered and "invest" in lowered):
+            return "opportunity_cost"
+        if "leverage" in lowered or ("capital" in lowered and any(token in lowered for token in ("emi", "monthly payment", "loan"))):
+            return "leverage"
+        if "liquidity" in lowered or "cash stays free" in lowered:
+            return "liquidity_pressure"
+        if "payment pain" in lowered or "painless" in lowered:
+            return "payment_pain_reduction"
+        if "affordability illusion" in lowered or "within reach" in lowered:
+            return "affordability_illusion"
+        if "anchoring" in lowered or "anchor" in lowered or "price tag" in lowered:
+            return "anchoring"
         if "emi" in lowered or "instalment" in lowered or "installment" in lowered:
-            return "emi_pressure"
+            return "cash_flow_squeeze" if self._monthly_payment_context(lowered) else "emi_pressure"
         if "sip" in lowered:
             return "sip_growth"
         if "compound" in lowered or "compounding" in lowered:

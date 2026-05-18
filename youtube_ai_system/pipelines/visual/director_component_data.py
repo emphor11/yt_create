@@ -30,7 +30,11 @@ class VisualDirectorComponentDataMixin:
         ]
         if not emi_amounts:
             emi_amounts = [4000.0, 6500.0, 7500.0]
-        labels = ["Phone EMI", "Bike EMI", "Personal loan", "Credit card", "Other EMI"]
+        lowered = text.lower()
+        if "car" in lowered or "mercedes" in lowered or "luxury" in lowered:
+            labels = ["Car EMI", "Insurance", "Service plan", "Fuel upgrade", "Status add-on"]
+        else:
+            labels = ["Phone EMI", "Bike EMI", "Personal loan", "Credit card", "Other EMI"]
         emis = [
             {"label": labels[index] if index < len(labels) else f"EMI {index + 1}", "value": self._format_rupee(amount), "amount": amount}
             for index, amount in enumerate(emi_amounts[:5])
@@ -146,11 +150,12 @@ class VisualDirectorComponentDataMixin:
         return base_items
 
     def _comparison_data(self, director_input: VisualDirectorInput, concept_type: str) -> dict[str, Any]:
+        semantic_pair = self._semantic_comparison_pair(director_input)
         amount = self._semantic_first_money_amount(director_input) or self._parse_rupee(director_input.start_value) or self._parse_rupee(director_input.narration_text)
         mentions = self._money_mentions(director_input.narration_text)
         values = [str(item.get("value") or "") for item in mentions if item.get("value")]
-        high_value = values[0] if values else (self._format_rupee(amount) if amount is not None else "full price")
-        low_value = values[1] if len(values) > 1 else (self._format_rupee(amount) if amount is not None else "monthly number")
+        high_value = semantic_pair.get("high") or (values[0] if values else (self._format_rupee(amount) if amount is not None else "full price"))
+        low_value = semantic_pair.get("low") or (values[1] if len(values) > 1 else (self._format_rupee(amount) if amount is not None else "monthly number"))
         if concept_type == "affordability_illusion":
             return {
                 "left": {"label": "Real price", "value": high_value},
@@ -202,6 +207,43 @@ class VisualDirectorComponentDataMixin:
                 return {"left": {"label": "Spend today", "value": self._format_rupee(amount)}, "right": {"label": "Invest monthly", "value": self._format_rupee(amount)}, "punch": "Small choice compounds", "accent": "orange"}
             return {"left": {"label": "Spend today", "value": "instant"}, "right": {"label": "Invest instead", "value": "future"}, "punch": "Small choice compounds", "accent": "orange"}
         return {"left": {"label": "Path A", "value": "today"}, "right": {"label": "Path B", "value": "future"}, "punch": "Choose the better path", "accent": "teal"}
+
+    def _semantic_comparison_pair(self, director_input: VisualDirectorInput) -> dict[str, str]:
+        by_role = self._semantic_entities_by_role(director_input)
+        high_entity = self._semantic_entity(director_input, "full_price", "capital_pool", "principal_balance")
+        low_entity = self._semantic_entity(director_input, "monthly_payment", "emi_payment")
+        if not high_entity:
+            high_entity = self._semantic_money_extreme(by_role, reverse=True)
+        if not low_entity:
+            low_entity = self._semantic_money_extreme(by_role, reverse=False, exclude_entity=high_entity)
+        return {
+            "high": str((high_entity or {}).get("display_value") or ""),
+            "low": str((low_entity or {}).get("display_value") or ""),
+        }
+
+    def _semantic_money_extreme(
+        self,
+        by_role: dict[str, list[dict[str, Any]]],
+        *,
+        reverse: bool,
+        exclude_entity: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        excluded_id = str((exclude_entity or {}).get("id") or "")
+        candidates: list[dict[str, Any]] = []
+        for entities in by_role.values():
+            for entity in entities:
+                if excluded_id and str(entity.get("id") or "") == excluded_id:
+                    continue
+                if str(entity.get("kind") or "") != "money":
+                    continue
+                try:
+                    amount = float(entity.get("value") or 0)
+                except (TypeError, ValueError):
+                    amount = 0.0
+                if amount > 0:
+                    candidates.append(entity)
+        candidates.sort(key=lambda entity: float(entity.get("value") or 0), reverse=reverse)
+        return candidates[0] if candidates else None
 
     def _risk_return_data(self, director_input: VisualDirectorInput) -> dict[str, Any]:
         text = director_input.narration_text

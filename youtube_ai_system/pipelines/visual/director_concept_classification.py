@@ -71,6 +71,24 @@ class VisualDirectorConceptClassificationMixin:
             return "debt_trap"
         if "debt" in text and any(token in text for token in ("interest", "compound", "grows", "trapped", "trap")):
             return "debt_trap"
+        if "opportunity cost" in text or "could have been" in text or (
+            "instead" in text and any(token in text for token in ("invest", "sip", "fd", "savings", "corpus", "compound", "return", "capital"))
+        ):
+            return "opportunity_cost"
+        if "leverage" in text or (
+            any(token in text for token in ("rich", "wealthy", "capital", "liquidity"))
+            and any(token in text for token in ("finance", "financed", "loan", "emi", "monthly payment"))
+            and any(token in text for token in ("invest", "return", "asset", "cash stays", "free"))
+        ):
+            return "leverage"
+        if "liquidity" in text or "cash stays free" in text or "cash reserve" in text:
+            return "liquidity_pressure"
+        if "payment pain" in text or "painless" in text or "emotionally painless" in text:
+            return "payment_pain_reduction"
+        if "affordability illusion" in text or ("within reach" in text and any(token in text for token in ("emi", "monthly", "payment"))):
+            return "affordability_illusion"
+        if "anchoring" in text or "anchor" in text or "sticker price" in text or "price tag" in text:
+            return "anchoring"
         if "emi" in text and any(token in text for token in ("pressure", "burden", "loan", "interest", "stack", "takes", "fixed", "month")):
             return "emi_pressure"
         if "salary" in text and any(token in text for token in ("drain", "depletion", "disappear", "vanish", "left", "gone", "empty", "broke")):
@@ -107,11 +125,6 @@ class VisualDirectorConceptClassificationMixin:
             return "expense_leakage"
         if "emergency fund" in text or "cash buffer" in text:
             return "emergency_fund"
-        # opportunity_cost: require specific intent, not just "instead"
-        if "opportunity cost" in text or "could have been" in text or (
-            "instead" in text and any(token in text for token in ("invest", "sip", "fd", "savings", "corpus", "compound"))
-        ):
-            return "opportunity_cost"
         if "risk" in text and "return" in text:
             return "risk_return"
         # tax_saving: only when an explicit planning/saving action is present

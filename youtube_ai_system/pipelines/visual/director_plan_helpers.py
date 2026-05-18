@@ -268,13 +268,12 @@ class VisualDirectorPlanHelpersMixin(VisualDirectorDataHelpersMixin):
         if not emi_entities:
             return None
         salary_amount = self._semantic_money_amount(self._semantic_entity(director_input, "salary_income")) or self._parse_rupee(director_input.start_value) or 50000.0
-        labels = ["Phone EMI", "Bike EMI", "Personal loan", "Credit card", "Other EMI"]
         emis = []
         for index, entity in enumerate(emi_entities[:5]):
             amount = self._semantic_money_amount(entity)
             if amount is None:
                 continue
-            emis.append({"label": labels[index] if index < len(labels) else f"EMI {index + 1}", "value": self._format_rupee(amount), "amount": amount})
+            emis.append({"label": self._semantic_emi_label(entity, index), "value": self._format_rupee(amount), "amount": amount})
         if not emis:
             return None
         total_emi = sum(float(item["amount"]) for item in emis)
@@ -297,6 +296,22 @@ class VisualDirectorPlanHelpersMixin(VisualDirectorDataHelpersMixin):
             "semantic_source": "semantic_scene_contract",
         }
 
+    def _semantic_emi_label(self, entity: dict[str, Any], index: int) -> str:
+        source = str(entity.get("source_text") or "").lower()
+        if "car" in source or "mercedes" in source:
+            return "Car EMI"
+        if "home" in source or "house" in source:
+            return "Home loan"
+        if "phone" in source:
+            return "Phone EMI"
+        if "bike" in source:
+            return "Bike EMI"
+        if "personal" in source:
+            return "Personal loan"
+        if "credit card" in source:
+            return "Credit card"
+        return "Monthly payment" if index == 0 else f"Payment {index + 1}"
+
     def _semantic_inflation_return_data(self, director_input: VisualDirectorInput) -> dict[str, Any] | None:
         rate = self._semantic_rate(director_input, "inflation_rate")
         amount_entity = self._semantic_entity(director_input, "principal_balance", "salary_income")
@@ -314,4 +329,3 @@ class VisualDirectorPlanHelpersMixin(VisualDirectorDataHelpersMixin):
             "rate_label": f"{float(rate):g}% for {duration_years} years",
             "semantic_source": "semantic_scene_contract",
         }
-

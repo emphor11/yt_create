@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ..contracts.visual_event_sequence import VisualEvent, VisualEventSequence
@@ -81,12 +82,23 @@ class VisualEventSequenceBuilder:
                     "message": "visual event sequence requires VisualActionGraph input",
                 }
             )
+        text = self._section_text(section, semantic_scene)
+        object_policy = self._object_policy(primary_concept, text)
         events = [
-            self._event_for_action(action, index, len(actions), primary_concept, section)
+            self._event_for_action(action, index, len(actions), primary_concept, section, object_policy, warnings)
             for index, action in enumerate(actions)
         ]
         if not events:
             warnings.append({"code": "no_visual_events", "message": "no visual events could be derived"})
+        fidelity = self._fidelity(events, object_policy)
+        if fidelity.get("forbidden_hits"):
+            warnings.append(
+                {
+                    "code": "forbidden_world_object_repaired",
+                    "message": "one or more events tried to use objects outside the scene contract",
+                    "objects": fidelity["forbidden_hits"],
+                }
+            )
         confidence = self._confidence(float(graph.get("confidence") or semantic_scene.get("confidence") or 0.5), events, warnings)
         return VisualEventSequence(
             scene_id=scene_id,
@@ -94,6 +106,10 @@ class VisualEventSequenceBuilder:
             events=events,
             warnings=warnings,
             confidence=confidence,
+            allowed_world_objects=object_policy["allowed"],
+            forbidden_world_objects=object_policy["forbidden"],
+            recurring_example=self._recurring_example(text),
+            fidelity=fidelity,
         )
 
     def build_dict(self, section: dict[str, Any] | None) -> dict[str, Any]:
@@ -106,11 +122,24 @@ class VisualEventSequenceBuilder:
         total: int,
         primary_concept: dict[str, Any],
         section: dict[str, Any],
+        object_policy: dict[str, list[str]],
+        warnings: list[dict[str, Any]],
     ) -> VisualEvent:
         value = dict(action.get("value") or {})
         active_entity = self._active_entity(action, value)
         primitive = self.MOTION_TO_PRIMITIVE.get(str(action.get("motion") or ""), "reveal")
-        world_object = self._world_object(action, value, primary_concept, primitive)
+        raw_world_object = self._world_object(action, value, primary_concept, primitive)
+        world_object = self._contract_world_object(raw_world_object, action, primary_concept, primitive, object_policy)
+        if raw_world_object != world_object:
+            warnings.append(
+                {
+                    "code": "world_object_repaired",
+                    "message": "visual event world object was repaired to match the scene contract",
+                    "from": raw_world_object,
+                    "to": world_object,
+                    "action": str(action.get("action") or ""),
+                }
+            )
         direction = self._emotional_direction(primary_concept, section, primitive)
         timing = self._timing(index, total)
         return VisualEvent(
@@ -156,6 +185,16 @@ class VisualEventSequenceBuilder:
         action_name = str(action.get("action") or "").strip().lower()
         intent = str(action.get("intent") or "").strip().lower()
         label = " ".join([semantic_role, action_name, intent, str(value.get("kind") or "")]).lower()
+        if semantic_role in {"full_price", "asset_price", "purchase_price"}:
+            return "full_price"
+        if semantic_role in {"monthly_payment", "emi_payment", "minimum_payment"}:
+            return "monthly_payment"
+        if semantic_role in {"capital_pool", "liquidity_reserve", "principal_balance"} and concept_key in {"leverage", "liquidity_pressure", "opportunity_cost"}:
+            return "capital_pool"
+        if semantic_role in {"investment_return", "annual_return_rate", "target_corpus", "target_value"}:
+            return "investment_engine"
+        if semantic_role in {"salary_income", "remaining_balance"}:
+            return "salary_balance"
         if "emi" in label or "monthly" in label:
             return "monthly_payment"
         if "interest" in label or "future" in label or "obligation" in label:
@@ -186,6 +225,118 @@ class VisualEventSequenceBuilder:
         if concept_key in {"delayed_consequence", "debt_trap"}:
             return "future_obligation"
         return "money_decision"
+
+    def _contract_world_object(
+        self,
+        world_object: str,
+        action: dict[str, Any],
+        primary_concept: dict[str, Any],
+        primitive: str,
+        object_policy: dict[str, list[str]],
+    ) -> str:
+        allowed = object_policy.get("allowed") or []
+        forbidden = set(object_policy.get("forbidden") or [])
+        if world_object and world_object not in forbidden and (not allowed or world_object in allowed):
+            return world_object
+        concept_key = str(primary_concept.get("key") or "").strip().lower()
+        semantic_role = str(action.get("semantic_role") or "").strip().lower()
+        if semantic_role in {"full_price", "asset_price", "purchase_price"} and "full_price" in allowed:
+            return "full_price"
+        if semantic_role in {"monthly_payment", "emi_payment", "minimum_payment"} and "monthly_payment" in allowed:
+            return "monthly_payment"
+        if semantic_role in {"investment_return", "annual_return_rate", "target_corpus"} and "investment_engine" in allowed:
+            return "investment_engine"
+        if semantic_role in {"capital_pool", "principal_balance"} and "capital_pool" in allowed:
+            return "capital_pool"
+        if concept_key in {"payment_pain_reduction", "affordability_illusion", "anchoring", "price_anchoring"}:
+            return "monthly_payment" if primitive in {"reveal", "compression"} and "monthly_payment" in allowed else (allowed[0] if allowed else "money_decision")
+        if concept_key == "leverage" and "capital_pool" in allowed:
+            return "capital_pool"
+        if concept_key == "opportunity_cost" and "opportunity_gap" in allowed:
+            return "opportunity_gap"
+        return allowed[0] if allowed else "money_decision"
+
+    def _object_policy(self, primary_concept: dict[str, Any], text: str) -> dict[str, list[str]]:
+        concept_key = str(primary_concept.get("key") or "").strip().lower()
+        monthly_decision = self._monthly_decision_context(text)
+        policies = {
+            "payment_pain_reduction": {
+                "allowed": ["full_price", "monthly_payment", "financed_asset"],
+                "forbidden": ["salary_balance", "phone_account", "emi_stack"],
+            },
+            "affordability_illusion": {
+                "allowed": ["monthly_payment", "full_price", "financed_asset"],
+                "forbidden": ["salary_balance", "phone_account", "emi_stack"],
+            },
+            "price_anchoring": {
+                "allowed": ["full_price", "monthly_payment", "financed_asset"],
+                "forbidden": ["salary_balance", "phone_account", "emi_stack"],
+            },
+            "anchoring": {
+                "allowed": ["full_price", "monthly_payment", "financed_asset"],
+                "forbidden": ["salary_balance", "phone_account", "emi_stack"],
+            },
+            "leverage": {
+                "allowed": ["capital_pool", "financed_asset", "investment_engine", "monthly_payment", "future_obligation"],
+                "forbidden": ["salary_balance", "phone_account", "emi_stack"],
+            },
+            "liquidity_pressure": {
+                "allowed": ["capital_pool", "financed_asset", "monthly_payment", "future_obligation"],
+                "forbidden": ["salary_balance", "phone_account", "emi_stack"],
+            },
+            "opportunity_cost": {
+                "allowed": ["capital_pool", "investment_engine", "opportunity_gap", "financed_asset", "full_price"],
+                "forbidden": ["salary_balance", "phone_account", "emi_stack"],
+            },
+            "lifestyle_inflation": {
+                "allowed": ["status_upgrade", "monthly_payment", "future_obligation", "financed_asset"],
+                "forbidden": ["phone_account", "salary_balance"] if monthly_decision else [],
+            },
+            "debt_trap": {
+                "allowed": ["future_obligation", "debt_pressure", "monthly_payment"],
+                "forbidden": ["phone_account", "salary_balance", "emi_stack"] if monthly_decision else [],
+            },
+        }
+        return policies.get(concept_key, {"allowed": [], "forbidden": []})
+
+    def _fidelity(self, events: list[VisualEvent], object_policy: dict[str, list[str]]) -> dict[str, Any]:
+        allowed = set(object_policy.get("allowed") or [])
+        forbidden = set(object_policy.get("forbidden") or [])
+        objects = [event.world_object for event in events]
+        forbidden_hits = sorted({obj for obj in objects if obj in forbidden})
+        off_contract = sorted({obj for obj in objects if allowed and obj not in allowed})
+        return {
+            "world_objects": objects,
+            "forbidden_hits": forbidden_hits,
+            "off_contract_objects": off_contract,
+            "object_contract_ok": not forbidden_hits and not off_contract,
+        }
+
+    def _section_text(self, section: dict[str, Any], semantic_scene: dict[str, Any]) -> str:
+        return " ".join(
+            str(
+                section.get("text")
+                or section.get("narration")
+                or semantic_scene.get("narration")
+                or ""
+            ).split()
+        )
+
+    def _recurring_example(self, text: str) -> dict[str, Any]:
+        lowered = text.lower()
+        example: dict[str, Any] = {}
+        if any(token in lowered for token in ("car", "mercedes", "luxury")):
+            example["asset"] = "luxury_car"
+        money_mentions = []
+        for raw in re.finditer(r"₹\s*[\d,]+(?:\.\d+)?\s*(?:lakh|lakhs|crore|crores)?", text, re.IGNORECASE):
+            money_mentions.append(raw.group(0).strip())
+        if money_mentions:
+            example["spoken_values"] = money_mentions[:4]
+        return example
+
+    def _monthly_decision_context(self, text: str) -> bool:
+        lowered = text.lower()
+        return any(token in lowered for token in ("monthly payment", "emi", "luxury car", "mercedes", "rich people", "wealthy", "financed", "financing"))
 
     def _emotional_direction(self, primary_concept: dict[str, Any], section: dict[str, Any], primitive: str) -> str:
         concept_key = str(primary_concept.get("key") or section.get("concept_type") or "").strip().lower()

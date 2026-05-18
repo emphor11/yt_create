@@ -187,6 +187,47 @@ class VisualActionGraphTestCase(unittest.TestCase):
         self.assertIn("monthly_payment", world_objects)
         self.assertNotIn("salary_balance", world_objects)
 
+    def test_monthly_payment_contract_keeps_full_price_and_emi_separate(self) -> None:
+        contract = self.contract_for(
+            "The full price of the Mercedes is ₹70 lakh. The monthly EMI is ₹1.2 lakh. Payment pain reduction makes the expensive car feel emotionally painless.",
+            dominant_entity="monthly payment",
+            idea_type="mechanism",
+        )
+        contract["primary_concept"] = {"key": "payment_pain_reduction", "label": "Payment Pain Reduction"}
+
+        roles = {entity["display_value"]: entity["role"] for entity in contract["entities"]}
+        self.assertEqual(roles["₹70 lakh"], "full_price")
+        self.assertEqual(roles["₹1.2 lakh"], "monthly_payment")
+
+        graph = self.builder.build_dict(contract)
+        sequence = self.event_builder.build_dict({"semantic_scene": contract, "visual_action_graph": graph})
+        world_objects = {event["world_object"] for event in sequence["events"]}
+
+        self.assertIn("full_price", world_objects)
+        self.assertIn("monthly_payment", world_objects)
+        self.assertNotIn("salary_balance", world_objects)
+        self.assertNotIn("emi_stack", world_objects)
+        self.assertEqual(sequence["forbidden_world_objects"], ["salary_balance", "phone_account", "emi_stack"])
+        self.assertTrue(sequence["fidelity"]["object_contract_ok"])
+
+    def test_leverage_contract_uses_capital_objects_not_salary_defaults(self) -> None:
+        contract = self.contract_for(
+            "Instead of paying ₹70 lakh cash for the Mercedes, the wealthy buyer uses a ₹1.2 lakh monthly EMI and keeps the capital invested for a 10% return.",
+            dominant_entity="capital",
+            idea_type="mechanism",
+        )
+        contract["primary_concept"] = {"key": "leverage", "label": "Leverage"}
+
+        graph = self.builder.build_dict(contract)
+        sequence = self.event_builder.build_dict({"semantic_scene": contract, "visual_action_graph": graph})
+        world_objects = {event["world_object"] for event in sequence["events"]}
+
+        self.assertIn("capital_pool", world_objects)
+        self.assertIn("monthly_payment", world_objects)
+        self.assertIn("investment_engine", world_objects)
+        self.assertNotIn("salary_balance", world_objects)
+        self.assertNotIn("emi_stack", world_objects)
+
     def test_empty_semantic_contract_returns_warning_not_fallback_narration_parse(self) -> None:
         graph = self.builder.build_dict({"source": "semantic_scene_contract_v1", "scene_id": "empty", "primary_concept": {"key": "salary_drain"}})
 

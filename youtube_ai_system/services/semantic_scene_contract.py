@@ -102,6 +102,8 @@ class SemanticSceneContractExtractor:
         window = self._window_for_raw(sentence, raw).lower()
         before_raw, after_raw = self._context_for_raw(sentence, raw)
         if numeric_role in {"start_income", "end_income", "income"}:
+            if not any(token in lowered for token in ("salary", "income", "raise", "hike", "earns", "earning")):
+                return self._non_income_money_role(lowered, window, before_raw, after_raw)
             return "salary_income"
         if numeric_role == "monthly_sip":
             return "monthly_sip"
@@ -123,6 +125,12 @@ class SemanticSceneContractExtractor:
         if numeric_role == "principal":
             if "debt" in lowered or "credit card" in lowered or "balance" in lowered:
                 return "debt_principal"
+            if self._is_strong_full_price_context(window, before_raw):
+                return "full_price"
+            if self._is_monthly_payment_context(window, before_raw, after_raw):
+                return "monthly_payment"
+            if self._is_full_price_context(lowered, window, before_raw, after_raw):
+                return "full_price"
             return "principal_balance"
         if numeric_role == "rate":
             if "inflation" in lowered or "prices" in lowered:
@@ -135,6 +143,22 @@ class SemanticSceneContractExtractor:
         if numeric_role == "duration":
             return "time_period"
         if numeric_role == "money_amount":
+            if "salary" in lowered or "income" in lowered:
+                if self._is_monthly_payment_context(window, before_raw, after_raw):
+                    return "emi_payment"
+                return "salary_income"
+            if self._is_strong_full_price_context(window, before_raw):
+                return "full_price"
+            if self._is_monthly_payment_context(window, before_raw, after_raw):
+                if any(token in lowered for token in ("salary", "income", "paycheck")) or self._is_expense_drain_context(window, before_raw, after_raw):
+                    return "emi_payment"
+                return "monthly_payment"
+            if self._is_full_price_context(lowered, window, before_raw, after_raw):
+                return "full_price"
+            if any(token in window or token in before_raw or token in after_raw for token in ("invest", "capital", "liquidity", "cash reserve", "cash stays", "bank account")):
+                return "capital_pool"
+            if any(token in window or token in before_raw or token in after_raw for token in ("return", "profit", "yield", "missed", "opportunity")):
+                return "investment_return"
             if "emi" in lowered:
                 return "emi_payment"
             if "rent" in lowered:
@@ -147,14 +171,12 @@ class SemanticSceneContractExtractor:
                 return "minimum_payment"
             if "interest" in lowered:
                 return "interest_charge"
-            if "salary" in lowered or "income" in lowered:
-                return "salary_income"
         return numeric_role or "number"
 
     def _direction_for_role(self, role: str, sentence: str) -> str:
         if role in {"salary_income", "target_corpus", "target_value"}:
             return "inflow"
-        if role in {"emi_payment", "rent_expense", "living_expense", "minimum_payment"}:
+        if role in {"emi_payment", "monthly_payment", "rent_expense", "living_expense", "minimum_payment"}:
             return "outflow"
         if role in {"inflation_rate", "interest_charge", "annual_interest_rate"}:
             return "pressure"
@@ -174,7 +196,7 @@ class SemanticSceneContractExtractor:
             return "rate"
         if role == "time_period":
             return "duration"
-        if unit == "inr" or role in {"monthly_sip", "salary_income", "target_corpus"}:
+        if unit == "inr" or role in {"monthly_sip", "salary_income", "target_corpus", "full_price", "monthly_payment", "capital_pool", "investment_return"}:
             return "money"
         return "number"
 
@@ -414,3 +436,57 @@ class SemanticSceneContractExtractor:
         before = sentence[max(0, index - radius) : index].lower()
         after = sentence[index + len(raw) : index + len(raw) + radius].lower()
         return before, after
+
+    def _non_income_money_role(self, lowered: str, window: str, before_raw: str, after_raw: str) -> str:
+        if self._is_monthly_payment_context(window, before_raw, after_raw):
+            return "monthly_payment"
+        if self._is_full_price_context(lowered, window, before_raw, after_raw):
+            return "full_price"
+        if any(token in window or token in before_raw or token in after_raw for token in ("invest", "capital", "liquidity", "cash", "bank account")):
+            return "capital_pool"
+        return "principal_balance"
+
+    def _is_monthly_payment_context(self, window: str, before_raw: str, after_raw: str) -> bool:
+        context = f"{before_raw} {window} {after_raw}"
+        return any(
+            token in context
+            for token in (
+                "emi",
+                "monthly payment",
+                "per month",
+                "a month",
+                "each month",
+                "monthly number",
+                "lease",
+                "instalment",
+                "installment",
+            )
+        )
+
+    def _is_full_price_context(self, lowered: str, window: str, before_raw: str, after_raw: str) -> bool:
+        context = f"{before_raw} {window} {after_raw}"
+        return any(
+            token in context
+            for token in (
+                "full price",
+                "price tag",
+                "sticker",
+                "costs",
+                "cost ",
+                "cash price",
+                "upfront",
+                "mercedes",
+                "luxury car",
+                "car",
+                "asset",
+                "purchase",
+            )
+        ) and not self._is_monthly_payment_context(window, before_raw, after_raw)
+
+    def _is_strong_full_price_context(self, window: str, before_raw: str) -> bool:
+        context = f"{before_raw} {window}"
+        return any(token in context for token in ("full price", "price tag", "sticker", "cash price", "cost is", "costs", "upfront"))
+
+    def _is_expense_drain_context(self, window: str, before_raw: str, after_raw: str) -> bool:
+        context = f"{before_raw} {window} {after_raw}"
+        return any(token in context for token in ("goes to", "takes", "leaves", "drains", "auto-debit", "autodebit", "claimed by"))

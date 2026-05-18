@@ -67,7 +67,7 @@ CONCEPT_TO_SCENE_ROLE = {
 CONCEPT_TO_OBJECTS = {
     "salary_drain": ["phone_account", "salary_balance"],
     "salary_depletion": ["phone_account", "salary_balance"],
-    "lifestyle_inflation": ["phone_account", "salary_balance"],
+    "lifestyle_inflation": ["status_upgrade", "monthly_payment"],
     "expense_leakage": ["phone_account", "salary_balance"],
     "rent_burden": ["phone_account", "salary_balance"],
     "tax_drain": ["phone_account", "salary_balance"],

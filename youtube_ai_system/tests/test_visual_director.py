@@ -142,6 +142,55 @@ class VisualDirectorTestCase(unittest.TestCase):
         self.assertEqual([flow["label"] for flow in result.data["flows"]], ["EMI", "Food + travel", "Rent"])
         self.assertEqual(result.data["semantic_source"], "semantic_scene_contract")
 
+    def test_payment_pain_reduction_uses_split_comparison_not_emi_stack(self) -> None:
+        story_plan = StoryPipeline().build_story_plan(
+            {
+                "hook": {"narration": "Why do rich people use monthly payments?"},
+                "scenes": [
+                    {
+                        "narration": "The full price of the Mercedes is ₹70 lakh. The monthly EMI is ₹1.2 lakh. Payment pain reduction makes the expensive car feel emotionally painless.",
+                        "mechanism": "payment_pain_reduction",
+                        "visual_scene": {"mechanism": "payment_pain_reduction"},
+                    }
+                ],
+            }
+        )
+
+        section = story_plan["sections"][-1]
+        visual = section["visual_plan"][0]["visual"]
+        event_sequence = section["visual_event_sequence"]
+
+        self.assertEqual(section["concept_type"], "payment_pain_reduction")
+        self.assertEqual(visual["pattern"], "SplitComparison")
+        self.assertEqual(visual["data"]["left"]["value"], "₹70 lakh")
+        self.assertEqual(visual["data"]["right"]["value"], "₹1.2 lakh")
+        self.assertNotIn("salary_balance", event_sequence["fidelity"]["world_objects"])
+        self.assertNotIn("emi_stack", event_sequence["fidelity"]["world_objects"])
+
+    def test_rich_monthly_payment_scenes_do_not_invent_phone_or_bike_emi(self) -> None:
+        story_plan = StoryPipeline().build_story_plan(
+            {
+                "hook": {"narration": "Why do rich people use monthly payments?"},
+                "scenes": [
+                    {
+                        "narration": "Instead of paying ₹70 lakh cash for the Mercedes, the wealthy buyer uses a ₹1.2 lakh monthly EMI and keeps the capital invested for a 10% return.",
+                        "mechanism": "leverage",
+                        "visual_scene": {"mechanism": "leverage"},
+                    }
+                ],
+            }
+        )
+
+        section = story_plan["sections"][-1]
+        visual = section["visual_plan"][0]["visual"]
+        serialized = str(visual)
+
+        self.assertEqual(section["concept_type"], "leverage")
+        self.assertEqual(visual["pattern"], "SplitComparison")
+        self.assertNotIn("Phone EMI", serialized)
+        self.assertNotIn("Bike EMI", serialized)
+        self.assertNotIn("salary", serialized.lower())
+
     def test_money_flow_diagram_data_correctness(self) -> None:
         narration = (
             "My ₹50,000 salary disappears every month. EMI takes ₹18,000, rent takes ₹12,000, "
