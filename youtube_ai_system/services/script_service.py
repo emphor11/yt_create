@@ -723,10 +723,10 @@ class ScriptService:
         repaired["hook"] = hook
         repaired["outro"] = outro
         replacement = self._script_brief_replacement_phrase(script_brief)
-        by_location: dict[str, list[str]] = {}
+        by_location: dict[str, list[dict[str, str]]] = {}
         for hit in forbidden_hits:
-            by_location.setdefault(str(hit.get("location") or ""), []).append(str(hit.get("phrase") or ""))
-        for location, phrases in by_location.items():
+            by_location.setdefault(str(hit.get("location") or ""), []).append(hit)
+        for location, hits in by_location.items():
             target: dict[str, Any] | None = None
             if location == "hook":
                 target = hook
@@ -742,13 +742,17 @@ class ScriptService:
             if not target:
                 continue
             narration = str(target.get("narration") or "")
-            for phrase in phrases:
+            for hit in hits:
+                phrase = str(hit.get("phrase") or "")
+                marker = str(hit.get("marker") or "")
                 if phrase:
                     narration = self._replace_forbidden_phrase(narration, phrase, replacement)
+                if marker:
+                    narration = self._replace_forbidden_semantic_marker(narration, marker)
             target["narration"] = " ".join(narration.split())
         repaired.setdefault("meta", {}).setdefault("script_brief_repairs", []).append(
             {
-                "kind": "forbidden_drift_phrase_replacement",
+                "kind": "forbidden_drift_replacement",
                 "locations": sorted(by_location),
             }
         )
@@ -851,6 +855,22 @@ class ScriptService:
         pattern = re.compile(re.escape(phrase), flags=re.IGNORECASE)
         return pattern.sub(replacement, narration)
 
+    def _replace_forbidden_semantic_marker(self, narration: str, marker: str) -> str:
+        replacements = {
+            "sip": "productive capital",
+            "mutual fund": "productive opportunity",
+            "stock picking": "another capital use",
+            "asset allocation": "capital allocation",
+            "rebalance portfolio": "move capital",
+            "credit score": "payment record",
+            "cibil": "payment record",
+        }
+        replacement = replacements.get(marker.lower())
+        if not replacement:
+            return narration
+        pattern = re.compile(rf"\b(?:high-growth\s+|diversified\s+)?{re.escape(marker)}\b", flags=re.IGNORECASE)
+        return pattern.sub(replacement, narration)
+
     def _recurring_example_terms(self, recurring_example: str) -> list[str]:
         stopwords = {
             "about",
@@ -893,8 +913,9 @@ class ScriptService:
                 ):
                     hits.append({"phrase": str(phrase), "location": location})
                     continue
-                if semantic_markers and any(marker in normalized_narration for marker in semantic_markers):
-                    hits.append({"phrase": str(phrase), "location": location})
+                for marker in semantic_markers:
+                    if marker in normalized_narration:
+                        hits.append({"phrase": str(phrase), "location": location, "marker": marker})
         return hits
 
     def _forbidden_drift_semantic_markers(self, normalized_phrase: str) -> tuple[str, ...]:

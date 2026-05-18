@@ -702,6 +702,35 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.assertIn("expensive phone purchase", repaired["scenes"][1]["narration"])
         self.service._validate_script_against_brief(repaired, brief)
 
+    def test_payload_repair_replaces_forbidden_investment_markers(self) -> None:
+        brief = _valid_script_brief()
+        brief["forbidden_drift"] = ["Complex, unrelated investment strategies"]
+        payload = {
+            "hook": {"narration": "Why does a monthly payment feel smaller?"},
+            "scenes": [
+                {"kind": "body", "narration": _brief_scene_narration("payment_pain_reduction", 1), "mechanism": "payment_pain_reduction"},
+                {
+                    "kind": "body",
+                    "narration": (
+                        _brief_scene_narration("affordability_illusion", 2)
+                        + " The remaining cash can go into a high-growth SIP or a diversified mutual fund."
+                    ),
+                    "mechanism": "affordability_illusion",
+                },
+            ],
+            "outro": {"narration": "Judge the full cost first."},
+            "meta": {},
+        }
+
+        repaired = self.service._repair_payload_for_script_brief(payload, brief)
+
+        narration = repaired["scenes"][1]["narration"].lower()
+        self.assertNotIn("sip", narration)
+        self.assertNotIn("mutual fund", narration)
+        self.assertIn("productive capital", narration)
+        self.assertIn("productive opportunity", narration)
+        self.service._validate_script_against_brief(repaired, brief)
+
     def test_payload_repair_removes_weak_generic_finance_advisory_language(self) -> None:
         brief = _valid_script_brief()
         brief["forbidden_drift"] = ["generic financial literacy"]
