@@ -155,6 +155,8 @@ class VisualDirector(VisualDirectorPlansMixin):
             return self._with_cinematic_intent(self._sip_growth_plan(director_input, concept_type), director_input)
         if concept_type in {"compounding", "net_worth_growth"}:
             return self._with_cinematic_intent(self._growth_mechanism_plan(director_input, concept_type), director_input)
+        if concept_type == "opportunity_cost":
+            return self._with_cinematic_intent(self._opportunity_cost_plan(director_input), director_input)
         if concept_type == "recap_system":
             return self._with_cinematic_intent(self._recap_system_plan(director_input), director_input)
         if concept_type in {"inflation_erosion", "inflation_loss", "real_return", "fd_vs_inflation"}:
@@ -178,6 +180,54 @@ class VisualDirector(VisualDirectorPlansMixin):
         }:
             return self._with_cinematic_intent(self._comparison_mechanism_plan(director_input, concept_type), director_input)
         return self._with_cinematic_intent(self._generic_plan(director_input, concept_type), director_input)
+
+    def _opportunity_cost_plan(self, director_input: VisualDirectorInput) -> DirectedPlan:
+        amounts = [float(item["amount"]) for item in self._money_mentions(director_input.narration_text) if item.get("amount")]
+        source_amount = max(amounts) if amounts else (self._parse_rupee(director_input.start_value) or 100000.0)
+        missed_amount = next((amount for amount in sorted(set(amounts), reverse=True) if 0 < amount < source_amount), source_amount * 0.1)
+        data = {
+            "source": {"label": "Capital choice", "value": self._format_rupee(source_amount), "amount": source_amount},
+            "flows": [
+                {
+                    "label": "Cash locked in purchase",
+                    "value": self._format_rupee(source_amount),
+                    "amount": source_amount,
+                    "color": "orange",
+                    "order": 1,
+                },
+                {
+                    "label": "Annual profit missed",
+                    "value": self._format_rupee(missed_amount),
+                    "amount": missed_amount,
+                    "color": "red",
+                    "order": 2,
+                },
+            ],
+            "remainder": {
+                "value": self._format_rupee(source_amount),
+                "amount": source_amount,
+                "is_dangerous": False,
+            },
+            "punch": "The hidden cost is the return you give up",
+        }
+        direction = SceneDirection("confusion", "clarity", director_input.section_position, "warning")
+        beats = self._contextualize_beats(
+            [
+                DirectedBeat("MoneyFlowDiagram", data["source"]["value"], "normal", "capital before decision", data={**data, "active_phase": "intro"}, beat_phase="intro"),
+                DirectedBeat("MoneyFlowDiagram", "Cash stops working", "subtle", "purchase path", data={**data, "active_phase": "drain"}, beat_phase="drain"),
+                DirectedBeat("MoneyFlowDiagram", data["punch"], "hero", "opportunity cost revealed", data={**data, "active_phase": "remainder"}, beat_phase="remainder"),
+            ],
+            director_input.narration_text,
+        )
+        return DirectedPlan(
+            concept_type="opportunity_cost",
+            concept_name="Opportunity Cost",
+            pattern="MoneyFlowDiagram",
+            data=data,
+            direction=direction,
+            theme=THEME,
+            beats=beats,
+        )
 
     def _with_cinematic_intent(self, plan: DirectedPlan, director_input: VisualDirectorInput) -> DirectedPlan:
         if plan.cinematic_intent:

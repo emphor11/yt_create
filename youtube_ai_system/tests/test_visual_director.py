@@ -432,6 +432,18 @@ class VisualDirectorTestCase(unittest.TestCase):
 
         self.assertNotEqual(result.concept_type, "opportunity_cost")
 
+    def test_opportunity_cost_uses_strong_money_flow_archetype(self) -> None:
+        result = self.director.direct(
+            build_input(
+                "Paying ₹70 Lakhs cash means missing the ₹7 Lakhs that capital could earn each year.",
+                "opportunity_cost",
+            )
+        )
+
+        self.assertEqual(result.concept_type, "opportunity_cost")
+        self.assertEqual(result.pattern, "MoneyFlowDiagram")
+        self.assertTrue(all(beat.component == "MoneyFlowDiagram" for beat in result.beats))
+
     def test_wealth_without_growth_direction_does_not_trigger_net_worth_growth(self) -> None:
         result = self.director.direct(
             build_input(

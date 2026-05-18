@@ -20,15 +20,15 @@ class VisualDirectorConceptClassificationMixin:
             # tax_saving = reducing tax via planning (positive, SplitComparison)
             **{key: value for key, value in MECHANISM_ALIASES.items() if key != "tax_drain"},
         }
+        semantic_key = self._semantic_primary_concept_key(director_input)
+        if semantic_key in aliases:
+            return aliases[semantic_key]
+        if semantic_key in KNOWN_MECHANISMS and semantic_key not in {"definition", "general_point"}:
+            return semantic_key
         if explicit in aliases:
             return aliases[explicit]
         if explicit in KNOWN_MECHANISMS and explicit != "definition":
             return explicit
-        semantic_key = self._semantic_primary_concept_key(director_input)
-        if semantic_key in aliases:
-            return aliases[semantic_key]
-        if semantic_key and semantic_key not in {"unknown", "definition", "general_point"}:
-            return semantic_key
         if explicit in {
             "salary_drain",
             "lifestyle_inflation",
