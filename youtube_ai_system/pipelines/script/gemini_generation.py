@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from typing import Any, Callable
 from urllib import error
@@ -10,6 +9,7 @@ from urllib import error
 import requests
 
 from ...infrastructure.llm import GeminiChatClient
+from .json_payload import extract_json_payload
 
 
 class GeminiScriptGenerator:
@@ -149,14 +149,7 @@ class GeminiScriptGenerator:
         return text
 
     def extract_json_payload(self, raw_text: str) -> dict[str, Any]:
-        cleaned = raw_text.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.strip("`")
-            cleaned = cleaned.replace("json", "", 1).strip()
-        start = cleaned.find("{")
-        end = cleaned.rfind("}")
-        if start == -1:
-            raise ValueError("Model did not return a JSON object.")
-        if end == -1 or end < start:
-            raise ValueError("Model returned incomplete JSON; increase Gemini output token limits.")
-        return json.loads(cleaned[start : end + 1])
+        return extract_json_payload(
+            raw_text,
+            incomplete_message="Model returned incomplete JSON; increase Gemini output token limits.",
+        )

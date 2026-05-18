@@ -9,6 +9,7 @@ from youtube_ai_system import create_app
 from youtube_ai_system.contracts.scripts import ScriptBriefContract
 from youtube_ai_system.db import close_db
 from youtube_ai_system.models.repository import ProjectRepository, utcnow
+from youtube_ai_system.pipelines.script.json_payload import extract_json_payload
 from youtube_ai_system.services.script_service import ScriptService
 from youtube_ai_system.services.story_pipeline import StoryPipeline
 
@@ -425,6 +426,57 @@ class ScriptServiceStep1TestCase(unittest.TestCase):
         self.assertEqual(sent_body["generationConfig"]["responseMimeType"], "application/json")
         self.assertEqual(sent_body["generationConfig"]["maxOutputTokens"], self.app.config["GEMINI_MAX_TOKENS"])
         self.assertEqual(post.call_args.kwargs["headers"]["x-goog-api-key"], "gemini-key")
+        sleep.assert_not_called()
+
+    def test_script_json_parser_recovers_common_long_model_glitches(self) -> None:
+        payload = extract_json_payload(
+            """
+            ```json
+            {
+              "hook": {"narration": "Why now?"}
+              "scenes": [
+                {"narration": "Scene one."}
+              ],
+              "outro": {"narration": "Done."},
+            }
+            ```
+            """
+        )
+
+        self.assertEqual(payload["hook"]["narration"], "Why now?")
+        self.assertEqual(payload["scenes"][0]["narration"], "Scene one.")
+        self.assertEqual(payload["outro"]["narration"], "Done.")
+
+    @patch("youtube_ai_system.services.script_service.time.sleep", return_value=None)
+    @patch("youtube_ai_system.infrastructure.llm.gemini_client.requests.post")
+    def test_gemini_script_recovers_missing_comma_json_response(self, post: Mock, sleep: Mock) -> None:
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [
+                            {
+                                "text": (
+                                    '{\n'
+                                    '  "hook": {"narration": "Why now?"}\n'
+                                    '  "scenes": [],\n'
+                                    '  "outro": {"narration": "Done."}\n'
+                                    "}"
+                                )
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        post.return_value = response
+
+        payload = self.service._gemini_script("salary leaks", "young professionals", "prompt", "gemini-key")
+
+        self.assertEqual(payload["hook"]["narration"], "Why now?")
+        self.assertEqual(payload["outro"]["narration"], "Done.")
         sleep.assert_not_called()
 
     def test_auto_script_generation_falls_back_to_gemini_after_groq_rate_limit(self) -> None:

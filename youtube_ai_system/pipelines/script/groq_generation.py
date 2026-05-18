@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from typing import Any, Callable
 from urllib import error
@@ -10,6 +9,7 @@ from urllib import error
 import requests
 
 from ...infrastructure.llm import GroqChatClient
+from .json_payload import extract_json_payload
 
 
 class GroqScriptGenerator:
@@ -144,12 +144,4 @@ class GroqScriptGenerator:
         return 12.0
 
     def extract_json_payload(self, raw_text: str) -> dict[str, Any]:
-        cleaned = raw_text.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.strip("`")
-            cleaned = cleaned.replace("json", "", 1).strip()
-        start = cleaned.find("{")
-        end = cleaned.rfind("}")
-        if start == -1 or end == -1:
-            raise ValueError("Model did not return a JSON object.")
-        return json.loads(cleaned[start : end + 1])
+        return extract_json_payload(raw_text)
