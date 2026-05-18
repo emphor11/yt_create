@@ -6,7 +6,7 @@ from .publishing import UploadPackageContract
 from .rendering import RenderSpec, RenderSpecContract
 from .scenes import SceneContract
 from .semantic import SemanticDerivedValue, SemanticEntity, SemanticRelationship, SemanticSceneContract
-from .scripts import ScriptDraftContract, ScriptSceneContract
+from .scripts import ScriptBriefContract, ScriptDraftContract, ScriptSceneContract
 from .visual_action import VisualAction, VisualActionEdge, VisualActionGraph
 
 __all__ = [
@@ -24,6 +24,7 @@ __all__ = [
     "SemanticRelationship",
     "SemanticSceneContract",
     "ScriptDraftContract",
+    "ScriptBriefContract",
     "ScriptSceneContract",
     "VisualAction",
     "VisualActionEdge",

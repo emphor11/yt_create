@@ -8,6 +8,7 @@ from urllib import error
 
 from flask import current_app
 
+from ..contracts.scripts import ScriptBriefContract
 from ..models.repository import ProjectRepository, utcnow
 from ..pipelines.script import (
     GroqScriptGenerator,
@@ -57,8 +58,11 @@ class ScriptService:
         niche: str | None = None,
         tone: str | None = None,
     ) -> int:
-        prompt = self._build_prompt(topic, angle, target_duration_minutes, niche, tone)
-        payload, source = self._generate_payload(project_id, topic, angle, prompt)
+        brief_prompt = self._build_brief_prompt(topic, angle, target_duration_minutes, niche, tone)
+        script_brief = self._generate_script_brief(topic, angle, brief_prompt)
+        prompt = self._build_prompt(topic, angle, target_duration_minutes, niche, tone, script_brief)
+        payload, source = self._generate_payload(project_id, topic, angle, prompt, script_brief=script_brief)
+        source_prompt = f"{brief_prompt}\n\n--- FULL SCRIPT PROMPT ---\n\n{prompt}"
         script_version_id = self.repo.create_script_version(
             project_id=project_id,
             hook_json=payload["hook"],
@@ -67,7 +71,7 @@ class ScriptService:
             description_text=payload.get("description", ""),
             tags_json=payload.get("tags", []),
             full_script_json=payload,
-            source_prompt=prompt,
+            source_prompt=source_prompt,
         )
         self.logger.log(
             "script_generation",
@@ -171,6 +175,7 @@ class ScriptService:
         topic_or_angle: str,
         angle_or_prompt: str,
         prompt: str | None = None,
+        script_brief: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], str]:
         if prompt is None:
             project_id = None
@@ -198,7 +203,12 @@ class ScriptService:
 
         try:
             payload = self._groq_script(topic, angle, prompt, current_app.config["GROQ_API_KEY"])
+            if script_brief:
+                payload.setdefault("meta", {})["script_brief"] = script_brief
             payload = self._normalize_payload(payload, topic, angle, project_id=project_id)
+            if script_brief:
+                self._validate_script_against_brief(payload, script_brief)
+                payload.setdefault("meta", {})["script_brief"] = script_brief
             payload.setdefault("meta", {})["source"] = "live_groq"
             self.logger.log("script_generation", "completed", "Script source selected: live_groq.")
             return payload, "live Groq API"
@@ -217,6 +227,7 @@ class ScriptService:
         target_duration_minutes: int | None = None,
         niche: str | None = None,
         tone: str | None = None,
+        script_brief: dict[str, Any] | None = None,
     ) -> str:
         return self.prompt_builder.build(
             config=current_app.config,
@@ -225,12 +236,61 @@ class ScriptService:
             target_duration_minutes=target_duration_minutes,
             niche=niche,
             tone=tone,
+            script_brief=script_brief,
         )
+
+    def _build_brief_prompt(
+        self,
+        topic: str,
+        angle: str,
+        target_duration_minutes: int | None = None,
+        niche: str | None = None,
+        tone: str | None = None,
+    ) -> str:
+        return self.prompt_builder.build_brief_prompt(
+            config=current_app.config,
+            topic=topic,
+            angle=angle,
+            target_duration_minutes=target_duration_minutes,
+            niche=niche,
+            tone=tone,
+        )
+
+    def _generate_script_brief(self, topic: str, angle: str, prompt: str) -> dict[str, Any]:
+        provider = current_app.config.get("LLM_PROVIDER", "auto")
+        self.logger.log(
+            "script_brief_generation",
+            "running",
+            (
+                f"ScriptBrief provider selection: provider={provider}, "
+                f"groq_key={'yes' if bool(current_app.config.get('GROQ_API_KEY')) else 'no'}."
+            ),
+        )
+        if provider not in {"auto", "groq"}:
+            raise ValueError(f"ScriptBrief generation requires Groq. Unsupported LLM_PROVIDER={provider!r}.")
+        if not current_app.config.get("GROQ_API_KEY"):
+            raise ValueError("ScriptBrief generation requires Groq, but GROQ_API_KEY is not configured.")
+        payload = self._groq_script_brief(prompt, current_app.config["GROQ_API_KEY"])
+        brief = ScriptBriefContract.from_dict(payload)
+        validation = brief.validate()
+        if not validation.passed:
+            messages = "; ".join(issue.message for issue in validation.errors)
+            raise ValueError(f"ScriptBrief generation failed validation: {messages}")
+        self.logger.log("script_brief_generation", "completed", "Generated ScriptBrief contract.")
+        return brief.to_dict()
 
     def _groq_script(self, topic: str, angle: str, prompt: str, api_key: str) -> dict[str, Any]:
         return self.groq_generator.generate(
             topic=topic,
             angle=angle,
+            prompt=prompt,
+            api_key=api_key,
+            config=current_app.config,
+            sleep_func=time.sleep,
+        )
+
+    def _groq_script_brief(self, prompt: str, api_key: str) -> dict[str, Any]:
+        return self.groq_generator.generate_brief(
             prompt=prompt,
             api_key=api_key,
             config=current_app.config,
@@ -254,6 +314,66 @@ class ScriptService:
             raise ValueError("Hook must be an object with narration.")
         if not isinstance(payload["outro"], dict) or not payload["outro"].get("narration"):
             raise ValueError("Outro must be an object with narration.")
+
+    def _validate_script_against_brief(self, payload: dict[str, Any], script_brief: dict[str, Any]) -> None:
+        errors: list[str] = []
+        brief = ScriptBriefContract.from_dict(script_brief)
+        validation = brief.validate()
+        if not validation.passed:
+            messages = "; ".join(issue.message for issue in validation.errors)
+            raise ValueError(f"ScriptBrief validation failed before script validation: {messages}")
+        body_scenes = [scene for scene in payload.get("scenes") or [] if scene.get("kind", "body") == "body"]
+        scene_map = [item.to_dict() for item in brief.scene_function_map]
+        if len(body_scenes) != len(scene_map):
+            errors.append(
+                f"generated {len(body_scenes)} body scenes, but ScriptBrief requires {len(scene_map)} scene function entries"
+            )
+
+        for index, (scene, map_item) in enumerate(zip(body_scenes, scene_map), start=1):
+            expected = str(map_item.get("mechanism") or "").strip()
+            actual = str(scene.get("mechanism") or "").strip()
+            if expected and actual != expected:
+                errors.append(f"scene {index} mechanism {actual!r} does not match ScriptBrief mechanism {expected!r}")
+
+        recurring_terms = self._recurring_example_terms(str(script_brief.get("recurring_example") or ""))
+        if recurring_terms and body_scenes:
+            hit_count = 0
+            for scene in body_scenes:
+                narration = str(scene.get("narration") or "").lower()
+                if any(term in narration for term in recurring_terms):
+                    hit_count += 1
+            minimum_hits = min(len(body_scenes), 2)
+            if hit_count < minimum_hits:
+                errors.append(
+                    f"recurring example appears in {hit_count} body scenes; expected at least {minimum_hits}"
+                )
+
+        if errors:
+            raise ValueError("Script does not satisfy ScriptBrief: " + "; ".join(errors))
+
+    def _recurring_example_terms(self, recurring_example: str) -> list[str]:
+        stopwords = {
+            "about",
+            "after",
+            "being",
+            "from",
+            "into",
+            "that",
+            "this",
+            "where",
+            "while",
+            "with",
+            "your",
+            "looks",
+            "feel",
+            "feels",
+        }
+        terms = []
+        for token in re.findall(r"[a-zA-Z][a-zA-Z-]{3,}", recurring_example.lower()):
+            cleaned = token.replace("-", " ")
+            if cleaned not in stopwords and cleaned not in terms:
+                terms.append(cleaned)
+        return terms[:8]
 
     def _normalize_payload(self, payload: dict[str, Any], topic: str, angle: str, project_id: int | None = None) -> dict[str, Any]:
         hook = payload.get("hook") or {}
@@ -483,3 +603,5 @@ class ScriptService:
             "tags": [topic, angle, "personal finance", "money habits"],
             "meta": {"source": "demo"},
         }
+
+    

@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Callable
 
+from ...contracts.scripts import (
+    SCRIPT_BRIEF_EMOTIONAL_DIRECTIONS,
+    SCRIPT_BRIEF_FORMATS,
+    SCRIPT_BRIEF_MECHANISMS,
+)
 from .constants import (
     BODY_MAX_WORDS,
     BODY_MIN_WORDS,
@@ -16,7 +22,7 @@ from .constants import (
 
 
 class ScriptPromptBuilder:
-    """Builds the existing Groq script prompt without changing prompt text."""
+    """Builds the Groq script prompt with topic-bound script instructions."""
 
     def __init__(self, visual_contract: Callable[[], str]) -> None:
         self.visual_contract = visual_contract
@@ -30,12 +36,15 @@ class ScriptPromptBuilder:
         target_duration_minutes: int | None = None,
         niche: str | None = None,
         tone: str | None = None,
+        script_brief: dict[str, Any] | None = None,
     ) -> str:
         target_duration_minutes = target_duration_minutes or config.get(
             "TARGET_DURATION_MINUTES",
             DEFAULT_TARGET_DURATION_MINUTES,
         )
         body_scene_count = max(1, int(target_duration_minutes))
+        if script_brief and isinstance(script_brief.get("scene_function_map"), list) and script_brief.get("scene_function_map"):
+            body_scene_count = len(script_brief["scene_function_map"])
         hook_min_words = HOOK_MIN_WORDS
         hook_max_words = HOOK_MAX_WORDS
         body_min_words = BODY_MIN_WORDS
@@ -46,6 +55,9 @@ class ScriptPromptBuilder:
         total_max_words = body_scene_count * body_max_words + hook_max_words + outro_max_words
         niche = niche or config.get("CHANNEL_NICHE", DEFAULT_CHANNEL_NICHE)
         tone = tone or config.get("SCRIPT_TONE", DEFAULT_SCRIPT_TONE)
+        recurring_example = self._recurring_example(topic, angle)
+        mechanism_guidance = self._mechanism_guidance(topic, angle)
+        brief_contract = self._script_brief_block(script_brief)
         return (
             "You are a world-class YouTube script writer for a finance-explanation channel in the style of 20 Minute University-style videos (e.g. “All of Economics in 20 minutes”).\n\n"
             "Your only job is to generate raw spoken-style narration that will be processed by a deterministic system later.\n\n"
@@ -57,18 +69,24 @@ class ScriptPromptBuilder:
             "* No section labels like \"Hook\", \"Body\", or \"Outro\" inside narration text\n\n"
             "---\n\n"
             "TONE & STYLE:\n\n"
-            "* Direct, slightly sarcastic, warm, knowledgeable\n"
+            f"* TONE_HINT is binding: write in this creative direction unless it conflicts with financial accuracy: {tone}\n"
+            "* Stay knowledgeable, concrete, and spoken-friendly\n"
             "* Conversational (talk to the viewer, not at them)\n"
-            "* Light humor + relatable analogies\n"
+            "* Use humor only if it fits TONE_HINT; do not soften a dark/psychological topic with cheerful generic jokes\n"
             "* Use Indian finance context naturally (salary, EMI, SIP, inflation, debt trap, lifestyle inflation, compound interest, risk-vs-return, diversification, FOMO, etc.)\n"
             "* Keep language simple and spoken-friendly\n\n"
+            f"{brief_contract}"
             "RECURRING FINANCIAL EXAMPLE:\n\n"
-            "* Use one recurring financial example throughout the entire video: a salaried Indian earning around ₹50,000/month in a metro city\n"
+            "* Use one recurring financial example throughout the entire video, but it must come from the TOPIC and AUDIENCE, not from a fixed salary curriculum\n"
+            f"* Suggested recurring example for this request: {recurring_example}\n"
+            "* If the topic is not salary disappearance, do NOT use the ₹50,000 salary/day-20 hook or monthly salary-drain storyline\n"
             "* Do not create a named fictional character\n"
             "* Do not write scenes that require realistic human acting, facial emotion, cinematic b-roll, or live-action continuity\n"
-            "* Keep the story mechanism-first: salary flows, EMI pressure, inflation erosion, SIP growth, diversification, FOMO, and emergency fund logic\n"
-            "* Refer back to earlier numbers explicitly when useful, such as salary, rent, EMI, food delivery, subscriptions, SIP, and emergency fund\n"
-            "* Every body scene should show how the same monthly money system changes over time\n"
+            "* Keep the story mechanism-first, but derive the mechanism from the current topic instead of forcing salary, EMI, inflation, SIP, diversification, FOMO, and emergency-fund scenes into every video\n"
+            f"{mechanism_guidance}"
+            "* Refer back to earlier numbers explicitly when useful, but only when those numbers belong to this topic\n"
+            "* Every body scene should show how the same topic-specific money mechanism changes over time\n"
+            "* If a SCRIPT STRATEGY BRIEF is present, its recurring_example overrides the suggested recurring example above\n"
             "* Visuals will be diagrams, financial animations, charts, stacks, flows, comparison visuals, and mechanism visualizers\n\n"
             "---\n\n"
             "CORE WRITING RULES:\n\n"
@@ -101,20 +119,25 @@ class ScriptPromptBuilder:
             f"* First 1–3 sentences, {hook_min_words}-{hook_max_words} spoken words total\n"
             "* Start with strong curiosity or tension\n"
             "* Must pass this hook contract: under 35 words, and include either a question mark/\"why\", or a ₹ amount with a negative finance word like gone/leak/drain/debt/cost, or a percentage/big number with a people group\n"
-            "* Name the recurring ₹50,000/month situation, not a generic finance statement\n"
-            "* Prefer hooks like: \"Why does your ₹50,000 salary feel gone by day 20?\"\n"
+            "* Name the current topic's main object, price, habit, trap, or contradiction, not a generic finance statement\n"
+            "* Do not copy this old salary hook unless TOPIC is specifically about salary disappearing: \"Why does your ₹50,000 salary feel gone by day 20?\"\n"
+            "* For monthly-payment topics, open on the psychological trick: the full price disappears and the monthly number feels harmless\n"
             "* Avoid validator-weak hooks like: \"You work hard but still struggle to save.\"\n"
             "* No greetings, no \"hey guys\", no \"welcome back\"\n"
             "* Make the viewer feel like they are already in the problem (salary, EMIs, lack of savings, debt, inflation, investing confusion)\n\n"
             "BODY:\n\n"
             "* Continuous flow of ideas with no labels, markdown, or bullet points inside narration\n"
             f"* Generate EXACTLY {body_scene_count} body scenes. No more, no fewer\n"
+            "* If a SCRIPT STRATEGY BRIEF is present, generate exactly one body scene per scene_function_map entry\n"
+            "* Each generated scene's mechanism must match its scene_function_map entry exactly\n"
+            "* Every body scene must use the brief's recurring_example to illustrate its mechanism\n"
+            "* Do not introduce a different primary example halfway through the video\n"
             f"* Each body scene must be {body_min_words}-{body_max_words} spoken words across 8-12 short sentences\n"
             "* Do NOT write checklist-style scenes. Each scene is one chapter in the same money system\n"
             "* Each body scene must focus on one finance mechanism only\n"
             "* Do not let adjacent finance concepts contaminate the scene. Example: lifestyle inflation is spending expansion after a raise, not macro inflation or CPI erosion\n"
             "* Each body scene must include these five elements in natural narration order, without labeling them:\n"
-            "  1. SETUP: Restate where the ₹50,000/month money system is now\n"
+            "  1. SETUP: Restate where the topic-specific recurring example is now\n"
             "  2. EXAMPLE: Use a concrete Indian finance situation with a specific rupee number\n"
             "  3. MECHANISM: Explain how the financial force works using simple math or logic\n"
             "  4. CONSEQUENCE: Show what happens to savings, debt, purchasing power, risk, or confidence\n"
@@ -173,7 +196,119 @@ class ScriptPromptBuilder:
             f"The total duration across hook + scenes + outro should be approximately {target_duration_minutes * 60} seconds.\n"
             "Before returning, silently count words in every narration field and fix any scene that misses the requested range.\n"
             f"Generate EXACTLY {body_scene_count} body scenes.\n"
+            "If a SCRIPT STRATEGY BRIEF is present, each body scene must follow the matching scene_function_map item by scene_index.\n"
             f"Each body scene narration must be {body_min_words}-{body_max_words} words. Check word count before returning.\n"
             f"Total script including hook and outro should be around {total_min_words}-{total_max_words} spoken words.\n"
             "Return only JSON.\n"
         )
+
+    def build_brief_prompt(
+        self,
+        *,
+        config: dict[str, Any],
+        topic: str,
+        angle: str,
+        target_duration_minutes: int | None = None,
+        niche: str | None = None,
+        tone: str | None = None,
+    ) -> str:
+        target_duration_minutes = target_duration_minutes or config.get(
+            "TARGET_DURATION_MINUTES",
+            DEFAULT_TARGET_DURATION_MINUTES,
+        )
+        scene_count = max(1, int(target_duration_minutes))
+        niche = niche or config.get("CHANNEL_NICHE", DEFAULT_CHANNEL_NICHE)
+        tone = tone or config.get("SCRIPT_TONE", DEFAULT_SCRIPT_TONE)
+        formats = " | ".join(sorted(SCRIPT_BRIEF_FORMATS))
+        mechanisms = ", ".join(sorted(SCRIPT_BRIEF_MECHANISMS))
+        directions = " | ".join(sorted(SCRIPT_BRIEF_EMOTIONAL_DIRECTIONS))
+        return (
+            "You are the planning producer for a professional finance YouTube video.\n"
+            "Return only one valid JSON object. No markdown. No commentary.\n\n"
+            "Create a ScriptBrief that will strictly constrain a later narration-writing call.\n"
+            "The brief must be topic-specific, not a generic finance curriculum.\n\n"
+            f"TOPIC: {topic}\n"
+            f"AUDIENCE_OR_ANGLE: {angle}\n"
+            f"CHANNEL_DESCRIPTION: {niche}\n"
+            f"TONE_HINT: {tone}\n"
+            f"TARGET_DURATION_MINUTES: {target_duration_minutes}\n"
+            f"BODY_SCENE_COUNT: {scene_count}\n\n"
+            f"selected_format must be one of: {formats}\n"
+            f"allowed_mechanisms and scene_function_map[].mechanism must use only these keys: {mechanisms}\n"
+            f"scene_function_map[].emotional_direction must be one of: {directions}\n\n"
+            "Rules:\n"
+            "* topic_interpretation must explain what this video is actually about, in one sentence.\n"
+            "* thesis must be one claim the script will prove, not a topic label.\n"
+            "* The thesis must answer the exact TOPIC question, not a nearby generic finance lesson.\n"
+            "* If TOPIC mentions rich people, wealthy people, businesses, founders, or investors, explain both the strategic use case and the consumer trap. Do not reduce the whole video to overspending advice.\n"
+            "* If TOPIC asks why a group loves a behavior, explain the rational incentive for that group before warning about misuse.\n"
+            "* recurring_example must be concrete and reusable across every body scene.\n"
+            "* forbidden_drift must name 3-6 things the script must not drift into.\n"
+            "* scene_function_map must contain exactly BODY_SCENE_COUNT entries.\n"
+            "* Each scene function must do a distinct job in the argument.\n"
+            "* The first half of scene_function_map should build the exact answer to the TOPIC; the second half may show risks, limits, or viewer action.\n"
+            "* Do not choose salary_drain unless the topic is actually about salary disappearing.\n\n"
+            "Return this exact JSON shape:\n"
+            "{\n"
+            '  "topic_interpretation": "string",\n'
+            '  "thesis": "string",\n'
+            '  "viewer_promise": "string",\n'
+            '  "selected_format": "mechanism_explainer | myth_busting | mistake_breakdown | cautionary_story | psychological_essay | case_study | comparison_breakdown | action_plan",\n'
+            '  "format_rationale": "string",\n'
+            '  "recurring_example": "string",\n'
+            '  "allowed_mechanisms": ["mechanism_key"],\n'
+            '  "forbidden_drift": ["string"],\n'
+            '  "scene_function_map": [\n'
+            '    {"scene_index": 1, "function": "string", "mechanism": "mechanism_key", "emotional_direction": "building | revealing | tightening | releasing | warning | clarity"}\n'
+            "  ],\n"
+            '  "tone_directive": "string"\n'
+            "}\n"
+        )
+
+    def _script_brief_block(self, script_brief: dict[str, Any] | None) -> str:
+        if not script_brief:
+            return ""
+        brief_json = json.dumps(script_brief, ensure_ascii=False, indent=2)
+        return (
+            "SCRIPT STRATEGY BRIEF (BINDING CONTRACT):\n"
+            f"{brief_json}\n\n"
+            "Rules for using this brief:\n"
+            "* The hook must create curiosity around the thesis.\n"
+            "* Every body scene must use recurring_example as the primary example.\n"
+            "* Do not introduce a different primary example.\n"
+            "* Generate exactly one body scene per scene_function_map entry.\n"
+            "* Each scene's mechanism must match its scene_function_map entry exactly.\n"
+            "* Avoid every forbidden_drift item.\n"
+            "* tone_directive is binding.\n\n"
+            "---\n\n"
+        )
+
+    def _recurring_example(self, topic: str, angle: str) -> str:
+        text = f"{topic} {angle}".lower()
+        if any(token in text for token in ("monthly payment", "monthly payments", "subscription", "bnpl", "no cost emi", "rich people love monthly")):
+            return "an expensive purchase being reframed from a painful full price into a harmless-looking monthly payment"
+        if any(token in text for token in ("credit card", "minimum payment", "debt")):
+            return "a credit-card balance where the minimum payment feels responsible while interest keeps control"
+        if any(token in text for token in ("inflation", "fd", "purchasing power")):
+            return "money that looks safe in an FD or savings account while real buying power changes"
+        if any(token in text for token in ("sip", "compound", "mutual fund")):
+            return "a small monthly investment whose result depends more on time and consistency than excitement"
+        if any(token in text for token in ("tax", "ctc", "take home")):
+            return "a salary offer where CTC, deductions, and actual take-home create different realities"
+        if any(token in text for token in ("salary", "month end", "payday", "raise", "lifestyle")):
+            return "a salaried Indian household where income, expenses, and savings fight for the same month"
+        return f"a concrete Indian finance decision directly tied to {topic or 'the topic'}, using rupee amounts that serve {angle or 'the stated angle'}"
+
+    def _mechanism_guidance(self, topic: str, angle: str) -> str:
+        text = f"{topic} {angle}".lower()
+        if any(token in text for token in ("monthly payment", "monthly payments", "subscription", "bnpl", "no cost emi", "rich people love monthly")):
+            return (
+                "* For this topic, prioritize mechanisms like payment pain reduction, affordability illusion, price anchoring, subscription lock-in, luxury financing psychology, and monthly commitment stacking\n"
+            )
+        if any(token in text for token in ("credit card", "minimum payment", "debt")):
+            return "* For this topic, prioritize minimum-payment psychology, interest compounding, principal stagnation, and debt lock-in\n"
+        if any(token in text for token in ("inflation", "fd", "purchasing power")):
+            return "* For this topic, prioritize real-return gap, purchasing-power erosion, safety illusion, and delayed consequence\n"
+        if any(token in text for token in ("sip", "compound", "mutual fund")):
+            return "* For this topic, prioritize time, contribution discipline, compounding curve, and delayed payoff\n"
+        return "* For this topic, identify the exact financial or psychological mechanism before writing body scenes\n"

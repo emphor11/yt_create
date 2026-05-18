@@ -49,6 +49,70 @@
   </div>
 </div>
 
+{% set script_brief = script_payload.meta.script_brief if script_payload.meta else none %}
+{% if script_brief %}
+<div class="card bg-panel border-secondary-subtle mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start mb-3">
+      <div>
+        <div class="section-label mb-2">Script Strategy Brief</div>
+        <h2 class="h5 mb-0">{{ script_brief.selected_format|replace('_', ' ')|title }}</h2>
+      </div>
+      <span class="status-pill status-live">Brief-Constrained</span>
+    </div>
+    <p class="mb-2"><strong>Thesis:</strong> {{ script_brief.thesis }}</p>
+    <p class="mb-2"><strong>Viewer promise:</strong> {{ script_brief.viewer_promise }}</p>
+    <p class="mb-2"><strong>Recurring example:</strong> {{ script_brief.recurring_example }}</p>
+    <p class="mb-3"><strong>Tone directive:</strong> {{ script_brief.tone_directive }}</p>
+
+    <div class="row g-3">
+      <div class="col-md-6">
+        <div class="section-label mb-2">Allowed Mechanisms</div>
+        <div class="d-flex flex-wrap gap-2">
+          {% for mechanism in script_brief.allowed_mechanisms or [] %}
+            <span class="badge text-bg-info">{{ mechanism }}</span>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="section-label mb-2">Forbidden Drift</div>
+        <ul class="small text-secondary mb-0">
+          {% for item in script_brief.forbidden_drift or [] %}
+            <li>{{ item }}</li>
+          {% else %}
+            <li>No forbidden drift listed.</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+
+    <div class="section-label mt-4 mb-2">Scene Function Map</div>
+    <div class="table-responsive">
+      <table class="table table-sm table-dark-subtle align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Scene</th>
+            <th>Function</th>
+            <th>Mechanism</th>
+            <th>Direction</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in script_brief.scene_function_map or [] %}
+            <tr>
+              <td>{{ item.scene_index }}</td>
+              <td>{{ item.function }}</td>
+              <td><code>{{ item.mechanism }}</code></td>
+              <td>{{ item.emotional_direction }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% if hook_errors %}
   <div class="alert alert-warning">
     <strong>Approval blockers:</strong>

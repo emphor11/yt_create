@@ -26,6 +26,21 @@ KNOWN_MECHANISMS = {
     "rent_burden",
     "subscription_leak",
     "expense_leakage",
+    "payment_pain_reduction",
+    "affordability_illusion",
+    "price_anchoring",
+    "subscription_lock_in",
+    "commitment_stacking",
+    "anchoring",
+    "lock_in",
+    "delayed_consequence",
+    "temptation_discount",
+    "liquidity_pressure",
+    "social_pressure",
+    "risk_concentration",
+    "opportunity_cost",
+    "leverage",
+    "cash_flow_squeeze",
     "definition",
 }
 
@@ -51,6 +66,21 @@ EMOTION_MAP = {
     "tax_saving": "anxiety",
     "rent_burden": "anxiety",
     "expense_leakage": "shock",
+    "payment_pain_reduction": "shock",
+    "affordability_illusion": "anxiety",
+    "price_anchoring": "clarity",
+    "subscription_lock_in": "anxiety",
+    "commitment_stacking": "anxiety",
+    "anchoring": "clarity",
+    "lock_in": "anxiety",
+    "delayed_consequence": "urgency",
+    "temptation_discount": "anxiety",
+    "liquidity_pressure": "anxiety",
+    "social_pressure": "anxiety",
+    "risk_concentration": "urgency",
+    "opportunity_cost": "clarity",
+    "leverage": "urgency",
+    "cash_flow_squeeze": "anxiety",
     "definition": "clarity",
 }
 
@@ -69,6 +99,21 @@ MECHANISM_KEYWORDS = {
     "tax_saving": ["tax", "tds", "income tax", "slab", "80c"],
     "rent_burden": ["rent", "landlord", "housing"],
     "expense_leakage": ["subscription", "netflix", "prime", "spotify", "ott", "leak"],
+    "payment_pain_reduction": ["monthly payment", "monthly payments", "payment pain", "painless", "feels harmless"],
+    "affordability_illusion": ["affordable", "only per month", "per month", "full price", "monthly number", "small monthly"],
+    "price_anchoring": ["anchor", "anchoring", "full price", "sticker price", "price tag"],
+    "subscription_lock_in": ["subscription", "locked in", "auto-renew", "autopay", "recurring payment"],
+    "commitment_stacking": ["payments stack", "commitments stack", "monthly commitments", "one more payment", "stacking"],
+    "anchoring": ["anchor", "anchoring", "first number", "reference price"],
+    "lock_in": ["lock-in", "lock in", "locked", "switching cost", "exit cost"],
+    "delayed_consequence": ["delayed consequence", "deferred", "cost later", "later cost", "delay"],
+    "temptation_discount": ["temptation", "present bias", "today feels", "future self", "instant reward"],
+    "liquidity_pressure": ["liquidity", "cash stuck", "cannot access", "accessible cash", "cash pressure"],
+    "social_pressure": ["social pressure", "status", "friends", "comparison", "show off"],
+    "risk_concentration": ["risk concentration", "concentration", "single bet", "one stock", "all your money"],
+    "opportunity_cost": ["opportunity cost", "cost of not", "what you give up", "missed return"],
+    "leverage": ["leverage", "borrowed money", "amplified", "small input"],
+    "cash_flow_squeeze": ["cash flow", "squeeze", "fixed payments", "little left"],
 }
 
 RUPEE_PATTERN = re.compile(r"(?:₹\s*|Rs\.?\s*)(\d[\d,]*(?:\.\d+)?)\s*(lakh|lakhs|crore|crores|k)?", re.IGNORECASE)
@@ -250,6 +295,21 @@ class VisualSceneNormalizer:
             "tax_saving": ["Gross salary", "Tax deducted", "Take-home shrinks"],
             "rent_burden": ["Rent paid", "Income drained", "Little left to save"],
             "expense_leakage": ["Subscriptions pile up", "Invisible monthly drain", "Add it up"],
+            "payment_pain_reduction": ["Full price hidden", "Monthly price feels smaller", "Pain disappears"],
+            "affordability_illusion": ["Big purchase reframed", "Small monthly number", "Real cost expands"],
+            "price_anchoring": ["Sticker shock appears", "Monthly anchor replaces it", "Decision feels safer"],
+            "subscription_lock_in": ["Recurring promise starts", "Autopay repeats", "Exit feels delayed"],
+            "commitment_stacking": ["One payment accepted", "More commitments stack", "Freedom shrinks"],
+            "anchoring": ["First number appears", "Judgment bends around it", "Better comparison restores clarity"],
+            "lock_in": ["Easy entry", "Exit cost appears", "Choice narrows"],
+            "delayed_consequence": ["Benefit arrives now", "Cost waits quietly", "Future month pays"],
+            "temptation_discount": ["Today looks rewarding", "Future cost fades", "Choice becomes expensive"],
+            "liquidity_pressure": ["Money exists on paper", "Cash access tightens", "Pressure reaches the month"],
+            "social_pressure": ["Status signal appears", "Comparison pressure rises", "Budget follows the crowd"],
+            "risk_concentration": ["One bet grows large", "Shock hits the same place", "Diversification gap appears"],
+            "opportunity_cost": ["One choice consumes cash", "Alternative path disappears", "Hidden cost becomes visible"],
+            "leverage": ["Small input enters", "Exposure multiplies", "Outcome amplifies"],
+            "cash_flow_squeeze": ["Fixed payments arrive", "Flexible cash shrinks", "Month gets squeezed"],
         }
         return defaults.get(mechanism, ["Problem shown", "Impact revealed", "Key insight"])
 
@@ -283,7 +343,9 @@ def visual_script_prompt_contract() -> str:
         "Prefer concrete Indian finance numbers when truthful, but never add fake numbers just to satisfy the format.\n"
         "mechanism must be one of: salary_drain, lifestyle_inflation, emi_stack, debt_trap, inflation_erosion, "
         "sip_growth, compounding, risk_return, emergency_fund, fomo_risk, diversification, tax_drain, "
-        "rent_burden, subscription_leak, definition.\n"
+        "rent_burden, subscription_leak, payment_pain_reduction, affordability_illusion, price_anchoring, "
+        "subscription_lock_in, commitment_stacking, anchoring, lock_in, delayed_consequence, temptation_discount, "
+        "liquidity_pressure, social_pressure, risk_concentration, opportunity_cost, leverage, cash_flow_squeeze, definition.\n"
         "Good visual_intent: Show income rising, lifestyle absorbing it, and savings staying flat.\n"
         "Bad visual_intent: Explain lifestyle inflation.\n"
     )

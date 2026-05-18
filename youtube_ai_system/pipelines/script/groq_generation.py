@@ -27,8 +27,55 @@ class GroqScriptGenerator:
         post_func: Callable[..., requests.Response] | None = None,
         sleep_func: Callable[[float], None],
     ) -> dict[str, Any]:
-        max_tokens = int(config.get("GROQ_MAX_TOKENS", 4200))
-        rate_limit_retries = int(config.get("GROQ_RATE_LIMIT_RETRIES", 2))
+        return self.generate_json(
+            prompt=prompt,
+            api_key=api_key,
+            config=config,
+            max_tokens=int(config.get("GROQ_MAX_TOKENS", 4200)),
+            temperature=0.7,
+            timeout=45,
+            post_func=post_func,
+            sleep_func=sleep_func,
+            rate_limit_retries=int(config.get("GROQ_RATE_LIMIT_RETRIES", 2)),
+            log_label="script_generation",
+        )
+
+    def generate_brief(
+        self,
+        *,
+        prompt: str,
+        api_key: str,
+        config: dict[str, Any],
+        post_func: Callable[..., requests.Response] | None = None,
+        sleep_func: Callable[[float], None],
+    ) -> dict[str, Any]:
+        return self.generate_json(
+            prompt=prompt,
+            api_key=api_key,
+            config=config,
+            max_tokens=int(config.get("SCRIPT_BRIEF_MAX_TOKENS", 1800)),
+            temperature=float(config.get("SCRIPT_BRIEF_TEMPERATURE", 0.2)),
+            timeout=45,
+            post_func=post_func,
+            sleep_func=sleep_func,
+            rate_limit_retries=int(config.get("GROQ_RATE_LIMIT_RETRIES", 2)),
+            log_label="script_brief_generation",
+        )
+
+    def generate_json(
+        self,
+        *,
+        prompt: str,
+        api_key: str,
+        config: dict[str, Any],
+        max_tokens: int,
+        temperature: float,
+        timeout: int,
+        post_func: Callable[..., requests.Response] | None,
+        sleep_func: Callable[[float], None],
+        rate_limit_retries: int,
+        log_label: str,
+    ) -> dict[str, Any]:
         client = GroqChatClient(api_key, post_func=post_func)
         messages = [
             {
@@ -46,9 +93,9 @@ class GroqScriptGenerator:
                 response = client.chat_json(
                     model=config["GROQ_MODEL"],
                     messages=messages,
-                    temperature=0.7,
+                    temperature=temperature,
                     max_tokens=max_tokens,
-                    timeout=45,
+                    timeout=timeout,
                 )
                 response.raise_for_status()
                 response_json = response.json()
@@ -59,7 +106,7 @@ class GroqScriptGenerator:
                 if status_code == 429 and attempt < rate_limit_retries:
                     wait_seconds = self.retry_wait_seconds(exc.response)
                     self.logger.log(
-                        "script_generation",
+                        log_label,
                         "running",
                         (
                             "Groq rate limit reached. "
@@ -74,7 +121,7 @@ class GroqScriptGenerator:
                 raise error.URLError(str(exc)) from exc
 
         text = response_json["choices"][0]["message"]["content"]
-        self.logger.log("script_generation", "running", f"Raw Groq response before parsing: {text}")
+        self.logger.log(log_label, "running", f"Raw Groq response before parsing: {text}")
         return self.extract_json_payload(text)
 
     def retry_wait_seconds(self, response: requests.Response | None) -> float:
